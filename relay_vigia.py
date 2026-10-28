@@ -4,6 +4,9 @@
 Feito para um agente vigiar (cada linha = um aviso). Começa do fim de cada sala, sem repetir
 histórico, e ignora as próprias mensagens.
 Env: RELAY_URL, RELAY_TOKEN, RELAY_NOME (quem vigia; suas mensagens são ignoradas)
+     RELAY_GATILHOS (opcional, ex.: "claude-jose,lume,claudio"): só avisa menção a esses nomes,
+       privada para eles e "Vez de @…" nas reuniões. Economiza tokens: o resto fica pra ler sob demanda.
+     RELAY_SEMPRE (opcional, ex.: "jose,jose-app"): mensagens dessas pessoas avisam sempre.
 """
 import json
 import os
@@ -16,6 +19,18 @@ URL = os.environ.get("RELAY_URL", "http://127.0.0.1:8790").rstrip("/")
 TOKEN = os.environ.get("RELAY_TOKEN", "")
 NOME = os.environ.get("RELAY_NOME", "claude")
 INTERVALO = 3
+GATILHOS = [g.strip().lower() for g in os.environ.get("RELAY_GATILHOS", "").split(",") if g.strip()]
+SEMPRE = {g.strip().lower() for g in os.environ.get("RELAY_SEMPRE", "").split(",") if g.strip()}
+
+
+def importa(m: dict) -> bool:
+    """Sem gatilhos, tudo importa. Com gatilhos, só o que é comigo (ou de quem está em SEMPRE)."""
+    if not GATILHOS:
+        return True
+    if m["de"].lower() in SEMPRE or (m.get("para") or "").lower() in GATILHOS:
+        return True
+    texto = m["texto"].lower()
+    return any(f"@{g}" in texto for g in GATILHOS)
 
 
 def get(caminho: str) -> object:
@@ -38,7 +53,7 @@ def main() -> None:
                 q = urlencode({"sala": sala, "depois": antes, "eu": NOME, "todas": 1})
                 for m in get(f"/mensagens?{q}"):
                     vistos[sala] = max(vistos.get(sala, 0), m["id"])
-                    if m["de"] == NOME:
+                    if m["de"] == NOME or not importa(m):
                         continue
                     para = f" → {m['para']}" if m.get("para") else ""
                     texto = " ".join(m["texto"].split())
