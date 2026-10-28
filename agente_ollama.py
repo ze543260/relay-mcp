@@ -114,7 +114,45 @@ def limpar(texto: str) -> str:
 
 
 def deve_responder(m: dict) -> bool:
+    # Mensagens do sistema (reuniões, tarefas) citam @nome mas não são conversa: só a "vez" importa.
+    if m["de"] == "relay":
+        return False
     return m["de"] != NOME and (m.get("para") == NOME or bool(MENCAO.search(m["texto"])))
+
+
+VEZ = re.compile(rf"Vez de @{re.escape(NOME)}\b")
+
+
+def reuniao_na_minha_vez(m: dict) -> dict | None:
+    """Se o relay anunciou a minha vez, devolve a reunião aberta (o servidor é a fonte da verdade)."""
+    if m["de"] != "relay" or not VEZ.search(m["texto"]):
+        return None
+    try:
+        for r in relay("GET", "/reunioes?" + urlencode({"sala": SALA})):
+            if r["estado"] == "aberta" and r["vez"] == NOME:
+                return r
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+def falar_na_reuniao(contexto: deque, r: dict) -> None:
+    pedido = (f"Você está na reunião #{r['id']} \"{r['titulo']}\" ({r['formato']}). É a SUA vez no item "
+              f"\"{r['item_atual']}\". Responda só a esse item, em até 3 frases, com base no que você "
+              f"realmente fez ou sabe pela conversa. Não invente trabalho que não aparece na conversa.")
+    contexto.append({"id": 0, "de": "relay", "texto": pedido})
+    try:
+        texto = gerar(contexto)
+    except (OSError, ValueError, KeyError) as e:
+        texto = f"_(sem resposta: {e})_"
+    contexto.pop()
+    try:
+        r2 = relay("POST", "/mensagens", {"sala": SALA, "de": NOME, "texto": texto or "Nada a acrescentar."})
+        contexto.append({"id": r2["id"], "de": NOME, "para": None, "texto": texto})
+        relay("POST", f"/reunioes/{r['id']}/passar", {"de": NOME})
+        print(f"falou e passou a vez na reunião #{r['id']}", flush=True)
+    except (OSError, ValueError) as e:
+        print(f"falha na reunião: {e}", file=sys.stderr, flush=True)
 
 
 def main() -> None:
@@ -128,6 +166,10 @@ def main() -> None:
     contexto: deque = deque(iniciais, maxlen=CONTEXTO)
     respostas: deque = deque()
     print(f"{NOME} ({MODELO}) em #{SALA}, a partir da mensagem {cursor}", flush=True)
+    # Entrou no meio de uma reunião e já é a vez dele: fala agora.
+    pendente = reuniao_na_minha_vez({"de": "relay", "texto": f"Vez de @{NOME}"})
+    if pendente:
+        falar_na_reuniao(contexto, pendente)
     while True:
         try:
             novas = buscar(cursor, espera=60)
@@ -139,6 +181,10 @@ def main() -> None:
         for m in novas:
             cursor = m["id"]
             contexto.append(m)
+            reuniao = reuniao_na_minha_vez(m)
+            if reuniao:
+                falar_na_reuniao(contexto, reuniao)
+                continue
             if not deve_responder(m):
                 continue
             agora = time.monotonic()
