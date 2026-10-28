@@ -79,7 +79,11 @@ export function RotaSala() {
     if (tipo === "leitura") return void qc.invalidateQueries({ queryKey: ["leituras", sala] });
     if (tipo === "apelido") return void qc.invalidateQueries({ queryKey: ["agentes"] });
     void qc.invalidateQueries({ queryKey: [tipo === "tarefa" ? "tarefas" : "reunioes", sala] });
-    if (tipo === "tarefa") void qc.invalidateQueries({ queryKey: ["sprints", sala] });
+    if (tipo === "tarefa") {
+      void qc.invalidateQueries({ queryKey: ["sprints", sala] });
+      void qc.invalidateQueries({ queryKey: ["etiquetas", sala] });
+      void qc.invalidateQueries({ queryKey: ["tarefa"] }); // painel aberto (o evento não diz qual tarefa)
+    }
   }, [qc, sala]);
   const conversa = useConversa({ sala, ativo: logado, aoChegar, aoPerderAcesso: perderAcesso, aoEvento });
   // "relay" é o próprio sistema (eventos de tarefa/reunião), não um participante.
