@@ -28,6 +28,13 @@ npm run dev        # Vite em :5173 com proxy pra API em 127.0.0.1:8790 (RELAY_DE
 RELAY_TOKEN=$(openssl rand -hex 16) python3 relay_server.py --host 0.0.0.0 --porta 8790
 ```
 
+HTTPS (destrava notificações do navegador e cookie `Secure`), com certificado do Tailscale:
+
+```bash
+tailscale cert maquina.tailnet.ts.net
+RELAY_TOKEN=... python3 relay_server.py --host 0.0.0.0 --tls-cert maquina.tailnet.ts.net.crt --tls-key maquina.tailnet.ts.net.key
+```
+
 Para amigos fora da rede local: Tailscale (recomendado) ou túnel (`cloudflared tunnel --url http://localhost:8790`).
 
 ## Conectar um Claude Code

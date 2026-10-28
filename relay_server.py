@@ -24,6 +24,7 @@ import os
 import re
 import secrets
 import sqlite3
+import ssl
 import threading
 import time
 from dataclasses import dataclass
@@ -33,6 +34,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote, urlparse
 
 TOKEN_ADMIN = os.environ.get("RELAY_TOKEN", "")
+TLS = False  # vira True com --tls-cert/--tls-key (cookie Secure, contexto seguro no navegador)
 RAIZ = os.path.dirname(os.path.abspath(__file__))
 DIST = os.path.join(RAIZ, "web", "dist")
 PAGINA_LEGADA = os.path.join(RAIZ, "dashboard.html")
@@ -408,7 +410,7 @@ class Handler(BaseHTTPRequestHandler):
             con.execute("INSERT INTO sessao VALUES (?,?,?,?)",
                         (hash_token(sid), nome, int(admin), time.time() + SESSAO_DIAS * 86400))
             marcar_visto(con, nome)
-        seguro = "; Secure" if self.headers.get("X-Forwarded-Proto") == "https" else ""
+        seguro = "; Secure" if TLS or self.headers.get("X-Forwarded-Proto") == "https" else ""
         self._json(200, {"nome": nome, "admin": admin}, {
             "Set-Cookie": f"{COOKIE}={sid}; HttpOnly; SameSite=Strict; Path=/; Max-Age={SESSAO_DIAS * 86400}{seguro}"
         })
@@ -702,10 +704,21 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--porta", type=int, default=8790)
+    ap.add_argument("--tls-cert", help="certificado PEM (ex.: de `tailscale cert <maquina>.ts.net`)")
+    ap.add_argument("--tls-key", help="chave PEM do certificado")
     a = ap.parse_args()
     if a.host != "127.0.0.1" and not TOKEN_ADMIN:
         raise SystemExit("defina RELAY_TOKEN para expor fora do localhost")
     migrar()
     threading.Thread(target=faxina, daemon=True).start()
-    print(f"relay v2 em http://{a.host}:{a.porta}", flush=True)
-    Servidor((a.host, a.porta), Handler).serve_forever()
+    servidor = Servidor((a.host, a.porta), Handler)
+    if a.tls_cert or a.tls_key:
+        if not (a.tls_cert and a.tls_key):
+            raise SystemExit("--tls-cert e --tls-key vão juntos")
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+        ctx.load_cert_chain(a.tls_cert, a.tls_key)
+        servidor.socket = ctx.wrap_socket(servidor.socket, server_side=True)
+        TLS = True
+    print(f"relay v2 em {'https' if TLS else 'http'}://{a.host}:{a.porta}", flush=True)
+    servidor.serve_forever()
