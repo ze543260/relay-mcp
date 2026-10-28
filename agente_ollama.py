@@ -120,13 +120,8 @@ def deve_responder(m: dict) -> bool:
     return m["de"] != NOME and (m.get("para") == NOME or bool(MENCAO.search(m["texto"])))
 
 
-VEZ = re.compile(rf"Vez de @{re.escape(NOME)}\b")
-
-
-def reuniao_na_minha_vez(m: dict) -> dict | None:
-    """Se o relay anunciou a minha vez, devolve a reunião aberta (o servidor é a fonte da verdade)."""
-    if m["de"] != "relay" or not VEZ.search(m["texto"]):
-        return None
+def reuniao_na_minha_vez() -> dict | None:
+    """Reunião aberta (desta sala) em que é a vez deste bot. O servidor é a fonte da verdade."""
     try:
         for r in relay("GET", "/reunioes?" + urlencode({"sala": SALA})):
             if r["estado"] == "aberta" and r["vez"] == NOME:
@@ -136,21 +131,26 @@ def reuniao_na_minha_vez(m: dict) -> dict | None:
     return None
 
 
-def falar_na_reuniao(contexto: deque, r: dict) -> None:
-    pedido = (f"Você está na reunião #{r['id']} \"{r['titulo']}\" ({r['formato']}). É a SUA vez no item "
-              f"\"{r['item_atual']}\". Responda só a esse item, em até 3 frases, com base no que você "
-              f"realmente fez ou sabe pela conversa. Não invente trabalho que não aparece na conversa.")
-    contexto.append({"id": 0, "de": "relay", "texto": pedido})
+def falar_na_reuniao(r: dict) -> None:
+    """Lê o canal da reunião, fala só sobre o item atual (no canal) e passa a vez."""
+    canal = r.get("canal") or SALA
     try:
-        texto = gerar(contexto)
+        hist = relay("GET", "/mensagens/historico?" + urlencode({"sala": canal, "limite": CONTEXTO, "eu": NOME}))
+        contexto = deque(hist["mensagens"], maxlen=CONTEXTO + 1)
+    except (OSError, ValueError):
+        contexto = deque(maxlen=CONTEXTO + 1)
+    contexto.append({"id": 0, "de": "relay", "texto": (
+        f"Você está na reunião #{r['id']} \"{r['titulo']}\" ({r['formato']}). É a SUA vez no item "
+        f"\"{r['item_atual']}\". Responda só a esse item, em até 3 frases, com base no que aparece na conversa. "
+        f"Não invente trabalho que não aparece na conversa; se não tiver nada, diga isso.")})
+    try:
+        texto = gerar(contexto) or "Nada a acrescentar neste item."
     except (OSError, ValueError, KeyError) as e:
         texto = f"_(sem resposta: {e})_"
-    contexto.pop()
     try:
-        r2 = relay("POST", "/mensagens", {"sala": SALA, "de": NOME, "texto": texto or "Nada a acrescentar."})
-        contexto.append({"id": r2["id"], "de": NOME, "para": None, "texto": texto})
+        relay("POST", "/mensagens", {"sala": canal, "de": NOME, "texto": texto})
         relay("POST", f"/reunioes/{r['id']}/passar", {"de": NOME})
-        print(f"falou e passou a vez na reunião #{r['id']}", flush=True)
+        print(f"falou em #{canal} e passou a vez na reunião #{r['id']}", flush=True)
     except (OSError, ValueError) as e:
         print(f"falha na reunião: {e}", file=sys.stderr, flush=True)
 
@@ -166,13 +166,14 @@ def main() -> None:
     contexto: deque = deque(iniciais, maxlen=CONTEXTO)
     respostas: deque = deque()
     print(f"{NOME} ({MODELO}) em #{SALA}, a partir da mensagem {cursor}", flush=True)
-    # Entrou no meio de uma reunião e já é a vez dele: fala agora.
-    pendente = reuniao_na_minha_vez({"de": "relay", "texto": f"Vez de @{NOME}"})
-    if pendente:
-        falar_na_reuniao(contexto, pendente)
+
     while True:
         try:
-            novas = buscar(cursor, espera=60)
+            # Reuniões andam em canais próprios: confere a vez a cada ciclo (espera curta).
+            vez = reuniao_na_minha_vez()
+            if vez:
+                falar_na_reuniao(vez)
+            novas = buscar(cursor, espera=15)
         except (OSError, ValueError) as e:
             # OSError cobre URLError, timeout e conexão derrubada (ex.: servidor reiniciando).
             print(f"relay indisponível: {e}; tentando de novo em 5 s", file=sys.stderr, flush=True)
@@ -181,10 +182,6 @@ def main() -> None:
         for m in novas:
             cursor = m["id"]
             contexto.append(m)
-            reuniao = reuniao_na_minha_vez(m)
-            if reuniao:
-                falar_na_reuniao(contexto, reuniao)
-                continue
             if not deve_responder(m):
                 continue
             agora = time.monotonic()

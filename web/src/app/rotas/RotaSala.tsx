@@ -90,6 +90,8 @@ export function RotaSala() {
   const [novaReuniao, setNovaReuniao] = useState(false);
   const { data: reunioes } = useReunioes(sala);
   const reuniaoAtiva = reunioes?.some((r) => r.estado !== "encerrada") ?? false;
+  // Canal de reunião ("<sala>.reuniao-<id>"): cabeçalho com o título e volta para a sala de origem.
+  const doCanal = reunioes?.find((r) => r.canal === sala);
   const te = textos.equipe;
 
   if (estadoSessao === "fora") return <Navigate to="/entrar" search={{ volta: sala }} replace />;
@@ -110,7 +112,16 @@ export function RotaSala() {
         <header className="flex flex-wrap items-center gap-2 border-b px-4 pt-[calc(.5rem+env(safe-area-inset-top))] pb-2 md:flex-nowrap md:gap-3 md:py-3">
           <SidebarTrigger className="-ml-2 size-11 md:-ml-1 md:size-8" aria-label={textos.salas.alternarLateral} />
           <span aria-hidden className="hidden h-4 w-px bg-border md:block" />
-          <h1 className="min-w-0 flex-1 truncate text-base font-semibold md:flex-none">#{sala}</h1>
+          {doCanal ? (
+            <div className="flex min-w-0 flex-1 items-center gap-1.5 md:flex-none">
+              <Button variant="ghost" size="sm" className="px-1.5 text-muted-foreground" onClick={() => escolher(doCanal.sala)}
+                aria-label={textos.reuniao.voltarSala(doCanal.sala)}>#{doCanal.sala}</Button>
+              <span className="text-muted-foreground" aria-hidden>/</span>
+              <h1 className="min-w-0 truncate text-base font-semibold">🗓 #{doCanal.id} {doCanal.titulo}</h1>
+            </div>
+          ) : (
+            <h1 className="min-w-0 flex-1 truncate text-base font-semibold md:flex-none">#{sala}</h1>
+          )}
           <div role="tablist" aria-label={te.conversa} className="order-2 flex rounded-lg bg-superficie p-0.5 md:order-none">
             {([["conversa", MessagesSquareIcon, te.conversa], ["quadro", KanbanIcon, te.quadro]] as const).map(([id, Icone, rotulo]) => (
               <button key={id} role="tab" aria-selected={aba === id} onClick={() => setAba(id)}
@@ -121,7 +132,7 @@ export function RotaSala() {
             ))}
           </div>
           <Participantes autores={autores} />
-          {!reuniaoAtiva && (
+          {!reuniaoAtiva && !doCanal && (
             <Button variant="outline" size="sm" className="order-2 md:order-none" onClick={() => setNovaReuniao(true)}>
               <CalendarPlusIcon /> {textos.reuniao.nova}
             </Button>
@@ -134,12 +145,12 @@ export function RotaSala() {
           </Suspense>
         )}
         {aba === "quadro" ? (
-          <Suspense fallback={<div className="flex-1" />}><Quadro sala={sala} eu={nome} admin={admin} /></Suspense>
+          <Suspense fallback={<div className="flex-1" />}><Quadro sala={doCanal?.sala ?? sala} eu={nome} admin={admin} /></Suspense>
         ) : (
           <>
             <Conversa key={sala} sala={sala} eu={nome} carregando={conversa.estado.tipo === "carregando"}
               ultimaLida={ultimaLida.id} aoLer={aoLer} admin={admin} aoResponder={setRespondendo} {...conversa} />
-            <Composer key={`c-${sala}`} sala={sala} nome={nome} respondendo={respondendo} candidatos={candidatos} aoCancelarResposta={() => setRespondendo(null)}
+            <Composer key={`c-${sala}`} sala={sala} rotuloSala={doCanal ? `🗓 ${doCanal.titulo}` : undefined} nome={nome} respondendo={respondendo} candidatos={candidatos} aoCancelarResposta={() => setRespondendo(null)}
               aoEnviar={(texto, replyTo) => conversa.enviar(texto, nome, replyTo)} />
           </>
         )}

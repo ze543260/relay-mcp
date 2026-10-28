@@ -15,6 +15,8 @@ export interface Candidato {
 
 interface Props {
   sala: string;
+  /** Nome amigável no placeholder (ex.: canal de reunião). */
+  rotuloSala?: string;
   nome: string;
   respondendo: Mensagem | null;
   /** Quem pode ser mencionado: participantes da sala + online. */
@@ -34,7 +36,7 @@ function mencaoNoCursor(texto: string, cursor: number): { inicio: number; termo:
 }
 
 /** Envio é otimista (useConversa): limpa na hora e a mensagem aparece como "enviando…". */
-export function Composer({ sala, nome, respondendo, candidatos, aoCancelarResposta, aoEnviar }: Props) {
+export function Composer({ sala, rotuloSala, nome, respondendo, candidatos, aoCancelarResposta, aoEnviar }: Props) {
   const [texto, setTexto] = useState("");
   const [cursor, setCursor] = useState(0);
   const [indice, setIndice] = useState(0);
@@ -139,7 +141,7 @@ export function Composer({ sala, nome, respondendo, candidatos, aoCancelarRespos
       <form onSubmit={enviar}
         className="flex items-end gap-2 px-3 pt-2 pb-[calc(.5rem+env(safe-area-inset-bottom))] md:px-6 md:py-3">
         <label htmlFor="entrada" className="sr-only">{t.rotulo}</label>
-        <Textarea id="entrada" ref={ref} rows={1} value={texto} placeholder={t.placeholder(nome, sala)}
+        <Textarea id="entrada" ref={ref} rows={1} value={texto} placeholder={rotuloSala ? t.placeholderReuniao(nome, rotuloSala) : t.placeholder(nome, sala)}
           role="combobox" aria-expanded={aberta} aria-controls={aberta ? idLista : undefined} aria-autocomplete="list"
           aria-activedescendant={aberta ? `${idLista}-${ativo}` : undefined}
           onChange={(e) => atualizar(e.target.value, e.target.selectionStart)}

@@ -47,6 +47,8 @@ export interface Reuniao {
   limite_em: string | null;
   ata: string | null;
   criada_por: string;
+  /** Sala própria da reunião (falas e vez); a sala principal recebe convite e ata. */
+  canal: string;
 }
 
 const erro = (e: unknown) => avisar("erro", traduzirErro(e).mensagem);

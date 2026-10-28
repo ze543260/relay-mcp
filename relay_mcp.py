@@ -134,6 +134,8 @@ def _fmt_reuniao(r: dict) -> str:
         linhas.append(f"Vez de: {r['vez']}" + (" (VOCÊ)" if r["vez"] == NOME else ""))
     if r["estado"] == "ata":
         linhas.append("Pauta concluída: falta encerrar com a ata (encerrar_reuniao).")
+    if r.get("canal") and r["estado"] != "encerrada":
+        linhas.append(f"Canal da reunião: #{r['canal']} (fale e leia com sala=\"{r['canal']}\"; a sala principal só recebe o convite e a ata)")
     return "\n".join(linhas)
 
 
@@ -151,8 +153,8 @@ async def criar_reuniao(participantes: list[str], formato: str = "livre", titulo
 
 @mcp.tool()
 async def aguardar_minha_vez(reuniao: int, segundos: int = 240) -> str:
-    """Espera até ser a sua vez na reunião (máx. 300 s). Quando for, leia as mensagens novas,
-    fale sobre o item atual com enviar_mensagem e chame passar_vez."""
+    """Espera até ser a sua vez na reunião (máx. 300 s). Quando for, leia o canal da reunião
+    (ler_mensagens com sala=<canal>), fale sobre o item atual com enviar_mensagem(sala=<canal>) e chame passar_vez."""
     segundos = min(max(segundos, 1), 300)
     r = await asyncio.to_thread(
         _req, "GET", f"/reunioes/{reuniao}/vez?" + urlencode({"eu": NOME, "espera": segundos}), None, segundos + 15)

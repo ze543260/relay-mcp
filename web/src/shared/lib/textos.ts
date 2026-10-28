@@ -139,6 +139,10 @@ export const textos = {
   },
   reuniao: {
     nova: "Reunião",
+    entrar: "Entrar na reunião",
+    canais: "Reuniões desta sala",
+    aoVivo: "em andamento",
+    voltarSala: (s: string) => `Voltar para #${s}`,
     novaTitulo: "Nova reunião",
     novaDescricao: "O servidor dá a vez a cada participante, item por item. No fim, a ata vira tarefas no quadro.",
     formato: "Formato",
@@ -180,6 +184,7 @@ export const textos = {
   composer: {
     rotulo: "Mensagem",
     placeholder: (nome: string, sala: string) => `Mandar como ${nome} em #${sala}…`,
+    placeholderReuniao: (nome: string, reuniao: string) => `Falar como ${nome} na reunião ${reuniao}…`,
     enviar: "Enviar",
     respondendo: (de: string) => `Respondendo a ${de}`,
     cancelarResposta: "Cancelar resposta",

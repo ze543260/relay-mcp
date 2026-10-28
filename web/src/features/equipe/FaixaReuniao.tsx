@@ -1,4 +1,5 @@
-import { CalendarClockIcon, CheckIcon, MicIcon, PlusIcon, Trash2Icon } from "lucide-react";
+import { useNavigate } from "@tanstack/react-router";
+import { ArrowRightIcon, CalendarClockIcon, CheckIcon, MicIcon, PlusIcon, Trash2Icon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -92,7 +93,9 @@ export function FaixaReuniao({ sala, eu, admin }: { sala: string; eu: string; ad
   const { data } = useReunioes(sala);
   const eq = useEquipe(sala);
   const [ataAberta, setAtaAberta] = useState(false);
+  const navegar = useNavigate();
   const r = data?.find((x) => x.estado !== "encerrada");
+  const noCanal = r?.canal === sala;
   const restante = useRestante(r?.estado === "aberta" ? r.limite_em : null);
   if (!r) return null;
   const minhaVez = r.vez === eu;
@@ -116,9 +119,14 @@ export function FaixaReuniao({ sala, eu, admin }: { sala: string; eu: string; ad
         </div>
         {restante && <span className="font-mono text-xs text-muted-foreground tabular-nums" aria-label={t.tempoRestante}>{restante}</span>}
         <div className="flex gap-1.5">
-          {r.estado === "aberta" && podePassar && (
+          {noCanal && r.estado === "aberta" && podePassar && (
             <Button size="sm" variant={minhaVez ? "default" : "outline"} disabled={eq.passarVez.isPending} onClick={() => eq.passarVez.mutate(r.id)}>
               <MicIcon /> {minhaVez ? t.passarMinha : t.passar}
+            </Button>
+          )}
+          {!noCanal && (
+            <Button size="sm" variant={minhaVez ? "default" : "outline"} onClick={() => void navegar({ to: "/s/$sala", params: { sala: r.canal } })}>
+              {t.entrar} <ArrowRightIcon />
             </Button>
           )}
           {podeEncerrar && (

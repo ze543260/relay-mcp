@@ -101,6 +101,9 @@ MIGRACOES = [
          pauta TEXT NOT NULL, participantes TEXT NOT NULL, item INTEGER NOT NULL DEFAULT 0,
          vez INTEGER NOT NULL DEFAULT 0, rodada INTEGER NOT NULL DEFAULT 1, estado TEXT NOT NULL DEFAULT 'aberta',
          inicio REAL NOT NULL, limite REAL, ata TEXT, criada_por TEXT NOT NULL);""",
+    # 5: cada reunião tem um canal próprio (sala "<sala>.reuniao-<id>")
+    """ALTER TABLE reuniao ADD COLUMN canal TEXT;
+       CREATE INDEX IF NOT EXISTS reuniao_canal ON reuniao(canal);""",
 ]
 
 STATUS_TAREFA = ("a_fazer", "fazendo", "revisao", "feito")
@@ -170,18 +173,25 @@ def tarefa_para_json(r: tuple) -> dict:
 
 
 def reuniao_para_json(r: tuple) -> dict:
-    i, sala, titulo, formato, pauta, parts, item, vez, rodada, estado, inicio, limite, ata, por = r
+    i, sala, titulo, formato, pauta, parts, item, vez, rodada, estado, inicio, limite, ata, por, canal = r
     participantes = json.loads(parts)
     pauta_l = json.loads(pauta)
     return {"id": i, "sala": sala, "titulo": titulo, "formato": formato, "pauta": pauta_l, "participantes": participantes,
             "item": item, "item_atual": pauta_l[item] if estado == "aberta" and item < len(pauta_l) else None,
             "vez": participantes[vez] if estado == "aberta" and participantes else None, "rodada": rodada,
             "estado": estado, "inicio_em": iso(inicio), "limite_em": iso(limite) if limite else None,
-            "ata": ata, "criada_por": por}
+            "ata": ata, "criada_por": por, "canal": canal or sala}
+
+
+def evento_reuniao(con: sqlite3.Connection, r: dict) -> None:
+    """A sala principal (faixa/lista) e o canal da reunião precisam saber da mudança."""
+    registrar_evento(con, "reuniao", r["sala"], r["id"])
+    if r["canal"] != r["sala"]:
+        registrar_evento(con, "reuniao", r["canal"], r["id"])
 
 
 COLS_TAREFA = "id, sala, titulo, descricao, status, responsavel, sprint_id, msg_id, criada_por, criado, atualizado, prazo"
-COLS_REUNIAO = "id, sala, titulo, formato, pauta, participantes, item, vez, rodada, estado, inicio, limite, ata, criada_por"
+COLS_REUNIAO = "id, sala, titulo, formato, pauta, participantes, item, vez, rodada, estado, inicio, limite, ata, criada_por, canal"
 
 
 # --- Erros -----------------------------------------------------------------
@@ -519,10 +529,16 @@ class Handler(BaseHTTPRequestHandler):
                 """SELECT sala, COUNT(*), MAX(criado), MAX(id), GROUP_CONCAT(DISTINCT CASE WHEN de != 'relay' THEN de END)
                    FROM msg GROUP BY sala ORDER BY MAX(id) DESC"""
             ).fetchall()
-        self._json(200, [
-            {"sala": s, "total": n, "ultima": u, "ultimo_id": ult, "agentes": (a or "").split(",")}
-            for s, n, u, ult, a in linhas
-        ])
+            canais = {c: (i, t, e, p) for i, t, e, p, c in con.execute(
+                "SELECT id, titulo, estado, sala, canal FROM reuniao WHERE canal IS NOT NULL")}
+        saida = []
+        for s_, n, u, ult, a in linhas:
+            item = {"sala": s_, "total": n, "ultima": u, "ultimo_id": ult, "agentes": [x for x in (a or "").split(",") if x]}
+            if s_ in canais:
+                i, t, e, p = canais[s_]
+                item.update({"pai": p, "reuniao": {"id": i, "titulo": t, "estado": e}})
+            saida.append(item)
+        self._json(200, saida)
 
     def agentes(self, _q: dict) -> None:
         with conectar() as con:
@@ -913,8 +929,8 @@ class Handler(BaseHTTPRequestHandler):
         # Tempo esgotado: para de dar a vez e pede a ata.
         if r["estado"] == "aberta" and r["limite_em"] and time.time() > linha[11]:
             con.execute("UPDATE reuniao SET estado='ata' WHERE id=?", (rid,))
-            mensagem_sistema(con, r["sala"], f"⏰ Tempo da reunião **#{rid}** esgotado. Falta a ata (encerrar com decisões e ações).")
-            registrar_evento(con, "reuniao", r["sala"], rid)
+            mensagem_sistema(con, r["canal"], f"⏰ Tempo da reunião **#{rid}** esgotado. Falta a ata (encerrar com decisões e ações).")
+            evento_reuniao(con, r)
             notificar()
             r["estado"], r["vez"], r["item_atual"] = "ata", None, None
         return r
@@ -923,7 +939,8 @@ class Handler(BaseHTTPRequestHandler):
         sala = validar_sala(q.get("sala"))
         with conectar() as con:
             self._quem(con)
-            ids = [i for (i,) in con.execute("SELECT id FROM reuniao WHERE sala=? ORDER BY id DESC LIMIT 20", (sala,))]
+            ids = [i for (i,) in con.execute(
+                "SELECT id FROM reuniao WHERE sala=? OR canal=? ORDER BY id DESC LIMIT 20", (sala, sala))]
             lista = [self._reuniao(con, i) for i in ids]
         self._json(200, lista)
 
@@ -947,21 +964,29 @@ class Handler(BaseHTTPRequestHandler):
         minutos = float(c.get("minutos") or 0)
         with conectar() as con:
             por = self._nome(self._quem(con), c)
+            if "." in sala and sala.split(".", 1)[1].startswith("reuniao-"):
+                raise ErroHttp(400, "sala_invalida", "Abra a reunião na sala principal, não no canal de outra reunião.")
             if con.execute("SELECT 1 FROM reuniao WHERE sala=? AND estado IN ('aberta','ata')", (sala,)).fetchone():
                 raise ErroHttp(409, "reuniao_em_andamento", "Já existe uma reunião em andamento nesta sala.")
             agora = time.time()
             cur = con.execute(
-                f"INSERT INTO reuniao ({COLS_REUNIAO.replace('id, ', '', 1)}) VALUES (?,?,?,?,?,0,0,1,'aberta',?,?,NULL,?)",
+                f"INSERT INTO reuniao ({COLS_REUNIAO.replace('id, ', '', 1)}) VALUES (?,?,?,?,?,0,0,1,'aberta',?,?,NULL,?,NULL)",
                 (sala, titulo, formato, json.dumps(pauta, ensure_ascii=False), json.dumps(parts), agora,
                  agora + minutos * 60 if minutos > 0 else None, por),
             )
             rid = cur.lastrowid
+            canal = f"{sala}.reuniao-{rid}"
+            con.execute("UPDATE reuniao SET canal=? WHERE id=?", (canal, rid))
             itens = "\n".join(f"{n}. {p}" for n, p in enumerate(pauta, 1))
+            # Sala principal: só o convite. A conversa da reunião acontece no canal dela.
             mensagem_sistema(con, sala,
-                f"🗓 **{por}** abriu a reunião **#{rid} {titulo}** ({formato}" + (f", {int(minutos)} min" if minutos > 0 else "") + ")\n\n"
-                f"**Pauta**\n{itens}\n\n**Participantes**: {', '.join('@' + p for p in parts)}\n\n"
+                f"🗓 **{por}** abriu a reunião **#{rid} {titulo}** ({formato}" + (f", {int(minutos)} min" if minutos > 0 else "") + ") "
+                f"com {', '.join('@' + p for p in parts)} → canal **#{canal}**")
+            mensagem_sistema(con, canal,
+                f"🗓 **Reunião #{rid} {titulo}** ({formato})\n\n**Pauta**\n{itens}\n\n**Ordem**: {', '.join('@' + p for p in parts)}\n\n"
                 f"➡️ Vez de @{parts[0]}: *{pauta[0]}*")
             registrar_evento(con, "reuniao", sala, rid)
+            registrar_evento(con, "reuniao", canal, rid)
             r = self._reuniao(con, rid)
         notificar()
         self._json(201, r)
@@ -1007,12 +1032,12 @@ class Handler(BaseHTTPRequestHandler):
                 vez, item = 0, item + 1
             if item >= len(pauta):
                 con.execute("UPDATE reuniao SET estado='ata', vez=0, item=? WHERE id=?", (item, rid))
-                mensagem_sistema(con, r["sala"], f"✔️ Pauta da reunião **#{rid}** concluída. Falta a ata: decisões e ações (`encerrar`).")
+                mensagem_sistema(con, r["canal"], f"✔️ Pauta da reunião **#{rid}** concluída. Falta a ata: decisões e ações (`encerrar`).")
             else:
                 con.execute("UPDATE reuniao SET vez=?, item=?, rodada=? WHERE id=?", (vez, item, rodada, rid))
                 novo_item = " (próximo item)" if item != r["item"] else ""
-                mensagem_sistema(con, r["sala"], f"➡️ Vez de @{parts[vez]}{novo_item}: *{pauta[item]}*")
-            registrar_evento(con, "reuniao", r["sala"], rid)
+                mensagem_sistema(con, r["canal"], f"➡️ Vez de @{parts[vez]}{novo_item}: *{pauta[item]}*")
+            evento_reuniao(con, r)
             r = self._reuniao(con, rid)
         notificar()
         self._json(200, r)
@@ -1034,7 +1059,10 @@ class Handler(BaseHTTPRequestHandler):
             if eu not in r["participantes"] and eu != r["criada_por"] and not quem.admin:
                 raise ErroHttp(403, "proibido", "Só participantes encerram a reunião.")
             criadas = []
-            msg_id = mensagem_sistema(con, r["sala"], f"📝 **Ata da reunião #{rid} {r['titulo']}** (por {eu})\n\n{ata}")
+            corpo_ata = f"📝 **Ata da reunião #{rid} {r['titulo']}** (por {eu})\n\n{ata}"
+            if r["canal"] != r["sala"]:
+                mensagem_sistema(con, r["canal"], corpo_ata + "\n\n_Reunião encerrada._")
+            msg_id = mensagem_sistema(con, r["sala"], corpo_ata)
             agora = time.time()
             sprint = con.execute("SELECT id FROM sprint WHERE sala=? AND ativa=1", (r["sala"],)).fetchone()
             for a in acoes:
@@ -1051,7 +1079,7 @@ class Handler(BaseHTTPRequestHandler):
                 linhas = "\n".join(f"- **#{i}** {t}" + (f" → @{p}" if p else "") for i, t, p in criadas)
                 mensagem_sistema(con, r["sala"], f"📋 Ações da reunião #{rid} viraram tarefas:\n{linhas}")
             con.execute("UPDATE reuniao SET estado='encerrada', ata=? WHERE id=?", (ata, rid))
-            registrar_evento(con, "reuniao", r["sala"], rid)
+            evento_reuniao(con, r)
             registrar_evento(con, "tarefa", r["sala"], 0)
             r = self._reuniao(con, rid)
         notificar()

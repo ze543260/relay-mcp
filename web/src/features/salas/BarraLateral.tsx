@@ -1,9 +1,10 @@
 import { lazy, Suspense, useState } from "react";
-import { ChevronsUpDownIcon, HashIcon, SearchIcon } from "lucide-react";
+import { CalendarClockIcon, ChevronsUpDownIcon, HashIcon, SearchIcon } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupLabel, SidebarHeader, SidebarMenu,
-  SidebarMenuBadge, SidebarMenuButton, SidebarMenuItem, SidebarMenuSkeleton, SidebarRail, useSidebar,
+  SidebarMenuBadge, SidebarMenuButton, SidebarMenuItem, SidebarMenuSkeleton, SidebarMenuSub, SidebarMenuSubButton,
+  SidebarMenuSubItem, SidebarRail, useSidebar,
 } from "@/components/ui/sidebar";
 import type { EstadoConexao } from "@/features/mensagens/useConversa";
 import { cn } from "@/lib/utils";
@@ -43,7 +44,15 @@ export function BarraLateral({ sala, nome, admin, vistas, estado, tema, aoEscolh
   const { data, isPending } = useSalas();
   const { isMobile, setOpenMobile } = useSidebar();
   const lista = data ?? [];
-  const salas = lista.some((s) => s.sala === sala) ? lista : [{ sala, total: 0, agentes: [] }, ...lista];
+  const todas = lista.some((s) => s.sala === sala) ? lista : [{ sala, total: 0, agentes: [] }, ...lista];
+  // Canais de reunião aparecem aninhados na sala de origem (ativas sempre; encerradas, as 3 últimas).
+  const salas = todas.filter((s) => !s.pai);
+  const canaisDe = (pai: string) => {
+    const filhos = todas.filter((s) => s.pai === pai).sort((a, b) => (b.reuniao?.id ?? 0) - (a.reuniao?.id ?? 0));
+    const ativos = filhos.filter((c) => c.reuniao?.estado !== "encerrada");
+    const encerrados = filhos.filter((c) => c.reuniao?.estado === "encerrada").slice(0, 3);
+    return [...ativos, ...encerrados];
+  };
   const vivo = estado.tipo === "ao-vivo";
   const [menuCarregado, setMenuCarregado] = useState(false);
   const cabecalho = (
@@ -123,6 +132,24 @@ export function BarraLateral({ sala, nome, admin, vistas, estado, tema, aoEscolh
                     aria-label={naoLida ? textos.salas.naoLidas(s.total) : textos.salas.total(s.total)}>
                     {s.total}
                   </SidebarMenuBadge>
+                  {canaisDe(s.sala).length > 0 && (
+                    <SidebarMenuSub aria-label={textos.reuniao.canais}>
+                      {canaisDe(s.sala).map((c) => {
+                        const viva = c.reuniao?.estado !== "encerrada";
+                        return (
+                          <SidebarMenuSubItem key={c.sala}>
+                            <SidebarMenuSubButton isActive={c.sala === sala} aria-current={c.sala === sala ? "page" : undefined}
+                              render={<button type="button" onClick={() => escolher(c.sala)} />}
+                              className={cn("h-auto min-h-8 w-full py-1 text-left md:min-h-7", !viva && "text-muted-foreground")}>
+                              <CalendarClockIcon className={cn(viva && "text-primary!")} />
+                              <span className="min-w-0 flex-1 truncate">#{c.reuniao?.id} {c.reuniao?.titulo}</span>
+                              {viva && <i aria-label={textos.reuniao.aoVivo} className="size-1.5 flex-none rounded-full bg-primary motion-safe:animate-pulse" />}
+                            </SidebarMenuSubButton>
+                          </SidebarMenuSubItem>
+                        );
+                      })}
+                    </SidebarMenuSub>
+                  )}
                 </SidebarMenuItem>
               );
             })}

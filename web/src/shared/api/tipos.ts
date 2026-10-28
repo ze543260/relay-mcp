@@ -17,6 +17,9 @@ export interface Sala {
   ultima?: number;
   ultimo_id?: number;
   agentes: string[];
+  /** Canal de reunião: sala de origem e dados da reunião. */
+  pai?: string;
+  reuniao?: { id: number; titulo: string; estado: "aberta" | "ata" | "encerrada" };
 }
 
 export interface Agente {
