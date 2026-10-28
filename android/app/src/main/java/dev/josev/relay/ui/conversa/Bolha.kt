@@ -103,6 +103,21 @@ fun Bolha(
     val cores = MaterialTheme.colorScheme
     val extras = LocalExtras.current
     val haptico = LocalHapticFeedback.current
+    // Eventos do próprio relay (tarefas, reuniões): linha compacta, não bolha.
+    if (m.de == "relay") {
+        Box(modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+            Column(
+                Modifier.widthIn(max = 640.dp).border(1.dp, cores.outlineVariant, RoundedCornerShape(Tokens.Raio.md))
+                    .background(cores.surfaceContainerHigh.copy(alpha = 0.5f), RoundedCornerShape(Tokens.Raio.md)).padding(horizontal = 12.dp, vertical = 8.dp),
+            ) {
+                androidx.compose.runtime.CompositionLocalProvider(androidx.compose.material3.LocalContentColor provides cores.onSurfaceVariant) {
+                    Markdown(m.texto, eu)
+                }
+                Text(hora(m.criado), style = MaterialTheme.typography.labelSmall, color = cores.onSurfaceVariant, modifier = Modifier.align(Alignment.End))
+            }
+        }
+        return
+    }
     val mencionaMe = !minha && Regex("@${Regex.escape(eu)}\\b", RegexOption.IGNORE_CASE).containsMatchIn(m.texto)
     val borda = when {
         pendente?.falhou == true -> cores.error.copy(alpha = 0.6f)
@@ -187,11 +202,53 @@ fun AcoesMensagem(m: Mensagem, podeApagar: Boolean, aoFechar: () -> Unit, aoResp
 
 private fun Modifier.combinedClickableSimples(aoClicar: () -> Unit) = this.clickable(onClick = aoClicar)
 
+private val MENCAO = Regex("(^|[\\s(])@([\\w.-]{0,32})$")
+
 @Composable
-fun Composer(sala: String, nome: String, respondendo: Mensagem?, aoCancelarResposta: () -> Unit, aoEnviar: (String) -> Unit) {
-    var texto by remember(sala) { mutableStateOf("") }
+fun Composer(
+    sala: String, nome: String, respondendo: Mensagem?, candidatos: List<Pair<String, Boolean>>,
+    aoCancelarResposta: () -> Unit, aoEnviar: (String) -> Unit,
+) {
+    var campo by remember(sala) { mutableStateOf(androidx.compose.ui.text.input.TextFieldValue("")) }
     val cores = MaterialTheme.colorScheme
+    // `@parcial` logo antes do cursor abre a lista de quem pode ser mencionado.
+    val antes = campo.text.take(campo.selection.start)
+    val m = MENCAO.find(antes)
+    val termo = m?.groupValues?.get(2)?.lowercase()
+    val sugestoes = if (termo == null) emptyList() else candidatos
+        .filter { (n, _) -> n != nome && n != "relay" && n.lowercase().contains(termo) }
+        .sortedWith(compareByDescending<Pair<String, Boolean>> { it.first.lowercase().startsWith(termo) }.thenByDescending { it.second }.thenBy { it.first })
+        .take(6)
+
+    fun escolher(n: String) {
+        val inicio = campo.selection.start - (termo?.length ?: 0) - 1
+        val novo = campo.text.substring(0, inicio) + "@$n " + campo.text.substring(campo.selection.start)
+        val pos = inicio + n.length + 2
+        campo = androidx.compose.ui.text.input.TextFieldValue(novo, androidx.compose.ui.text.TextRange(pos))
+    }
+
     Column(Modifier.fillMaxWidth().background(cores.background).navigationBarsPadding()) {
+        if (sugestoes.isNotEmpty()) {
+            androidx.compose.material3.Surface(
+                Modifier.padding(horizontal = 12.dp).padding(bottom = 6.dp).widthIn(max = 320.dp),
+                shape = RoundedCornerShape(Tokens.Raio.xl), tonalElevation = 3.dp, shadowElevation = 6.dp,
+                border = androidx.compose.foundation.BorderStroke(1.dp, cores.outlineVariant),
+            ) {
+                Column(Modifier.padding(4.dp)) {
+                    Text("MENCIONAR", style = MaterialTheme.typography.labelSmall, color = cores.onSurfaceVariant, modifier = Modifier.padding(8.dp, 4.dp))
+                    sugestoes.forEach { (n, online) ->
+                        Row(
+                            Modifier.fillMaxWidth().heightIn(min = Tokens.alvoToque).clickable { escolher(n) }.padding(horizontal = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Avatar(n, 26.dp)
+                            Text(n, modifier = Modifier.weight(1f).padding(start = 10.dp), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            if (online) Text("online", color = LocalExtras.current.ok, style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
+                }
+            }
+        }
         HorizontalDivider(color = cores.outlineVariant)
         if (respondendo != null) Row(Modifier.padding(start = 16.dp, end = 4.dp, top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.AutoMirrored.Filled.Reply, null, tint = cores.primary, modifier = Modifier.size(16.dp))
@@ -201,7 +258,7 @@ fun Composer(sala: String, nome: String, respondendo: Mensagem?, aoCancelarRespo
         }
         Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.Bottom) {
             TextField(
-                texto, { texto = it }, modifier = Modifier.weight(1f).heightIn(min = 48.dp, max = 180.dp),
+                campo, { campo = it }, modifier = Modifier.weight(1f).heightIn(min = 48.dp, max = 180.dp),
                 placeholder = { Text("Mandar como $nome em #$sala…", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 shape = RoundedCornerShape(24.dp),
                 colors = TextFieldDefaults.colors(
@@ -211,8 +268,8 @@ fun Composer(sala: String, nome: String, respondendo: Mensagem?, aoCancelarRespo
             )
             Spacer(Modifier.width(8.dp))
             FilledIconButton(
-                onClick = { if (texto.isNotBlank()) { aoEnviar(texto); texto = "" } },
-                enabled = texto.isNotBlank(), modifier = Modifier.size(48.dp), shape = CircleShape,
+                onClick = { if (campo.text.isNotBlank()) { aoEnviar(campo.text); campo = androidx.compose.ui.text.input.TextFieldValue("") } },
+                enabled = campo.text.isNotBlank(), modifier = Modifier.size(48.dp), shape = CircleShape,
                 colors = IconButtonDefaults.filledIconButtonColors(containerColor = cores.primary),
             ) { Icon(Icons.AutoMirrored.Filled.Send, "Enviar") }
         }

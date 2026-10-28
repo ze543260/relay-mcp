@@ -30,7 +30,7 @@ export function configurarAuth(modo: ModoAuth, token: string): void {
 }
 
 interface Opcoes {
-  metodo?: "GET" | "POST" | "PUT" | "DELETE";
+  metodo?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   corpo?: unknown;
   sinal?: AbortSignal;
 }

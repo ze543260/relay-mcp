@@ -87,7 +87,30 @@ MIGRACOES = [
          nome TEXT NOT NULL, sala TEXT NOT NULL, ultimo_id INTEGER NOT NULL, PRIMARY KEY (nome, sala));
        CREATE TABLE IF NOT EXISTS evento (
          seq INTEGER PRIMARY KEY, tipo TEXT NOT NULL, sala TEXT NOT NULL, msg_id INTEGER NOT NULL, quando REAL NOT NULL);""",
+    # 4: tarefas, sprints e reuniões (teste; o back em Rust define o definitivo)
+    """CREATE TABLE IF NOT EXISTS sprint (
+         id INTEGER PRIMARY KEY, sala TEXT NOT NULL, nome TEXT NOT NULL, objetivo TEXT,
+         inicio REAL NOT NULL, fim REAL, ativa INTEGER NOT NULL DEFAULT 1);
+       CREATE TABLE IF NOT EXISTS tarefa (
+         id INTEGER PRIMARY KEY, sala TEXT NOT NULL, titulo TEXT NOT NULL, descricao TEXT,
+         status TEXT NOT NULL DEFAULT 'a_fazer', responsavel TEXT, sprint_id INTEGER, msg_id INTEGER,
+         criada_por TEXT NOT NULL, criado REAL NOT NULL, atualizado REAL NOT NULL, prazo REAL);
+       CREATE INDEX IF NOT EXISTS tarefa_sala ON tarefa(sala, status);
+       CREATE TABLE IF NOT EXISTS reuniao (
+         id INTEGER PRIMARY KEY, sala TEXT NOT NULL, titulo TEXT NOT NULL, formato TEXT NOT NULL,
+         pauta TEXT NOT NULL, participantes TEXT NOT NULL, item INTEGER NOT NULL DEFAULT 0,
+         vez INTEGER NOT NULL DEFAULT 0, rodada INTEGER NOT NULL DEFAULT 1, estado TEXT NOT NULL DEFAULT 'aberta',
+         inicio REAL NOT NULL, limite REAL, ata TEXT, criada_por TEXT NOT NULL);""",
 ]
+
+STATUS_TAREFA = ("a_fazer", "fazendo", "revisao", "feito")
+# Formatos prontos: pauta padrão de cada tipo de reunião.
+FORMATOS = {
+    "daily": ["O que fiz desde a última", "O que vou fazer agora", "Bloqueios"],
+    "planejamento": ["Objetivo da sprint", "Tarefas candidatas e estimativas", "Quem pega o quê"],
+    "revisao": ["O que foi entregue", "Problemas encontrados", "Ajustes necessários"],
+    "livre": ["Assunto"],
+}
 
 
 def conectar() -> sqlite3.Connection:
@@ -126,6 +149,39 @@ def iso(ts: float) -> str:
 def notificar() -> None:
     with NOVA:
         NOVA.notify_all()
+
+
+def registrar_evento(con: sqlite3.Connection, tipo: str, sala: str, ref: int) -> None:
+    """Evento de tempo real (apagada, tarefa, reuniao): o SSE repassa só o tipo e o id."""
+    con.execute("INSERT INTO evento (tipo, sala, msg_id, quando) VALUES (?,?,?,?)", (tipo, sala, ref, time.time()))
+
+
+def mensagem_sistema(con: sqlite3.Connection, sala: str, texto: str) -> int:
+    """Mensagem do próprio relay (de='relay') para marcar eventos na conversa."""
+    cur = con.execute("INSERT INTO msg (sala, de, texto, criado) VALUES (?, 'relay', ?, ?)", (sala, texto, time.time()))
+    return cur.lastrowid
+
+
+def tarefa_para_json(r: tuple) -> dict:
+    i, sala, titulo, desc, status, resp, sprint, msg, por, criado, atual, prazo = r
+    return {"id": i, "sala": sala, "titulo": titulo, "descricao": desc, "status": status, "responsavel": resp,
+            "sprint_id": sprint, "msg_id": msg, "criada_por": por, "criado_em": iso(criado),
+            "atualizado_em": iso(atual), "prazo": iso(prazo) if prazo else None}
+
+
+def reuniao_para_json(r: tuple) -> dict:
+    i, sala, titulo, formato, pauta, parts, item, vez, rodada, estado, inicio, limite, ata, por = r
+    participantes = json.loads(parts)
+    pauta_l = json.loads(pauta)
+    return {"id": i, "sala": sala, "titulo": titulo, "formato": formato, "pauta": pauta_l, "participantes": participantes,
+            "item": item, "item_atual": pauta_l[item] if estado == "aberta" and item < len(pauta_l) else None,
+            "vez": participantes[vez] if estado == "aberta" and participantes else None, "rodada": rodada,
+            "estado": estado, "inicio_em": iso(inicio), "limite_em": iso(limite) if limite else None,
+            "ata": ata, "criada_por": por}
+
+
+COLS_TAREFA = "id, sala, titulo, descricao, status, responsavel, sprint_id, msg_id, criada_por, criado, atualizado, prazo"
+COLS_REUNIAO = "id, sala, titulo, formato, pauta, participantes, item, vez, rodada, estado, inicio, limite, ata, criada_por"
 
 
 # --- Erros -----------------------------------------------------------------
@@ -327,6 +383,12 @@ class Handler(BaseHTTPRequestHandler):
                 ("POST", "/mensagens"): self.postar,
                 ("GET", "/agentes"): self.agentes,
                 ("POST", "/agentes"): self.criar_agente,
+                ("GET", "/tarefas"): self.tarefas,
+                ("POST", "/tarefas"): self.criar_tarefa,
+                ("GET", "/sprints"): self.sprints,
+                ("POST", "/sprints"): self.criar_sprint,
+                ("GET", "/reunioes"): self.reunioes,
+                ("POST", "/reunioes"): self.criar_reuniao,
             }
             if (metodo, caminho) in rotas:
                 return rotas[(metodo, caminho)](q)
@@ -336,6 +398,23 @@ class Handler(BaseHTTPRequestHandler):
             m = re.fullmatch(r"/agentes/([^/]+)", caminho)
             if m and metodo == "DELETE":
                 return self.revogar_agente(unquote(m.group(1)))
+            m = re.fullmatch(r"/tarefas/(\d+)", caminho)
+            if m and metodo in ("PATCH", "DELETE"):
+                return (self.alterar_tarefa if metodo == "PATCH" else self.apagar_tarefa)(int(m.group(1)))
+            m = re.fullmatch(r"/sprints/(\d+)", caminho)
+            if m and metodo == "PATCH":
+                return self.alterar_sprint(int(m.group(1)))
+            m = re.fullmatch(r"/reunioes/(\d+)(?:/(vez|passar|encerrar))?", caminho)
+            if m:
+                rid, acao = int(m.group(1)), m.group(2)
+                if metodo == "GET" and acao is None:
+                    return self.ver_reuniao(rid)
+                if metodo == "GET" and acao == "vez":
+                    return self.aguardar_vez(rid, q)
+                if metodo == "POST" and acao == "passar":
+                    return self.passar_vez(rid)
+                if metodo == "POST" and acao == "encerrar":
+                    return self.encerrar_reuniao(rid)
             raise ErroHttp(404, "rota", f"Rota {metodo} {caminho} não existe.")
         except ErroHttp as e:
             self._problema(e)
@@ -350,6 +429,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_DELETE(self) -> None:
         self._rotear("DELETE")
+
+    def do_PATCH(self) -> None:
+        self._rotear("PATCH")
 
     def _estatico(self, caminho: str) -> bool:
         """Serve o build do Vite (web/dist); sem build, o dashboard.html legado."""
@@ -434,7 +516,7 @@ class Handler(BaseHTTPRequestHandler):
         with conectar() as con:
             self._quem(con)
             linhas = con.execute(
-                """SELECT sala, COUNT(*), MAX(criado), MAX(id), GROUP_CONCAT(DISTINCT de)
+                """SELECT sala, COUNT(*), MAX(criado), MAX(id), GROUP_CONCAT(DISTINCT CASE WHEN de != 'relay' THEN de END)
                    FROM msg GROUP BY sala ORDER BY MAX(id) DESC"""
             ).fetchall()
         self._json(200, [
@@ -653,7 +735,7 @@ class Handler(BaseHTTPRequestHandler):
                 with conectar() as con:
                     msgs = self._ler(con, quem, sala, eu, todas, depois, sem_minhas=False)
                     eventos = con.execute(
-                        "SELECT seq, msg_id FROM evento WHERE seq>? AND sala=? ORDER BY seq", (ultimo_evento, sala)
+                        "SELECT seq, tipo, msg_id FROM evento WHERE seq>? AND sala=? ORDER BY seq", (ultimo_evento, sala)
                     ).fetchall()
                     if eu:
                         marcar_visto(con, eu)
@@ -661,9 +743,9 @@ class Handler(BaseHTTPRequestHandler):
                     depois = m["id"]
                     dados = json.dumps(m, ensure_ascii=False)
                     self.wfile.write(f"id: {m['id']}\nevent: mensagem\ndata: {dados}\n\n".encode())
-                for seq, msg_id in eventos:
+                for seq, tipo, ref in eventos:
                     ultimo_evento = seq
-                    self.wfile.write(f"event: apagada\ndata: {json.dumps({'id': msg_id})}\n\n".encode())
+                    self.wfile.write(f"event: {tipo}\ndata: {json.dumps({'id': ref})}\n\n".encode())
                 if msgs or eventos:
                     self.wfile.flush()
                     continue
@@ -676,6 +758,305 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             ESPERAS.release()
 
+
+    # identidade em ações de equipe: agente/sessão pelo servidor; token de admin pode dizer quem é
+
+    def _nome(self, quem: Quem, pedido: dict) -> str:
+        if quem.admin and not quem.via_cookie:
+            nome = str(pedido.get("de") or pedido.get("eu") or quem.nome or "").strip()
+        else:
+            nome = quem.nome or ""
+        if not NOME_RE.match(nome):
+            raise ErroHttp(400, "nome_invalido", "Diga quem é (de/eu) ou use um token de agente.")
+        return nome
+
+    # tarefas
+
+    def tarefas(self, q: dict) -> None:
+        sala = validar_sala(q.get("sala"))
+        with conectar() as con:
+            self._quem(con)
+            filtro, args = "", []
+            if q.get("sprint"):
+                filtro, args = " AND sprint_id=?", [int(q["sprint"])]
+            linhas = con.execute(
+                f"SELECT {COLS_TAREFA} FROM tarefa WHERE sala=?{filtro} ORDER BY atualizado DESC", [sala, *args]
+            ).fetchall()
+        self._json(200, [tarefa_para_json(r) for r in linhas])
+
+    def criar_tarefa(self, _q: dict) -> None:
+        c = self._corpo()
+        sala = validar_sala(c.get("sala"))
+        titulo = str(c.get("titulo") or "").strip()
+        if not 1 <= len(titulo) <= 200:
+            raise ErroHttp(400, "titulo_invalido", "Título da tarefa: 1–200 caracteres.")
+        status = c.get("status") or "a_fazer"
+        if status not in STATUS_TAREFA:
+            raise ErroHttp(400, "status_invalido", f"Status deve ser um de {', '.join(STATUS_TAREFA)}.")
+        resp = c.get("responsavel") or None
+        if resp is not None and not NOME_RE.match(str(resp)):
+            raise ErroHttp(400, "responsavel_invalido", "Responsável inválido.")
+        with conectar() as con:
+            por = self._nome(self._quem(con), c)
+            agora = time.time()
+            cur = con.execute(
+                f"INSERT INTO tarefa ({COLS_TAREFA.replace('id, ', '', 1)}) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                (sala, titulo, c.get("descricao"), status, resp, c.get("sprint_id"), c.get("msg_id"), por, agora, agora, None),
+            )
+            tid = cur.lastrowid
+            mensagem_sistema(con, sala, f"📋 **{por}** criou a tarefa **#{tid}** {titulo}" + (f" → @{resp}" if resp else ""))
+            registrar_evento(con, "tarefa", sala, tid)
+            linha = con.execute(f"SELECT {COLS_TAREFA} FROM tarefa WHERE id=?", (tid,)).fetchone()
+        notificar()
+        self._json(201, tarefa_para_json(linha))
+
+    def alterar_tarefa(self, tid: int) -> None:
+        c = self._corpo()
+        with conectar() as con:
+            quem = self._quem(con)
+            atual = con.execute(f"SELECT {COLS_TAREFA} FROM tarefa WHERE id=?", (tid,)).fetchone()
+            if not atual:
+                raise ErroHttp(404, "tarefa_inexistente", "Tarefa não existe.")
+            t = tarefa_para_json(atual)
+            quem_nome = self._nome(quem, c)
+            mudancas: dict = {}
+            for campo in ("titulo", "descricao", "status", "responsavel", "sprint_id"):
+                if campo in c:
+                    mudancas[campo] = c[campo]
+            if "status" in mudancas and mudancas["status"] not in STATUS_TAREFA:
+                raise ErroHttp(400, "status_invalido", f"Status deve ser um de {', '.join(STATUS_TAREFA)}.")
+            if mudancas.get("responsavel") and not NOME_RE.match(str(mudancas["responsavel"])):
+                raise ErroHttp(400, "responsavel_invalido", "Responsável inválido.")
+            if not mudancas:
+                return self._json(200, t)
+            sets = ", ".join(f"{k}=?" for k in mudancas)
+            con.execute(f"UPDATE tarefa SET {sets}, atualizado=? WHERE id=?", [*mudancas.values(), time.time(), tid])
+            novo = mudancas.get("status")
+            if novo and novo != t["status"]:
+                rotulo = {"a_fazer": "voltou para a fazer", "fazendo": "pegou", "revisao": "mandou para revisão", "feito": "concluiu"}[novo]
+                mensagem_sistema(con, t["sala"], f"{'✅' if novo == 'feito' else '🔁'} **{quem_nome}** {rotulo} **#{tid}** {t['titulo']}")
+            registrar_evento(con, "tarefa", t["sala"], tid)
+            linha = con.execute(f"SELECT {COLS_TAREFA} FROM tarefa WHERE id=?", (tid,)).fetchone()
+        notificar()
+        self._json(200, tarefa_para_json(linha))
+
+    def apagar_tarefa(self, tid: int) -> None:
+        with conectar() as con:
+            quem = self._quem(con)
+            linha = con.execute("SELECT sala, criada_por FROM tarefa WHERE id=?", (tid,)).fetchone()
+            if not linha:
+                raise ErroHttp(404, "tarefa_inexistente", "Tarefa não existe.")
+            if not (quem.admin or quem.nome == linha[1]):
+                raise ErroHttp(403, "proibido", "Só quem criou ou o admin apagam.")
+            con.execute("DELETE FROM tarefa WHERE id=?", (tid,))
+            registrar_evento(con, "tarefa", linha[0], tid)
+        notificar()
+        self._vazio()
+
+    # sprints
+
+    def sprints(self, q: dict) -> None:
+        sala = validar_sala(q.get("sala"))
+        with conectar() as con:
+            self._quem(con)
+            linhas = con.execute(
+                """SELECT s.id, s.nome, s.objetivo, s.inicio, s.fim, s.ativa,
+                          COUNT(t.id), SUM(t.status='feito')
+                   FROM sprint s LEFT JOIN tarefa t ON t.sprint_id = s.id
+                   WHERE s.sala=? GROUP BY s.id ORDER BY s.inicio DESC""", (sala,)
+            ).fetchall()
+        self._json(200, [
+            {"id": i, "nome": n, "objetivo": o, "inicio_em": iso(ini), "fim_em": iso(f) if f else None,
+             "ativa": bool(a), "total": tot, "feitas": fe or 0}
+            for i, n, o, ini, f, a, tot, fe in linhas
+        ])
+
+    def criar_sprint(self, _q: dict) -> None:
+        c = self._corpo()
+        sala = validar_sala(c.get("sala"))
+        nome = str(c.get("nome") or "").strip()
+        if not 1 <= len(nome) <= 80:
+            raise ErroHttp(400, "nome_invalido", "Nome da sprint: 1–80 caracteres.")
+        dias = float(c.get("dias") or 7)
+        with conectar() as con:
+            por = self._nome(self._quem(con), c)
+            agora = time.time()
+            con.execute("UPDATE sprint SET ativa=0 WHERE sala=?", (sala,))
+            cur = con.execute("INSERT INTO sprint (sala, nome, objetivo, inicio, fim, ativa) VALUES (?,?,?,?,?,1)",
+                              (sala, nome, c.get("objetivo"), agora, agora + dias * 86400))
+            mensagem_sistema(con, sala, f"🏁 **{por}** abriu a sprint **{nome}** ({int(dias)} dias)" + (f": {c['objetivo']}" if c.get("objetivo") else ""))
+            registrar_evento(con, "tarefa", sala, 0)
+        notificar()
+        self._json(201, {"id": cur.lastrowid})
+
+    def alterar_sprint(self, sid: int) -> None:
+        c = self._corpo()
+        with conectar() as con:
+            self._quem(con)
+            linha = con.execute("SELECT sala FROM sprint WHERE id=?", (sid,)).fetchone()
+            if not linha:
+                raise ErroHttp(404, "sprint_inexistente", "Sprint não existe.")
+            for campo in ("nome", "objetivo", "ativa"):
+                if campo in c:
+                    con.execute(f"UPDATE sprint SET {campo}=? WHERE id=?", (c[campo], sid))
+            registrar_evento(con, "tarefa", linha[0], 0)
+        notificar()
+        self._vazio()
+
+    # reuniões
+
+    def _reuniao(self, con: sqlite3.Connection, rid: int) -> dict:
+        linha = con.execute(f"SELECT {COLS_REUNIAO} FROM reuniao WHERE id=?", (rid,)).fetchone()
+        if not linha:
+            raise ErroHttp(404, "reuniao_inexistente", "Reunião não existe.")
+        r = reuniao_para_json(linha)
+        # Tempo esgotado: para de dar a vez e pede a ata.
+        if r["estado"] == "aberta" and r["limite_em"] and time.time() > linha[11]:
+            con.execute("UPDATE reuniao SET estado='ata' WHERE id=?", (rid,))
+            mensagem_sistema(con, r["sala"], f"⏰ Tempo da reunião **#{rid}** esgotado. Falta a ata (encerrar com decisões e ações).")
+            registrar_evento(con, "reuniao", r["sala"], rid)
+            notificar()
+            r["estado"], r["vez"], r["item_atual"] = "ata", None, None
+        return r
+
+    def reunioes(self, q: dict) -> None:
+        sala = validar_sala(q.get("sala"))
+        with conectar() as con:
+            self._quem(con)
+            ids = [i for (i,) in con.execute("SELECT id FROM reuniao WHERE sala=? ORDER BY id DESC LIMIT 20", (sala,))]
+            lista = [self._reuniao(con, i) for i in ids]
+        self._json(200, lista)
+
+    def ver_reuniao(self, rid: int) -> None:
+        with conectar() as con:
+            self._quem(con)
+            r = self._reuniao(con, rid)
+        self._json(200, r)
+
+    def criar_reuniao(self, _q: dict) -> None:
+        c = self._corpo()
+        sala = validar_sala(c.get("sala"))
+        formato = c.get("formato") or "livre"
+        if formato not in FORMATOS:
+            raise ErroHttp(400, "formato_invalido", f"Formato deve ser um de {', '.join(FORMATOS)}.")
+        pauta = [str(p).strip() for p in (c.get("pauta") or FORMATOS[formato]) if str(p).strip()][:12]
+        parts = [str(p).strip() for p in (c.get("participantes") or []) if str(p).strip()]
+        if not parts or not all(NOME_RE.match(p) for p in parts) or len(parts) > 12:
+            raise ErroHttp(400, "participantes_invalidos", "Informe de 1 a 12 participantes válidos.")
+        titulo = str(c.get("titulo") or formato.capitalize()).strip()[:120]
+        minutos = float(c.get("minutos") or 0)
+        with conectar() as con:
+            por = self._nome(self._quem(con), c)
+            if con.execute("SELECT 1 FROM reuniao WHERE sala=? AND estado IN ('aberta','ata')", (sala,)).fetchone():
+                raise ErroHttp(409, "reuniao_em_andamento", "Já existe uma reunião em andamento nesta sala.")
+            agora = time.time()
+            cur = con.execute(
+                f"INSERT INTO reuniao ({COLS_REUNIAO.replace('id, ', '', 1)}) VALUES (?,?,?,?,?,0,0,1,'aberta',?,?,NULL,?)",
+                (sala, titulo, formato, json.dumps(pauta, ensure_ascii=False), json.dumps(parts), agora,
+                 agora + minutos * 60 if minutos > 0 else None, por),
+            )
+            rid = cur.lastrowid
+            itens = "\n".join(f"{n}. {p}" for n, p in enumerate(pauta, 1))
+            mensagem_sistema(con, sala,
+                f"🗓 **{por}** abriu a reunião **#{rid} {titulo}** ({formato}" + (f", {int(minutos)} min" if minutos > 0 else "") + ")\n\n"
+                f"**Pauta**\n{itens}\n\n**Participantes**: {', '.join('@' + p for p in parts)}\n\n"
+                f"➡️ Vez de @{parts[0]}: *{pauta[0]}*")
+            registrar_evento(con, "reuniao", sala, rid)
+            r = self._reuniao(con, rid)
+        notificar()
+        self._json(201, r)
+
+    def aguardar_vez(self, rid: int, q: dict) -> None:
+        """Espera longa até ser a vez de `eu` (ou a reunião sair de 'aberta')."""
+        espera = min(max(float(q.get("espera", 0) or 0), 0), ESPERA_MAX)
+        with conectar() as con:
+            quem = self._quem(con)
+        eu = self._nome(quem, q)
+        if espera and not ESPERAS.acquire(blocking=False):
+            raise ErroHttp(503, "ocupado", "Muitas esperas abertas; tente de novo.", 2)
+        try:
+            limite = time.monotonic() + espera
+            while True:
+                with conectar() as con:
+                    r = self._reuniao(con, rid)
+                pronto = r["estado"] != "aberta" or r["vez"] == eu
+                restante = limite - time.monotonic()
+                if pronto or restante <= 0:
+                    break
+                with NOVA:
+                    NOVA.wait(min(restante, 5))
+        finally:
+            if espera:
+                ESPERAS.release()
+        r["sua_vez"] = r["estado"] == "aberta" and r["vez"] == eu
+        self._json(200, r)
+
+    def passar_vez(self, rid: int) -> None:
+        c = self._corpo() if self.headers.get("Content-Length") not in (None, "0") else {}
+        with conectar() as con:
+            quem = self._quem(con)
+            eu = self._nome(quem, c)
+            r = self._reuniao(con, rid)
+            if r["estado"] != "aberta":
+                raise ErroHttp(409, "reuniao_fechada", "A reunião não está dando a vez.")
+            if r["vez"] != eu and not quem.admin and eu != r["criada_por"]:
+                raise ErroHttp(403, "nao_e_sua_vez", f"Agora é a vez de {r['vez']}.")
+            parts, pauta = r["participantes"], r["pauta"]
+            vez, item, rodada = parts.index(r["vez"]) + 1, r["item"], r["rodada"]
+            if vez >= len(parts):
+                vez, item = 0, item + 1
+            if item >= len(pauta):
+                con.execute("UPDATE reuniao SET estado='ata', vez=0, item=? WHERE id=?", (item, rid))
+                mensagem_sistema(con, r["sala"], f"✔️ Pauta da reunião **#{rid}** concluída. Falta a ata: decisões e ações (`encerrar`).")
+            else:
+                con.execute("UPDATE reuniao SET vez=?, item=?, rodada=? WHERE id=?", (vez, item, rodada, rid))
+                novo_item = " (próximo item)" if item != r["item"] else ""
+                mensagem_sistema(con, r["sala"], f"➡️ Vez de @{parts[vez]}{novo_item}: *{pauta[item]}*")
+            registrar_evento(con, "reuniao", r["sala"], rid)
+            r = self._reuniao(con, rid)
+        notificar()
+        self._json(200, r)
+
+    def encerrar_reuniao(self, rid: int) -> None:
+        c = self._corpo()
+        ata = str(c.get("ata") or "").strip()
+        if not ata:
+            raise ErroHttp(400, "ata_vazia", "A ata é obrigatória (decisões em texto).")
+        acoes = c.get("acoes") or []
+        if not isinstance(acoes, list) or len(acoes) > 30:
+            raise ErroHttp(400, "acoes_invalidas", "acoes deve ser uma lista de até 30 {titulo, responsavel}.")
+        with conectar() as con:
+            quem = self._quem(con)
+            eu = self._nome(quem, c)
+            r = self._reuniao(con, rid)
+            if r["estado"] == "encerrada":
+                raise ErroHttp(409, "reuniao_fechada", "Reunião já encerrada.")
+            if eu not in r["participantes"] and eu != r["criada_por"] and not quem.admin:
+                raise ErroHttp(403, "proibido", "Só participantes encerram a reunião.")
+            criadas = []
+            msg_id = mensagem_sistema(con, r["sala"], f"📝 **Ata da reunião #{rid} {r['titulo']}** (por {eu})\n\n{ata}")
+            agora = time.time()
+            sprint = con.execute("SELECT id FROM sprint WHERE sala=? AND ativa=1", (r["sala"],)).fetchone()
+            for a in acoes:
+                titulo = str((a or {}).get("titulo") or "").strip()[:200]
+                resp = (a or {}).get("responsavel") or None
+                if not titulo or (resp and not NOME_RE.match(str(resp))):
+                    continue
+                cur = con.execute(
+                    f"INSERT INTO tarefa ({COLS_TAREFA.replace('id, ', '', 1)}) VALUES (?,?,?,'a_fazer',?,?,?,?,?,?,NULL)",
+                    (r["sala"], titulo, f"Da reunião #{rid}", resp, sprint[0] if sprint else None, msg_id, eu, agora, agora),
+                )
+                criadas.append((cur.lastrowid, titulo, resp))
+            if criadas:
+                linhas = "\n".join(f"- **#{i}** {t}" + (f" → @{p}" if p else "") for i, t, p in criadas)
+                mensagem_sistema(con, r["sala"], f"📋 Ações da reunião #{rid} viraram tarefas:\n{linhas}")
+            con.execute("UPDATE reuniao SET estado='encerrada', ata=? WHERE id=?", (ata, rid))
+            registrar_evento(con, "reuniao", r["sala"], rid)
+            registrar_evento(con, "tarefa", r["sala"], 0)
+            r = self._reuniao(con, rid)
+        notificar()
+        r["tarefas_criadas"] = [i for i, _, _ in criadas]
+        self._json(200, r)
 
 def marcar_visto_sem_con(nome: str | None) -> None:
     if nome:

@@ -284,7 +284,11 @@ private fun Conversa(vm: RelayViewModel, estado: Estado, aoMenu: (() -> Unit)?) 
                     escopo.launch { lista.animateScrollToItem(0) }
                 }
             }
-            Composer(estado.sala, eu, estado.respondendo, aoCancelarResposta = { vm.responder(null) }, aoEnviar = vm::enviar)
+            val candidatos = remember(estado.agentes, estado.mensagens.size) {
+                val online = estado.agentes.associate { it.nome to it.online }
+                (estado.mensagens.map { it.de } + estado.agentes.map { it.nome }).distinct().map { it to (online[it] ?: false) }
+            }
+            Composer(estado.sala, eu, estado.respondendo, candidatos, aoCancelarResposta = { vm.responder(null) }, aoEnviar = vm::enviar)
         }
     }
 
@@ -310,7 +314,7 @@ private fun BotaoFim(visivel: Boolean, novas: Int, modifier: Modifier, aoClicar:
 
 @Composable
 private fun Participantes(estado: Estado) {
-    val online = estado.agentes.filter { it.online }.take(4)
+    val online = estado.agentes.filter { it.online && it.nome != "relay" }.take(4)
     Row(Modifier.padding(end = 12.dp), horizontalArrangement = Arrangement.spacedBy((-8).dp)) {
         online.forEach { a ->
             // Anel na cor do fundo separa os avatares sobrepostos.

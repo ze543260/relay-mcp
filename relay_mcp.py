@@ -86,5 +86,94 @@ async def aguardar_mensagem(sala: str = SALA, segundos: int = 120) -> str:
     return _formatar(msgs) or f"nenhuma resposta em {segundos} s"
 
 
+# --- Tarefas e sprints -------------------------------------------------------
+
+STATUS = ("a_fazer", "fazendo", "revisao", "feito")
+
+
+def _fmt_tarefa(t: dict) -> str:
+    resp = f" → {t['responsavel']}" if t.get("responsavel") else ""
+    return f"#{t['id']} [{t['status']}] {t['titulo']}{resp}"
+
+
+@mcp.tool()
+async def listar_tarefas(sala: str = SALA, status: str | None = None, minhas: bool = False) -> str:
+    """Quadro de tarefas da sala. Filtre por `status` (a_fazer, fazendo, revisao, feito) ou só as `minhas`."""
+    ts = await asyncio.to_thread(_req, "GET", "/tarefas?" + urlencode({"sala": sala, "eu": NOME}))
+    ts = [t for t in ts if (not status or t["status"] == status) and (not minhas or t.get("responsavel") == NOME)]
+    return "\n".join(_fmt_tarefa(t) for t in ts) or "nenhuma tarefa"
+
+
+@mcp.tool()
+async def criar_tarefa(titulo: str, sala: str = SALA, responsavel: str | None = None, descricao: str | None = None) -> str:
+    """Cria uma tarefa no quadro da sala (status a_fazer)."""
+    corpo = {"sala": sala, "titulo": titulo, "responsavel": responsavel, "descricao": descricao, "de": NOME}
+    t = await asyncio.to_thread(_req, "POST", "/tarefas", {k: v for k, v in corpo.items() if v is not None})
+    return "criada " + _fmt_tarefa(t)
+
+
+@mcp.tool()
+async def atualizar_tarefa(id: int, status: str | None = None, responsavel: str | None = None) -> str:
+    """Move uma tarefa (status: a_fazer, fazendo, revisao, feito) e/ou troca o responsável.
+    Para pegar uma tarefa: status='fazendo' e responsavel = seu nome."""
+    if status and status not in STATUS:
+        return f"status inválido; use um de {', '.join(STATUS)}"
+    corpo = {"status": status, "responsavel": responsavel, "de": NOME}
+    t = await asyncio.to_thread(_req, "PATCH", f"/tarefas/{id}", {k: v for k, v in corpo.items() if v is not None})
+    return "atualizada " + _fmt_tarefa(t)
+
+
+# --- Reuniões -------------------------------------------------------------------
+
+def _fmt_reuniao(r: dict) -> str:
+    linhas = [f"Reunião #{r['id']} {r['titulo']} ({r['formato']}), estado: {r['estado']}"]
+    for n, item in enumerate(r["pauta"]):
+        marca = "→" if r["estado"] == "aberta" and n == r["item"] else ("✓" if n < r["item"] else " ")
+        linhas.append(f" {marca} {n + 1}. {item}")
+    if r.get("vez"):
+        linhas.append(f"Vez de: {r['vez']}" + (" (VOCÊ)" if r["vez"] == NOME else ""))
+    if r["estado"] == "ata":
+        linhas.append("Pauta concluída: falta encerrar com a ata (encerrar_reuniao).")
+    return "\n".join(linhas)
+
+
+@mcp.tool()
+async def criar_reuniao(participantes: list[str], formato: str = "livre", titulo: str | None = None,
+                        pauta: list[str] | None = None, minutos: int = 0, sala: str = SALA) -> str:
+    """Abre uma reunião com vez de falar controlada pelo servidor.
+    formato: daily | planejamento | revisao | livre (cada um tem pauta padrão; `pauta` substitui).
+    O servidor dá a vez a cada participante em cada item, na ordem da lista."""
+    corpo = {"sala": sala, "participantes": participantes, "formato": formato, "titulo": titulo,
+             "pauta": pauta, "minutos": minutos, "de": NOME}
+    r = await asyncio.to_thread(_req, "POST", "/reunioes", {k: v for k, v in corpo.items() if v not in (None, 0)})
+    return _fmt_reuniao(r)
+
+
+@mcp.tool()
+async def aguardar_minha_vez(reuniao: int, segundos: int = 240) -> str:
+    """Espera até ser a sua vez na reunião (máx. 300 s). Quando for, leia as mensagens novas,
+    fale sobre o item atual com enviar_mensagem e chame passar_vez."""
+    segundos = min(max(segundos, 1), 300)
+    r = await asyncio.to_thread(
+        _req, "GET", f"/reunioes/{reuniao}/vez?" + urlencode({"eu": NOME, "espera": segundos}), None, segundos + 15)
+    prefixo = "É SUA VEZ.\n" if r.get("sua_vez") else ("Ainda não é sua vez.\n" if r["estado"] == "aberta" else "")
+    return prefixo + _fmt_reuniao(r)
+
+
+@mcp.tool()
+async def passar_vez(reuniao: int) -> str:
+    """Termina a sua fala no item atual e passa a vez ao próximo participante."""
+    r = await asyncio.to_thread(_req, "POST", f"/reunioes/{reuniao}/passar", {"de": NOME})
+    return _fmt_reuniao(r)
+
+
+@mcp.tool()
+async def encerrar_reuniao(reuniao: int, ata: str, acoes: list[dict] | None = None) -> str:
+    """Encerra a reunião com a ata (decisões em Markdown). Cada ação {titulo, responsavel}
+    vira uma tarefa no quadro (na sprint ativa, se houver)."""
+    r = await asyncio.to_thread(_req, "POST", f"/reunioes/{reuniao}/encerrar", {"ata": ata, "acoes": acoes or [], "de": NOME})
+    return _fmt_reuniao(r) + f"\nTarefas criadas: {r.get('tarefas_criadas') or 'nenhuma'}"
+
+
 if __name__ == "__main__":
     mcp.run()

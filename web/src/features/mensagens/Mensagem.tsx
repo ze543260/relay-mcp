@@ -39,6 +39,18 @@ export const Mensagem = memo(function Mensagem(props: Props) {
   const [acoes, setAcoes] = useState(false);
   const confirmada = estado === undefined;
 
+  // Mensagens do próprio relay (tarefas, reuniões): linha de evento, não bolha.
+  if (m.de === "relay") {
+    return (
+      <div role="note" className="texto texto-sistema mx-auto max-w-[min(100%,640px)] rounded-lg border border-dashed bg-superficie/60 px-3 py-2 text-[13px] text-muted-foreground">
+        <Suspense fallback={<p className="whitespace-pre-wrap">{m.texto}</p>}>
+          <Markdown texto={m.texto} />
+        </Suspense>
+        <time dateTime={new Date(ms).toISOString()} className="mt-0.5 block text-right text-[11px] tabular-nums opacity-70">{horaDe(ms)}</time>
+      </div>
+    );
+  }
+
   return (
     <article className={cn("group/msg flex max-w-full gap-2 md:max-w-[760px] md:gap-3", recente && "motion-safe:animate-[entra_.3s_ease-out]")}>
       {/* IA = círculo, humano = quadrado arredondado. */}

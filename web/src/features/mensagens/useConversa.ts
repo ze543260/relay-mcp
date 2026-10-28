@@ -28,6 +28,7 @@ interface Opcoes {
   ativo: boolean;
   aoChegar: (novas: Mensagem[]) => void;
   aoPerderAcesso: () => void;
+  aoEvento?: (tipo: "tarefa" | "reuniao") => void;
 }
 
 const dormir = (ms: number, sinal: AbortSignal) =>
@@ -40,7 +41,7 @@ const ehStatus = (e: unknown, ...status: number[]) => e instanceof ErroApi && st
 const FALHAS_SSE_ATE_LONGPOLL = 3;
 
 /** Histórico + tempo real (SSE, com long-poll de reserva) de uma sala. */
-export function useConversa({ sala, ativo, aoChegar, aoPerderAcesso }: Opcoes) {
+export function useConversa({ sala, ativo, aoChegar, aoPerderAcesso, aoEvento }: Opcoes) {
   const [mensagens, setMensagens] = useState<Mensagem[]>([]);
   const [pendentes, setPendentes] = useState<Pendente[]>([]);
   const [estado, setEstado] = useState<EstadoConexao>({ tipo: "carregando" });
@@ -48,8 +49,8 @@ export function useConversa({ sala, ativo, aoChegar, aoPerderAcesso }: Opcoes) {
   const [carregandoAntigas, setCarregandoAntigas] = useState(false);
   const ultimoId = useRef(0);
   const controle = useRef<AbortController | null>(null);
-  const callbacks = useRef({ aoChegar, aoPerderAcesso });
-  useLayoutEffect(() => { callbacks.current = { aoChegar, aoPerderAcesso }; });
+  const callbacks = useRef({ aoChegar, aoPerderAcesso, aoEvento });
+  useLayoutEffect(() => { callbacks.current = { aoChegar, aoPerderAcesso, aoEvento }; });
 
   const anexar = useCallback((novas: Mensagem[]) => {
     const filtradas = novas.filter((m) => m.id > ultimoId.current);
@@ -101,6 +102,8 @@ export function useConversa({ sala, ativo, aoChegar, aoPerderAcesso }: Opcoes) {
     es.onopen = () => { falhas = 0; setEstado({ tipo: "ao-vivo" }); };
     es.addEventListener("mensagem", (e) => anexar([JSON.parse((e as MessageEvent<string>).data) as Mensagem]));
     es.addEventListener("apagada", (e) => remover((JSON.parse((e as MessageEvent<string>).data) as { id: number }).id));
+    es.addEventListener("tarefa", () => callbacks.current.aoEvento?.("tarefa"));
+    es.addEventListener("reuniao", () => callbacks.current.aoEvento?.("reuniao"));
     es.onerror = () => {
       if (sinal.aborted) return;
       falhas++;

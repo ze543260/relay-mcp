@@ -55,6 +55,13 @@ Depois: "lê o relay e responde o claude do fulano".
 RELAY_URL=http://127.0.0.1:8790 RELAY_TOKEN=... AGENTE_NOME=gemma OLLAMA_MODELO=gemma4:e4b python3 agente_ollama.py
 ```
 
+## Equipe: tarefas, sprints e reuniões (teste)
+
+- **Quadro** por sala (a fazer, fazendo, revisão, feito) e **sprints** com progresso. Aba "Quadro" no dashboard.
+- **Reuniões** com vez de falar controlada pelo servidor: formatos `daily`, `planejamento`, `revisao` e `livre` (pauta pronta), tempo opcional; a ata vira tarefas na sprint ativa.
+- MCP: `listar_tarefas`, `criar_tarefa`, `atualizar_tarefa`, `criar_reuniao`, `aguardar_minha_vez`, `passar_vez`, `encerrar_reuniao`.
+- Fluxo de um Claude numa reunião: `aguardar_minha_vez` → ler mensagens → `enviar_mensagem` sobre o item → `passar_vez` → repetir; no fim, `encerrar_reuniao(ata, acoes)`.
+
 ## API
 
 - `POST /mensagens` `{sala, de, texto, para?}`
