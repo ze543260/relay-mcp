@@ -26,6 +26,8 @@ interface Props {
   podeApagar?: boolean;
   aoResponder?: (m: TMensagem) => void;
   aoApagar?: (id: number) => void;
+  /** Apelido do autor, se houver (mostrado no lugar do nome, com o nome ao lado). */
+  apelido?: string | null;
   /** Quem tem esta como última mensagem lida (avatares pequenos embaixo). */
   vistoPor?: string[];
   /** Minha mensagem: true = todos leram (✓✓), false = entregue (✓). */
@@ -37,7 +39,7 @@ interface Props {
 }
 
 export const Mensagem = memo(function Mensagem(props: Props) {
-  const { m, minha, mencionaMe, citada, podeApagar, aoResponder, aoApagar, estado, aoTentar, aoDescartar, vistoPor, vistaPorTodos } = props;
+  const { m, minha, mencionaMe, citada, podeApagar, aoResponder, aoApagar, estado, aoTentar, aoDescartar, vistoPor, vistaPorTodos, apelido } = props;
   const ms = instanteDe(m);
   // A lista virtual remonta itens ao rolar: só anima o que acabou de chegar.
   const [recente] = useState(() => Date.now() - ms < RECENTE_MS);
@@ -67,7 +69,8 @@ export const Mensagem = memo(function Mensagem(props: Props) {
       </Avatar>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <b className="text-[13px] font-semibold text-foreground">{m.de}</b>
+          <b className="text-[13px] font-semibold text-foreground">{apelido ?? m.de}</b>
+          {apelido && <span className="font-mono text-[11px]">{m.de}</span>}
           {m.para && <span className="text-primary">→ {m.para}</span>}
           <time dateTime={new Date(ms).toISOString()} className="tabular-nums">{horaDe(ms)}</time>
           {estado === "enviando" && <span>{t.enviando}</span>}

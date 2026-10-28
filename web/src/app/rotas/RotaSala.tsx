@@ -75,8 +75,9 @@ export function RotaSala() {
   }, [paletaUsada, setPaletaAberta]);
   const [respondendo, setRespondendo] = useState<Mensagem | null>(null);
   // Tarefas e reuniões mudaram (SSE): recarrega só o que for daquela sala.
-  const aoEvento = useCallback((tipo: "tarefa" | "reuniao" | "leitura") => {
+  const aoEvento = useCallback((tipo: "tarefa" | "reuniao" | "leitura" | "apelido") => {
     if (tipo === "leitura") return void qc.invalidateQueries({ queryKey: ["leituras", sala] });
+    if (tipo === "apelido") return void qc.invalidateQueries({ queryKey: ["agentes"] });
     void qc.invalidateQueries({ queryKey: [tipo === "tarefa" ? "tarefas" : "reunioes", sala] });
     if (tipo === "tarefa") void qc.invalidateQueries({ queryKey: ["sprints", sala] });
   }, [qc, sala]);
@@ -87,10 +88,11 @@ export function RotaSala() {
   const { data: leiturasLista } = useLeituras(sala);
   const leituras = useMemo(() => new Map((leiturasLista ?? []).filter((l) => l.nome !== nome).map((l) => [l.nome, l.ultimo_id])), [leiturasLista, nome]);
   const digitar = useDigitando(sala);
+  const apelidos = useMemo(() => new Map((agentes ?? []).filter((a) => a.apelido).map((a) => [a.nome, a.apelido!])), [agentes]);
   const candidatos = useMemo(() => {
-    const online = new Map((agentes ?? []).map((a) => [a.nome, a.online]));
+    const porNome = new Map((agentes ?? []).map((a) => [a.nome, a]));
     const nomes = new Set([...autores, ...(agentes ?? []).map((a) => a.nome)]);
-    return [...nomes].map((n) => ({ nome: n, online: online.get(n) ?? false }));
+    return [...nomes].map((n) => ({ nome: n, online: porNome.get(n)?.online ?? false, apelido: porNome.get(n)?.apelido }));
   }, [agentes, autores.join("|")]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [aba, setAba] = useState<"conversa" | "quadro">("conversa");
@@ -156,7 +158,7 @@ export function RotaSala() {
         ) : (
           <>
             <Conversa key={sala} sala={sala} eu={nome} carregando={conversa.estado.tipo === "carregando"}
-              ultimaLida={ultimaLida.id} aoLer={aoLer} admin={admin} aoResponder={setRespondendo} leituras={leituras} {...conversa} />
+              ultimaLida={ultimaLida.id} aoLer={aoLer} admin={admin} aoResponder={setRespondendo} leituras={leituras} apelidos={apelidos} {...conversa} />
             <Composer key={`c-${sala}`} sala={sala} rotuloSala={doCanal ? `🗓 ${doCanal.titulo}` : undefined} nome={nome} respondendo={respondendo} candidatos={candidatos} aoCancelarResposta={() => setRespondendo(null)}
               aoEnviar={(texto, replyTo, anexos) => conversa.enviar(texto, nome, replyTo, anexos)}
               aoDigitar={(d) => (d ? digitar.avisar() : digitar.parar())} />

@@ -108,6 +108,7 @@ fun Bolha(
     aoDescartar: () -> Unit = {},
     vistoPor: List<String> = emptyList(),
     vistaPorTodos: Boolean? = null,
+    apelido: String? = null,
 ) {
     val cores = MaterialTheme.colorScheme
     val extras = LocalExtras.current
@@ -138,7 +139,8 @@ fun Bolha(
         Avatar(m.de, 30.dp)
         Column(Modifier.padding(start = 10.dp).weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(m.de, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+                Text(apelido ?: m.de, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+                if (apelido != null) Text(m.de, style = MaterialTheme.typography.labelSmall, color = cores.onSurfaceVariant, fontFamily = dev.josev.relay.ui.tema.Mono)
                 m.para?.let { Text("→ $it", color = cores.primary, style = MaterialTheme.typography.bodyMedium) }
                 Text(hora(m.criado), color = cores.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
                 when {

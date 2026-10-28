@@ -280,6 +280,7 @@ private fun Conversa(vm: RelayViewModel, estado: Estado, aoMenu: (() -> Unit)?) 
                             is Item.Msg -> Bolha(
                                 m = it.m, minha = it.m.de == eu, eu = eu, citada = it.m.replyTo?.let(porId::get),
                                 aoSegurar = { acoesDe = it.m }, modifier = Modifier.animateItem(),
+                                apelido = estado.agentes.firstOrNull { a -> a.nome == it.m.de }?.apelido,
                                 vistoPor = vistoEm[it.m.id].orEmpty(), vistaPorTodos = if (it.m.de == eu) vistaPorTodos(it.m.id) else null,
                             )
                             is Item.Pend -> Bolha(

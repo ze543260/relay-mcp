@@ -29,6 +29,7 @@ interface Props {
   digitando: string[];
   /** nome -> último id lido (sem mim). */
   leituras: Map<string, number>;
+  apelidos: Map<string, string>;
 }
 
 type Item =
@@ -58,7 +59,8 @@ function Digitando({ nomes }: { nomes: string[] }) {
 
 /** Lista virtualizada com marcador de não lidas: só o que está visível (+ margem) fica no DOM. */
 export function Conversa(props: Props) {
-  const { sala, eu, mensagens, pendentes, carregando, temMais, carregandoAntigas, ultimaLida, carregarAntigas, aoLer, retentar, descartar, admin, aoResponder, apagar, digitando, leituras } = props;
+  const { sala, eu, mensagens, pendentes, carregando, temMais, carregandoAntigas, ultimaLida, carregarAntigas, aoLer, retentar, descartar, admin, aoResponder, apagar, digitando, leituras, apelidos } = props;
+  const mostrar = (n: string) => apelidos.get(n) ?? n;
   // Avatares de "visto": cada leitor aparece na última mensagem que leu (estilo Messenger).
   const vistoEm = new Map<number, string[]>();
   for (const [nome, ate] of leituras) {
@@ -69,7 +71,9 @@ export function Conversa(props: Props) {
   const leitores = [...leituras.keys()];
   const vistaPorTodos = (id: number) => leitores.length > 0 && leitores.every((n) => (leituras.get(n) ?? 0) >= id);
   const porId = new Map(mensagens.map((m) => [m.id, m]));
-  const mencao = new RegExp(`@${eu.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
+  const esc = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const meuApelido = apelidos.get(eu);
+  const mencao = new RegExp(`@(${esc(eu)}${meuApelido ? `|${esc(meuApelido)}` : ""})\\b`, "i");
   const feed = useRef<HTMLDivElement>(null);
   const presoNoFim = useRef(true);
   const posicionado = useRef(false);
@@ -218,7 +222,7 @@ export function Conversa(props: Props) {
                       <span className="h-px flex-1 bg-primary/40" />{t.novas}<span className="h-px flex-1 bg-primary/40" />
                     </div>
                   ) : it.tipo === "msg" ? (
-                    <Mensagem m={it.m} minha={it.m.de === eu} mencionaMe={mencao.test(it.m.texto)}
+                    <Mensagem m={it.m} minha={it.m.de === eu} apelido={apelidos.get(it.m.de)} mencionaMe={mencao.test(it.m.texto)}
                       vistoPor={vistoEm.get(it.m.id)} vistaPorTodos={it.m.de === eu ? vistaPorTodos(it.m.id) : undefined}
                       citada={it.m.reply_to ? porId.get(it.m.reply_to) : undefined}
                       podeApagar={admin || it.m.de === eu} aoResponder={aoResponder} aoApagar={apagar} />
@@ -241,7 +245,7 @@ export function Conversa(props: Props) {
           <ArrowDownIcon /> {novasAbaixo > 0 ? t.novasAbaixo(novasAbaixo) : t.irParaFim}
         </Button>
       )}
-      <Digitando nomes={digitando} />
+      <Digitando nomes={digitando.map(mostrar)} />
       <div className="sr-only" aria-live="polite">{anuncio}</div>
     </div>
   );

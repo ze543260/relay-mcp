@@ -30,6 +30,7 @@ data class Sala(
 @Serializable
 data class Agente(
     val nome: String,
+    val apelido: String? = null,
     @SerialName("visto_em") val vistoEm: String? = null,
     val online: Boolean = false,
     val tipo: String = "humano",

@@ -33,6 +33,8 @@ export interface Sala {
 
 export interface Agente {
   nome: string;
+  /** Apelido de exibição (o `nome` segue sendo a identidade). */
+  apelido?: string | null;
   visto_em: string | null;
   online: boolean;
   tipo: "ia" | "humano";

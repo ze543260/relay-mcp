@@ -29,7 +29,7 @@ export function Participantes({ autores }: { autores: string[] }) {
         const chip = (
           <Badge variant="outline" className={cn("h-6 flex-none gap-1.5 font-normal", off && "opacity-55")}>
             <i className={cn("size-2 rounded-full", off && "grayscale")} style={{ background: corDe(nome) }} />
-            {nome}
+            {porNome.get(nome)?.apelido ?? nome}
           </Badge>
         );
         const dica = visto === undefined ? undefined : off ? textos.conversa.vistoAs(horaDe(visto)) : textos.conversa.online;

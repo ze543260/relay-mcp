@@ -76,6 +76,7 @@ def proxima_expiracao(sala: str) -> float | None:
         return min(ts) - time.monotonic() if ts else None            # acorda long-polls e SSE a cada mudança
 ESPERAS = threading.BoundedSemaphore(MAX_ESPERAS)
 NOME_RE = re.compile(r"^[\w.-]{1,32}$")
+APELIDO_RE = re.compile(r"^[\w][\w .'-]{0,23}$")
 SALA_RE = re.compile(r"^[\w.-]{1,64}$")
 # Padrões de credencial (estilo gitleaks). Barrar no POST evita vazamento por engano.
 CREDENCIAL_RE = re.compile(
@@ -137,6 +138,9 @@ MIGRACOES = [
     """CREATE TABLE IF NOT EXISTS leitura (
          nome TEXT NOT NULL, sala TEXT NOT NULL, ultimo_id INTEGER NOT NULL, quando REAL NOT NULL,
          PRIMARY KEY (nome, sala));""",
+    # 8: apelido de exibição (o nome técnico segue sendo a identidade)
+    """CREATE TABLE IF NOT EXISTS apelido (
+         nome TEXT PRIMARY KEY, apelido TEXT NOT NULL UNIQUE COLLATE NOCASE, definido_por TEXT NOT NULL, quando REAL NOT NULL);""",
 ]
 
 STATUS_TAREFA = ("a_fazer", "fazendo", "revisao", "feito")
@@ -487,6 +491,9 @@ class Handler(BaseHTTPRequestHandler):
             m = re.fullmatch(r"/arquivos/([\w-]{16,64})", caminho)
             if m and metodo == "GET":
                 return self.baixar_arquivo(m.group(1), q)
+            m = re.fullmatch(r"/apelidos/([^/]+)", caminho)
+            if m and metodo == "PUT":
+                return self.definir_apelido(unquote(m.group(1)))
             m = re.fullmatch(r"/tarefas/(\d+)", caminho)
             if m and metodo in ("PATCH", "DELETE"):
                 return (self.alterar_tarefa if metodo == "PATCH" else self.apagar_tarefa)(int(m.group(1)))
@@ -518,6 +525,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_DELETE(self) -> None:
         self._rotear("DELETE")
+
+    def do_PUT(self) -> None:
+        self._rotear("PUT")
 
     def do_PATCH(self) -> None:
         self._rotear("PATCH")
@@ -630,9 +640,10 @@ class Handler(BaseHTTPRequestHandler):
                    WHERE a.nome NOT IN (SELECT nome FROM presenca)
                    ORDER BY 1"""
             ).fetchall()
+            apelidos = dict(con.execute("SELECT nome, apelido FROM apelido"))
         agora = time.time()
         self._json(200, [
-            {"nome": n, "visto_em": iso(v) if v else None, "online": bool(v and agora - v < ONLINE_S),
+            {"nome": n, "apelido": apelidos.get(n), "visto_em": iso(v) if v else None, "online": bool(v and agora - v < ONLINE_S),
              "tipo": t or ("ia" if re.match(r"^(claude|gemma|qwen|llama|gpt)", n) else "humano"),
              "tem_token": bool(tk)}
             for n, v, t, tk in linhas
@@ -881,6 +892,37 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             ESPERAS.release()
 
+
+    def definir_apelido(self, nome: str) -> None:
+        """Cada um muda o próprio apelido; o admin muda qualquer um. Vazio remove."""
+        c = self._corpo()
+        if not NOME_RE.match(nome):
+            raise ErroHttp(400, "nome_invalido", "Nome inválido.")
+        apelido = " ".join(str(c.get("apelido") or "").split())
+        if apelido and not APELIDO_RE.match(apelido):
+            raise ErroHttp(400, "apelido_invalido", "Apelido: até 24 caracteres (letras, números, espaço, . ' -).")
+        with conectar() as con:
+            quem = self._quem(con)
+            autor = self._nome(quem, c)
+            if not quem.admin and autor != nome:
+                raise ErroHttp(403, "proibido", "Só dá para mudar o próprio apelido.")
+            if apelido:
+                outro = con.execute("SELECT 1 FROM agente WHERE nome=? COLLATE NOCASE AND nome!=? UNION "
+                                    "SELECT 1 FROM presenca WHERE nome=? COLLATE NOCASE AND nome!=?",
+                                    (apelido, nome, apelido, nome)).fetchone()
+                if outro:
+                    raise ErroHttp(409, "apelido_em_uso", "Esse apelido é o nome de outro participante.")
+                try:
+                    con.execute("INSERT INTO apelido VALUES (?,?,?,?) ON CONFLICT(nome) DO UPDATE SET apelido=excluded.apelido, "
+                                "definido_por=excluded.definido_por, quando=excluded.quando", (nome, apelido, autor, time.time()))
+                except sqlite3.IntegrityError:
+                    raise ErroHttp(409, "apelido_em_uso", "Esse apelido já é de outra pessoa.") from None
+                mensagem_sistema(con, "geral", f"✨ **{nome}** agora aparece como **{apelido}**")
+            else:
+                con.execute("DELETE FROM apelido WHERE nome=?", (nome,))
+            registrar_evento(con, "apelido", "geral", 0)
+        notificar()
+        self._json(200, {"nome": nome, "apelido": apelido or None})
 
     # presença fina: digitando e leituras
 

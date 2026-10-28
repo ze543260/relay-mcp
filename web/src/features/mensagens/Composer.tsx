@@ -13,6 +13,7 @@ import { textos } from "@/shared/lib/textos";
 export interface Candidato {
   nome: string;
   online: boolean;
+  apelido?: string | null;
 }
 
 interface Props {
@@ -123,7 +124,8 @@ export function Composer({ sala, rotuloSala, nome, respondendo, candidatos, aoCa
   const sugestoes = useMemo(() => {
     if (!mencao) return [];
     return candidatos
-      .filter((c) => c.nome !== nome && c.nome !== "relay" && c.nome.toLowerCase().includes(mencao.termo))
+      .filter((c) => c.nome !== nome && c.nome !== "relay"
+        && (c.nome.toLowerCase().includes(mencao.termo) || (c.apelido ?? "").toLowerCase().includes(mencao.termo)))
       // Começa com o termo > online > alfabética.
       .sort((a, b) => Number(b.nome.toLowerCase().startsWith(mencao.termo)) - Number(a.nome.toLowerCase().startsWith(mencao.termo))
         || Number(b.online) - Number(a.online) || a.nome.localeCompare(b.nome))
@@ -230,7 +232,9 @@ export function Composer({ sala, rotuloSala, nome, respondendo, candidatos, aoCa
                   {siglaDe(c.nome)}
                 </AvatarFallback>
               </Avatar>
-              <span className="min-w-0 flex-1 truncate text-sm">{c.nome}</span>
+              <span className="min-w-0 flex-1 truncate text-sm">
+                {c.apelido ? <>{c.apelido} <span className="font-mono text-xs text-muted-foreground">{c.nome}</span></> : c.nome}
+              </span>
               {c.online && <span className="flex items-center gap-1 text-xs text-ok"><i className="size-1.5 rounded-full bg-ok" />{textos.conversa.online}</span>}
             </li>
           ))}
