@@ -116,6 +116,13 @@ class TestFatos(unittest.TestCase):
         status, r = pedir("GET", "/fatos?sala=t7&q=" + urllib.request.quote('"OR NEAR( *) AND'))
         self.assertEqual(status, 200, r)
 
+    def test_termo_so_com_simbolos_nao_lista_tudo(self) -> None:
+        fato("t9", mensagem("t9", "x"))
+        _, achados = pedir("GET", "/fatos?sala=t9&q=" + urllib.request.quote("???"))
+        self.assertEqual(achados, [])
+        _, todos = pedir("GET", "/fatos?sala=t9")  # sem `q` continua listando
+        self.assertEqual(len(todos), 1)
+
     def test_credencial_recusada(self) -> None:
         origem = mensagem("t8", "x")
         status, r = fato("t8", origem, objeto="token ghp_" + "a" * 36)

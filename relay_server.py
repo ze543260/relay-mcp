@@ -144,7 +144,10 @@ MIGRACOES = [
     # 9: edição de mensagem (quando foi editada; o texto antigo não é guardado)
     "ALTER TABLE msg ADD COLUMN editado REAL;",
     # 10: memória da equipe (docs/PLANO-MEMORIA.md): fatos com origem; nada se apaga, o novo supera o antigo.
-    # O índice FTS é mantido pelo código (migrar() divide por ";", então sem triggers).
+    # O índice FTS é mantido pelo código (migrar() divide por ";", então sem triggers). É external content:
+    # quem apagar ou editar texto de um fato (ex.: retenção) tem que tirar a versão antiga do índice antes, com
+    # INSERT INTO fato_busca(fato_busca, rowid, sujeito, predicado, objeto) VALUES('delete', id, <valores antigos>),
+    # senão a busca devolve lixo. Hoje fato nunca é apagado nem tem o texto editado.
     """CREATE TABLE IF NOT EXISTS fato (
          id INTEGER PRIMARY KEY, sala TEXT NOT NULL, sujeito TEXT NOT NULL, predicado TEXT NOT NULL, objeto TEXT NOT NULL,
          origem_tipo TEXT NOT NULL, origem_id TEXT NOT NULL, estado TEXT NOT NULL DEFAULT 'vigente',
@@ -1433,6 +1436,8 @@ class Handler(BaseHTTPRequestHandler):
         with conectar() as con:
             self._quem(con)
             termo = consulta_fts(q.get("q") or "")
+            if (q.get("q") or "").strip() and not termo:
+                return self._json(200, [])  # só símbolos: nada a buscar, em vez de cair na listagem sem filtro
             if termo:
                 sql = (f"SELECT {cols} FROM fato_busca JOIN fato f ON f.id=fato_busca.rowid "
                        f"WHERE fato_busca MATCH ? AND {' AND '.join(filtro)} ORDER BY bm25(fato_busca), f.criado DESC LIMIT ?")
