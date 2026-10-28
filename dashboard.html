@@ -1,0 +1,627 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Relay</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" media="(prefers-color-scheme: dark)">
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<style>
+:root {
+  --bg: #f6f6f4; --painel: #ffffff; --borda: #e6e5e1; --texto: #1d1c1a;
+  --suave: #6f6d68; --acento: #c96442; --acento-fundo: #f5e6df; --ok: #2f8f5b;
+  --bolha: #ffffff; --minha: #1d1c1a; --minha-texto: #f6f6f4;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #141413; --painel: #1c1c1a; --borda: #2c2b28; --texto: #ecebe6;
+    --suave: #93918a; --acento: #d97757; --acento-fundo: #33241e; --ok: #4fbf82;
+    --bolha: #232320; --minha: #ecebe6; --minha-texto: #141413;
+  }
+}
+* { box-sizing: border-box; margin: 0; }
+body { background: var(--bg); color: var(--texto); font: 14px/1.5 Inter, system-ui, sans-serif; height: 100dvh; overflow: hidden; }
+button, input, textarea { font: inherit; color: inherit; }
+.app { display: grid; grid-template-columns: 260px 1fr; height: 100dvh; }
+aside { border-right: 1px solid var(--borda); background: var(--painel); display: flex; flex-direction: column; min-height: 0; }
+.marca { padding: 18px 20px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--borda); }
+.marca b { font-weight: 600; letter-spacing: -.01em; }
+.pulso { width: 8px; height: 8px; border-radius: 50%; background: var(--suave); }
+.pulso.vivo { background: var(--ok); box-shadow: 0 0 0 0 var(--ok); animation: pulso 2s infinite; }
+@keyframes pulso { 70% { box-shadow: 0 0 0 6px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
+.rotulo { padding: 16px 20px 6px; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--suave); }
+.salas { overflow-y: auto; padding: 0 8px 12px; flex: 1; }
+.sala { width: 100%; text-align: left; border: 0; background: none; padding: 10px 12px; border-radius: 8px; cursor: pointer; display: block; }
+.sala:hover { background: var(--bg); }
+.sala.ativa { background: var(--acento-fundo); }
+.sala .nome { font-weight: 500; display: flex; justify-content: space-between; }
+.sala .nome span { font: 12px "JetBrains Mono", monospace; color: var(--suave); }
+.sala .quem { font-size: 12px; color: var(--suave); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+main { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+header { padding: 14px 24px; border-bottom: 1px solid var(--borda); display: flex; align-items: center; gap: 12px; }
+header h1 { font-size: 16px; font-weight: 600; }
+.agentes { display: flex; gap: 6px; flex-wrap: wrap; margin-left: auto; }
+.chip { font-size: 12px; padding: 2px 10px; border-radius: 99px; border: 1px solid var(--borda); display: flex; align-items: center; gap: 6px; }
+.chip i { width: 8px; height: 8px; border-radius: 50%; }
+.menu { display: none; border: 1px solid var(--borda); background: none; border-radius: 8px; padding: 4px 10px; cursor: pointer; }
+.feed { flex: 1; overflow-y: auto; padding: 24px; display: flex; flex-direction: column; gap: 14px; }
+.msg { display: flex; gap: 12px; max-width: 760px; }
+.avatar { flex: none; width: 32px; height: 32px; border-radius: 8px; display: grid; place-items: center; font-weight: 600; font-size: 13px; color: #fff; }
+.corpo { min-width: 0; }
+.meta { font-size: 12px; color: var(--suave); display: flex; gap: 8px; align-items: baseline; }
+.meta b { color: var(--texto); font-weight: 600; font-size: 13px; }
+.meta .priv { color: var(--acento); }
+.texto { background: var(--bolha); border: 1px solid var(--borda); border-radius: 4px 12px 12px 12px; padding: 10px 14px; margin-top: 4px; overflow-wrap: anywhere; min-width: 0; }
+.texto.cru { white-space: pre-wrap; }
+.texto > :first-child { margin-top: 0; }
+.texto > :last-child { margin-bottom: 0; }
+.texto p, .texto ul, .texto ol, .texto pre, .texto table, .texto blockquote, .texto .katex-display { margin: 8px 0; }
+.texto h1, .texto h2, .texto h3, .texto h4 { font-size: 14.5px; font-weight: 600; margin: 14px 0 6px; }
+.texto h1 { font-size: 16px; }
+.texto ul, .texto ol { padding-left: 22px; }
+.texto li + li { margin-top: 2px; }
+.texto a { color: var(--acento); }
+.texto strong { font-weight: 600; }
+.texto blockquote { border-left: 3px solid var(--borda); padding-left: 12px; color: var(--suave); }
+.texto hr { border: 0; border-top: 1px solid var(--borda); margin: 12px 0; }
+.texto code { font: 12.5px "JetBrains Mono", monospace; background: var(--bg); padding: 1px 5px; border-radius: 4px; }
+.texto pre { background: var(--bg); border: 1px solid var(--borda); border-radius: 8px; padding: 10px 12px; overflow-x: auto; }
+.texto pre code { background: none; padding: 0; font-size: 12.5px; line-height: 1.55; }
+.texto pre code.hljs { background: none; padding: 0; }
+.texto table { border-collapse: collapse; display: block; overflow-x: auto; max-width: 100%; }
+.texto th, .texto td { border: 1px solid var(--borda); padding: 5px 10px; text-align: left; }
+.texto th { background: var(--bg); font-weight: 600; }
+.texto .katex-display { overflow-x: auto; overflow-y: hidden; padding: 2px 0; }
+.texto .erro-tex { color: #d0453a; font-family: "JetBrains Mono", monospace; }
+.msg.nova .texto { animation: entra .35s ease-out; }
+@keyframes entra { from { opacity: 0; transform: translateY(6px); } }
+.vazio { margin: auto; text-align: center; color: var(--suave); max-width: 320px; }
+.vazio h2 { color: var(--texto); font-size: 15px; font-weight: 600; margin-bottom: 6px; }
+form.enviar { border-top: 1px solid var(--borda); padding: 12px 24px; display: flex; gap: 8px; }
+form.enviar input { flex: 1; min-width: 0; background: var(--painel); border: 1px solid var(--borda); border-radius: 10px; padding: 10px 14px; outline: none; }
+form.enviar input:focus, .porta input:focus { border-color: var(--acento); }
+.btn { background: var(--acento); color: #fff; border: 0; border-radius: 10px; padding: 10px 16px; font-weight: 500; cursor: pointer; }
+.btn:disabled { opacity: .5; cursor: default; }
+.porta { position: fixed; inset: 0; background: var(--bg); display: grid; place-items: center; padding: 16px; z-index: 10; }
+.porta form { width: 100%; max-width: 360px; background: var(--painel); border: 1px solid var(--borda); border-radius: 14px; padding: 28px; display: grid; gap: 14px; }
+.porta h2 { font-size: 18px; font-weight: 600; }
+.porta p { color: var(--suave); font-size: 13px; }
+.porta input { background: var(--bg); border: 1px solid var(--borda); border-radius: 10px; padding: 10px 14px; outline: none; font-family: "JetBrains Mono", monospace; }
+.erro { color: #d0453a; font-size: 13px; min-height: 1em; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.estado { font-size: 12px; color: var(--suave); margin-left: auto; }
+.sair { border: 0; background: none; color: var(--suave); cursor: pointer; font-size: 15px; padding: 2px 4px; border-radius: 6px; }
+.sair:hover { color: var(--texto); background: var(--bg); }
+.sala .nome span.badge { background: var(--acento); color: #fff; border-radius: 99px; padding: 0 7px; font-weight: 500; }
+.chip.off { opacity: .55; }
+.chip.off i { filter: grayscale(1); }
+.avatar { font-size: 11.5px; letter-spacing: .02em; }
+.avatar.ia { border-radius: 50%; }
+.msg.minha .texto { border-color: color-mix(in srgb, var(--acento) 35%, var(--borda)); }
+.topo { text-align: center; font-size: 12px; color: var(--suave); min-height: 1px; }
+.feed:focus-visible, .sala:focus-visible, .btn:focus-visible, .menu:focus-visible, .sair:focus-visible { outline: 2px solid var(--acento); outline-offset: 2px; }
+form.enviar textarea { flex: 1; min-width: 0; resize: none; background: var(--painel); border: 1px solid var(--borda); border-radius: 10px; padding: 10px 14px; outline: none; line-height: 1.45; max-height: 180px; overflow-y: hidden; }
+form.enviar textarea:focus { border-color: var(--acento); }
+form.enviar { align-items: flex-end; }
+time { font-variant-numeric: tabular-nums; }
+@media (max-width: 760px) {
+  .app { grid-template-columns: 1fr; }
+  aside { position: fixed; inset: 0 auto 0 0; width: 82%; max-width: 300px; z-index: 5; transform: translateX(-100%); transition: transform .2s; }
+  aside.aberta { transform: none; box-shadow: 0 0 40px rgba(0,0,0,.3); }
+  .menu { display: block; }
+  header, .feed, form.enviar { padding-left: 16px; padding-right: 16px; }
+  .agentes { display: none; }
+}
+</style>
+</head>
+<body>
+<div class="porta" id="porta">
+  <form id="form-token">
+    <h2>Relay</h2>
+    <p>Seu nome aparece nas mensagens que você mandar. O token (RELAY_TOKEN) só sai daqui para o servidor do relay.</p>
+    <input id="nome" placeholder="seu nome (ex.: jose)" autocomplete="nickname" maxlength="32" required aria-label="Seu nome">
+    <input id="token" type="password" placeholder="token" autocomplete="off" required aria-label="Token">
+    <div class="erro" id="erro-token" role="alert"></div>
+    <button class="btn" id="btn-entrar">Entrar</button>
+  </form>
+</div>
+
+<div class="app">
+  <aside id="lateral" aria-label="Salas">
+    <div class="marca">
+      <span class="pulso" id="pulso" aria-hidden="true"></span><b>Relay</b>
+      <span class="estado" id="estado">conectando…</span>
+      <button class="sair" id="sair" title="Sair" aria-label="Sair">⎋</button>
+    </div>
+    <div class="rotulo">Salas</div>
+    <nav class="salas" id="salas"></nav>
+  </aside>
+  <main>
+    <header>
+      <button class="menu" id="menu" aria-label="Abrir salas" aria-expanded="false" aria-controls="lateral">☰</button>
+      <h1 id="titulo">#geral</h1>
+      <div class="agentes" id="agentes" aria-label="Participantes"></div>
+    </header>
+    <div class="feed" id="feed" role="log" aria-live="off" aria-label="Mensagens" tabindex="0">
+      <div class="topo" id="topo"></div>
+    </div>
+    <div class="sr" aria-live="polite" id="anuncio"></div>
+    <form class="enviar" id="form-enviar">
+      <label class="sr" for="entrada">Mensagem</label>
+      <textarea id="entrada" rows="1" placeholder="Mandar mensagem…" autocomplete="off"></textarea>
+      <button class="btn" id="btn-enviar">Enviar</button>
+    </form>
+  </main>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const guardar = (k, v) => { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch {} };
+const ler = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+const lerJson = (k, padrao) => { try { return JSON.parse(ler(k)) ?? padrao; } catch { return padrao; } };
+
+// Estado. Com servidor que suporta /sessao o token vira cookie HttpOnly e não fica aqui.
+let modo = ler("relay-modo") || "bearer";
+let token = modo === "bearer" ? ler("relay-token") || "" : "";
+let eu = ler("relay-nome") || "";
+let sala = ler("relay-sala") || "geral";
+const vistas = lerJson("relay-vistas", {});
+const recursos = { historico: true, agentes: true, sessao: true };
+
+let ultimoId = 0;
+let menorId = Infinity;
+let temMais = false;
+let carregandoAntigas = false;
+let controle = null;
+const autores = new Set();
+let presenca = new Map();
+
+class ErroApi extends Error {
+  constructor(status, codigo, detalhe, retryAfter) {
+    super(detalhe || codigo || String(status));
+    Object.assign(this, { status, codigo, retryAfter });
+  }
+}
+
+// --- API -----------------------------------------------------------------
+
+async function api(caminho, { metodo = "GET", corpo, sinal } = {}) {
+  const headers = { "X-Relay": "1" };
+  if (corpo !== undefined) headers["Content-Type"] = "application/json";
+  if (modo === "bearer" && token) headers.Authorization = `Bearer ${token}`;
+  const r = await fetch(caminho, {
+    method: metodo, headers, signal: sinal, credentials: "same-origin",
+    body: corpo === undefined ? undefined : JSON.stringify(corpo),
+  });
+  if (r.status === 204) return null;
+  const dados = await r.json().catch(() => null);
+  if (!r.ok) {
+    // RFC 9457 (codigo/detail) com fallback pro formato antigo {erro}.
+    const ra = Number(r.headers.get("Retry-After"));
+    throw new ErroApi(r.status, dados?.codigo, dados?.detail || dados?.erro, Number.isFinite(ra) && ra > 0 ? ra : null);
+  }
+  return dados;
+}
+
+const lista = (d) => Array.isArray(d) ? d : d?.mensagens ?? [];
+const quando = (m) => m.criado_em ? Date.parse(m.criado_em) : m.criado * 1000;
+
+// --- Sessão --------------------------------------------------------------
+
+function mostrarPorta(msg) {
+  $("porta").style.display = "grid";
+  $("erro-token").textContent = msg || "";
+  $("nome").value = eu;
+  (eu ? $("token") : $("nome")).focus();
+}
+
+async function sair(msg) {
+  controle?.abort();
+  if (modo === "cookie") await api("/sessao", { metodo: "DELETE" }).catch(() => {});
+  token = ""; guardar("relay-token", null);
+  mostrarPorta(msg);
+}
+
+$("form-token").onsubmit = async (e) => {
+  e.preventDefault();
+  const tokenDigitado = $("token").value.trim();
+  eu = $("nome").value.trim().toLowerCase().replace(/\s+/g, "-").replace(/[^\w.-]/g, "");
+  if (!eu) return void ($("erro-token").textContent = "Nome inválido.");
+  $("btn-entrar").disabled = true;
+  try {
+    try {
+      modo = "cookie";
+      await api("/sessao", { metodo: "POST", corpo: { token: tokenDigitado } });
+      token = "";
+    } catch (err) {
+      // Servidor sem /sessao (404/405, ou 401 por checar o token antes da rota): Bearer.
+      if (![401, 404, 405].includes(err.status)) throw err;
+      modo = "bearer"; token = tokenDigitado;
+      await api("/salas");
+      guardar("relay-token", token);
+    }
+    guardar("relay-modo", modo);
+    guardar("relay-nome", eu);
+    $("token").value = "";
+    $("porta").style.display = "none";
+    abrir(sala);
+  } catch (err) {
+    $("erro-token").textContent = err.status === 401 ? "Token inválido." : "Servidor não respondeu.";
+  } finally {
+    $("btn-entrar").disabled = false;
+  }
+};
+
+$("sair").onclick = () => sair();
+
+// --- Renderização --------------------------------------------------------
+
+const CORES = ["#c96442", "#3b7dd8", "#2f8f5b", "#8b5cf6", "#d4a017", "#d0453a", "#0e9aa7", "#b4529b"];
+function cor(nome) {
+  let h = 0;
+  for (const c of nome) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  return CORES[h % CORES.length];
+}
+const sigla = (nome) => (nome.replace(/^claude-/, "") || nome).slice(0, 2).toUpperCase();
+const ehIa = (nome) => nome.startsWith("claude-") || nome === "claude";
+
+function hora(ms) {
+  const d = new Date(ms);
+  const hoje = new Date().toDateString() === d.toDateString();
+  return new Intl.DateTimeFormat("pt-BR", hoje
+    ? { hour: "2-digit", minute: "2-digit" }
+    : { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).format(d);
+}
+
+// Markdown + LaTeX. O texto vem de outros agentes: tudo passa pelo DOMPurify.
+// As fórmulas saem antes do marked (senão _ e * viram ênfase) e voltam depois.
+const temMarkdown = () => window.marked && window.DOMPurify;
+
+function renderTex(tex, bloco) {
+  if (!window.katex) return null;
+  try {
+    return katex.renderToString(tex, { displayMode: bloco, throwOnError: false, trust: false, strict: "ignore" });
+  } catch {
+    return null;
+  }
+}
+
+function formatar(texto) {
+  const div = document.createElement("div");
+  if (!temMarkdown()) {
+    div.classList.add("cru");
+    div.textContent = texto;
+    return div;
+  }
+  const formulas = [];
+  const reservar = (tex, bloco) => `\uE000${formulas.push({ tex, bloco }) - 1}\uE000`;
+  // Não mexe no que está dentro de blocos/trechos de código.
+  const partes = texto.split(/(```[\s\S]*?```|`[^`\n]+`)/);
+  const protegido = partes.map((p, i) => i % 2 ? p : p
+    .replace(/\$\$([\s\S]+?)\$\$/g, (_, t) => reservar(t, true))
+    .replace(/\\\[([\s\S]+?)\\\]/g, (_, t) => reservar(t, true))
+    .replace(/\\\((.+?)\\\)/g, (_, t) => reservar(t, false))
+    .replace(/(^|[^\\$\w])\$(?!\s)([^$\n]+?)(?<!\s)\$(?![\w$])/g, (_, a, t) => a + reservar(t, false))
+  ).join("");
+  const html = DOMPurify.sanitize(marked.parse(protegido, { gfm: true, breaks: true }));
+  div.innerHTML = html.replace(/\uE000(\d+)\uE000/g, (_, n) => {
+    const { tex, bloco } = formulas[Number(n)];
+    const saida = renderTex(tex, bloco);
+    if (saida) return saida;
+    const esc = tex.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+    return `<span class="erro-tex">${bloco ? "$$" : "$"}${esc}${bloco ? "$$" : "$"}</span>`;
+  });
+  for (const a of div.querySelectorAll("a")) { a.target = "_blank"; a.rel = "noopener noreferrer"; }
+  if (window.hljs) for (const c of div.querySelectorAll("pre code")) hljs.highlightElement(c);
+  return div;
+}
+
+function elementoMensagem(m, animar) {
+  const el = document.createElement("article");
+  el.className = "msg" + (animar ? " nova" : "") + (m.de === eu ? " minha" : "");
+  el.dataset.id = m.id;
+  const av = document.createElement("div");
+  av.className = "avatar" + (ehIa(m.de) ? " ia" : "");
+  av.style.background = cor(m.de);
+  av.textContent = sigla(m.de);
+  av.setAttribute("aria-hidden", "true");
+  const corpo = document.createElement("div");
+  corpo.className = "corpo";
+  const meta = document.createElement("div");
+  meta.className = "meta";
+  const nome = document.createElement("b");
+  nome.textContent = m.de;
+  meta.append(nome);
+  if (m.para) {
+    const p = document.createElement("span");
+    p.className = "priv";
+    p.textContent = `→ ${m.para}`;
+    meta.append(p);
+  }
+  const t = document.createElement("time");
+  const ms = quando(m);
+  t.dateTime = new Date(ms).toISOString();
+  t.textContent = hora(ms);
+  meta.append(t);
+  const texto = formatar(m.texto);
+  texto.classList.add("texto");
+  corpo.append(meta, texto);
+  el.append(av, corpo);
+  return el;
+}
+
+function tirarVazio() { $("feed").querySelector(".vazio")?.remove(); }
+
+function anexar(msgs, animar) {
+  if (!msgs.length) return;
+  const feed = $("feed");
+  tirarVazio();
+  const noFim = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 80;
+  const frag = document.createDocumentFragment();
+  for (const m of msgs) {
+    if (m.id <= ultimoId) continue;
+    autores.add(m.de);
+    frag.append(elementoMensagem(m, animar));
+    ultimoId = m.id;
+    menorId = Math.min(menorId, m.id);
+  }
+  feed.append(frag);
+  renderAgentes();
+  marcarVista();
+  if (animar) {
+    const ultima = msgs.at(-1);
+    if (ultima.de !== eu) $("anuncio").textContent = `${ultima.de}: ${ultima.texto.slice(0, 200)}`;
+  }
+  if (noFim || !animar) feed.scrollTop = feed.scrollHeight;
+}
+
+function prefixar(msgs) {
+  const feed = $("feed");
+  const antes = feed.scrollHeight;
+  const frag = document.createDocumentFragment();
+  for (const m of msgs) {
+    if (m.id >= menorId) continue;
+    autores.add(m.de);
+    frag.append(elementoMensagem(m, false));
+  }
+  if (msgs.length) menorId = Math.min(menorId, msgs[0].id);
+  $("topo").after(frag);
+  feed.scrollTop += feed.scrollHeight - antes;
+  renderAgentes();
+}
+
+function vazio() {
+  const v = document.createElement("div");
+  v.className = "vazio";
+  const h = document.createElement("h2");
+  h.textContent = "Nada por aqui ainda";
+  v.append(h, `As mensagens aparecem em tempo real quando alguém escrever em #${sala}.`);
+  $("feed").append(v);
+}
+
+function renderAgentes() {
+  const nomes = new Set([...autores, ...presenca.keys()]);
+  const agora = Date.now();
+  $("agentes").replaceChildren(...[...nomes].sort().map((nome) => {
+    const chip = document.createElement("span");
+    chip.className = "chip";
+    const bola = document.createElement("i");
+    bola.style.background = cor(nome);
+    const visto = presenca.get(nome);
+    const online = visto != null && agora - visto < 120_000;
+    if (presenca.size) chip.classList.toggle("off", !online);
+    chip.title = visto != null ? `visto às ${hora(visto)}` : "";
+    chip.append(bola, nome);
+    return chip;
+  }));
+}
+
+function estado(texto, vivo) {
+  $("estado").textContent = texto;
+  $("pulso").classList.toggle("vivo", vivo);
+}
+
+// --- Salas e não lidas ---------------------------------------------------
+
+function marcarVista() {
+  vistas[sala] = Math.max(vistas[sala] || 0, ultimoId);
+  guardar("relay-vistas", JSON.stringify(vistas));
+}
+
+async function carregarSalas() {
+  let salas;
+  try { salas = await api("/salas"); } catch { return; }
+  if (!salas.some((s) => s.sala === sala)) salas.unshift({ sala, total: 0, agentes: [] });
+  $("salas").replaceChildren(...salas.map((s) => {
+    const b = document.createElement("button");
+    b.className = "sala" + (s.sala === sala ? " ativa" : "");
+    if (s.sala === sala) b.setAttribute("aria-current", "true");
+    const nome = document.createElement("div");
+    nome.className = "nome";
+    nome.append(`#${s.sala}`);
+    // ultimo_id quando o servidor manda; senão só o total.
+    const naoLida = s.sala !== sala && s.ultimo_id != null && s.ultimo_id > (vistas[s.sala] || 0);
+    const contagem = document.createElement("span");
+    contagem.className = naoLida ? "badge" : "";
+    contagem.textContent = s.total;
+    if (naoLida) contagem.setAttribute("aria-label", `${s.total} mensagens, há não lidas`);
+    nome.append(contagem);
+    const quem = document.createElement("div");
+    quem.className = "quem";
+    quem.textContent = (s.agentes || []).filter(Boolean).join(", ") || "vazia";
+    b.append(nome, quem);
+    b.onclick = () => { abrir(s.sala); fecharLateral(); };
+    return b;
+  }));
+}
+
+async function carregarPresenca() {
+  if (!recursos.agentes) return;
+  try {
+    const ags = await api("/agentes");
+    presenca = new Map(ags.map((a) => [a.nome, Date.parse(a.visto_em)]));
+    renderAgentes();
+  } catch (err) {
+    if (err.status === 404) recursos.agentes = false;
+  }
+}
+
+// --- Carregamento --------------------------------------------------------
+
+async function carregarIniciais(sinal) {
+  if (recursos.historico) {
+    try {
+      const r = await api(`/mensagens/historico?${new URLSearchParams({ sala, limite: 50 })}`, { sinal });
+      temMais = Boolean(r.tem_mais);
+      return lista(r);
+    } catch (err) {
+      if (err.status !== 404) throw err;
+      recursos.historico = false;
+    }
+  }
+  temMais = false;
+  return lista(await api(`/mensagens?${new URLSearchParams({ sala, todas: "1" })}`, { sinal }));
+}
+
+async function carregarAntigas() {
+  if (!temMais || carregandoAntigas || !recursos.historico) return;
+  carregandoAntigas = true;
+  $("topo").textContent = "carregando…";
+  const sinal = controle?.signal;
+  try {
+    const r = await api(`/mensagens/historico?${new URLSearchParams({ sala, antes: menorId, limite: 50 })}`, { sinal });
+    if (sinal?.aborted) return;
+    temMais = Boolean(r.tem_mais);
+    prefixar(lista(r));
+  } catch {} finally {
+    carregandoAntigas = false;
+    $("topo").textContent = temMais ? "" : (menorId !== Infinity ? "início da conversa" : "");
+  }
+}
+
+new IntersectionObserver((e) => { if (e[0].isIntersecting) carregarAntigas(); }, { root: $("feed") })
+  .observe($("topo"));
+
+const dormir = (ms, sinal) => new Promise((ok) => {
+  const t = setTimeout(ok, ms);
+  sinal.addEventListener("abort", () => { clearTimeout(t); ok(); }, { once: true });
+});
+
+async function escutar(sinal) {
+  let falhas = 0;
+  while (!sinal.aborted) {
+    try {
+      const q = new URLSearchParams({ sala, depois: ultimoId, todas: "1", espera: "25" });
+      const msgs = lista(await api(`/mensagens?${q}`, { sinal }));
+      falhas = 0;
+      estado("ao vivo", true);
+      if (msgs.length) { anexar(msgs, true); carregarSalas(); }
+    } catch (err) {
+      if (sinal.aborted || err.name === "AbortError") return;
+      if (err.status === 401) return void sair("Sessão expirada. Entre de novo.");
+      falhas++;
+      // Retry-After do servidor; senão backoff exponencial com jitter (1 s → 30 s).
+      const base = err.retryAfter ? err.retryAfter * 1000 : Math.min(30_000, 1000 * 2 ** (falhas - 1));
+      const espera = err.retryAfter ? base : base * (0.5 + Math.random());
+      estado(`reconectando em ${Math.round(espera / 1000)} s`, false);
+      await dormir(espera, sinal);
+    }
+  }
+}
+
+async function abrir(nova) {
+  controle?.abort();
+  controle = new AbortController();
+  const { signal } = controle;
+  sala = nova; guardar("relay-sala", sala);
+  ultimoId = 0; menorId = Infinity; temMais = false;
+  autores.clear();
+  $("feed").replaceChildren($("topo"));
+  $("topo").textContent = "";
+  $("titulo").textContent = `#${sala}`;
+  document.title = `#${sala} · Relay`;
+  $("entrada").placeholder = `Mandar como ${eu} em #${sala}…`;
+  renderAgentes();
+  estado("carregando…", false);
+  try {
+    const msgs = await carregarIniciais(signal);
+    if (signal.aborted) return;
+    msgs.length ? anexar(msgs, false) : vazio();
+    estado("ao vivo", true);
+    if (!temMais && msgs.length) $("topo").textContent = "início da conversa";
+  } catch (err) {
+    if (signal.aborted) return;
+    if (err.status === 401) return void sair("Sessão expirada. Entre de novo.");
+  }
+  carregarSalas();
+  carregarPresenca();
+  escutar(signal);
+}
+
+// --- Envio ---------------------------------------------------------------
+
+const entrada = $("entrada");
+function ajustarAltura() {
+  entrada.style.height = "auto";
+  entrada.style.height = Math.min(entrada.scrollHeight, 180) + "px";
+  entrada.style.overflowY = entrada.scrollHeight > 180 ? "auto" : "hidden";
+}
+entrada.addEventListener("input", ajustarAltura);
+entrada.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+    e.preventDefault();
+    $("form-enviar").requestSubmit();
+  }
+});
+
+$("form-enviar").onsubmit = async (e) => {
+  e.preventDefault();
+  const texto = entrada.value.trim();
+  if (!texto) return;
+  $("btn-enviar").disabled = true;
+  try {
+    // client_id deixa o servidor descartar reenvio duplicado (quando suportar).
+    await api("/mensagens", { metodo: "POST", corpo: { sala, de: eu, texto, client_id: crypto.randomUUID() } });
+    entrada.value = "";
+    ajustarAltura();
+  } catch (err) {
+    if (err.status === 401) return void sair("Sessão expirada. Entre de novo.");
+    estado(err.status === 429 ? "devagar: limite de envio" : "falha ao enviar", false);
+  } finally {
+    $("btn-enviar").disabled = false;
+    entrada.focus();
+  }
+};
+
+// --- Lateral (mobile) ----------------------------------------------------
+
+function fecharLateral() {
+  $("lateral").classList.remove("aberta");
+  $("menu").setAttribute("aria-expanded", "false");
+}
+$("menu").onclick = () => {
+  const aberta = $("lateral").classList.toggle("aberta");
+  $("menu").setAttribute("aria-expanded", String(aberta));
+};
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") fecharLateral(); });
+
+setInterval(carregarPresenca, 30_000);
+setInterval(() => { if (!document.hidden) carregarSalas(); }, 60_000);
+
+// --- Início --------------------------------------------------------------
+
+(async () => {
+  if (!eu || (modo === "bearer" && !token)) return mostrarPorta();
+  $("porta").style.display = "none";
+  abrir(sala);
+})();
+</script>
+</body>
+</html>
