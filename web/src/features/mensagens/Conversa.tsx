@@ -22,6 +22,9 @@ interface Props {
   aoLer: (id: number) => void;
   retentar: (clientId: string) => void;
   descartar: (clientId: string) => void;
+  admin: boolean;
+  aoResponder: (m: TMensagem) => void;
+  apagar: (id: number) => void;
 }
 
 type Item =
@@ -35,7 +38,9 @@ const t = textos.conversa;
 
 /** Lista virtualizada com marcador de não lidas: só o que está visível (+ margem) fica no DOM. */
 export function Conversa(props: Props) {
-  const { sala, eu, mensagens, pendentes, carregando, temMais, carregandoAntigas, ultimaLida, carregarAntigas, aoLer, retentar, descartar } = props;
+  const { sala, eu, mensagens, pendentes, carregando, temMais, carregandoAntigas, ultimaLida, carregarAntigas, aoLer, retentar, descartar, admin, aoResponder, apagar } = props;
+  const porId = new Map(mensagens.map((m) => [m.id, m]));
+  const mencao = new RegExp(`@${eu.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
   const feed = useRef<HTMLDivElement>(null);
   const presoNoFim = useRef(true);
   const posicionado = useRef(false);
@@ -181,10 +186,13 @@ export function Conversa(props: Props) {
                       <span className="h-px flex-1 bg-primary/40" />{t.novas}<span className="h-px flex-1 bg-primary/40" />
                     </div>
                   ) : it.tipo === "msg" ? (
-                    <Mensagem m={it.m} minha={it.m.de === eu} />
+                    <Mensagem m={it.m} minha={it.m.de === eu} mencionaMe={mencao.test(it.m.texto)}
+                      citada={it.m.reply_to ? porId.get(it.m.reply_to) : undefined}
+                      podeApagar={admin || it.m.de === eu} aoResponder={aoResponder} aoApagar={apagar} />
                   ) : (
                     <Mensagem
-                      m={{ id: -1, de: it.p.de, para: null, texto: it.p.texto, criado_em: it.p.criado_em }}
+                      m={{ id: -1, de: it.p.de, para: null, texto: it.p.texto, criado_em: it.p.criado_em, reply_to: it.p.reply_to }}
+                      citada={it.p.reply_to ? porId.get(it.p.reply_to) : undefined}
                       minha estado={it.p.estado}
                       aoTentar={() => retentar(it.p.client_id)} aoDescartar={() => descartar(it.p.client_id)} />
                   )}

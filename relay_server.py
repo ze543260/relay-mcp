@@ -174,7 +174,7 @@ class Quem:
     via_cookie: bool = False
 
 
-def identificar(headers, con: sqlite3.Connection) -> Quem:
+def identificar(headers, con: sqlite3.Connection, metodo: str) -> Quem:
     auth = headers.get("Authorization", "")
     if auth.startswith("Bearer "):
         token = auth[7:].strip()
@@ -193,7 +193,9 @@ def identificar(headers, con: sqlite3.Connection) -> Quem:
             (hash_token(cookie[COOKIE].value), time.time()),
         ).fetchone()
         if linha:
-            if headers.get("X-Relay") != "1":
+            # CSRF: escrita exige header custom; leitura (inclui EventSource, que não manda
+            # header) fica protegida pelo SameSite=Strict do cookie.
+            if metodo != "GET" and headers.get("X-Relay") != "1":
                 raise ErroHttp(403, "csrf", "Header X-Relay ausente.")
             return Quem(linha[0], bool(linha[1]), via_cookie=True)
         raise ErroHttp(401, "sessao_expirada", "Sessão expirada. Entre de novo.")
@@ -382,7 +384,7 @@ class Handler(BaseHTTPRequestHandler):
     # sessão
 
     def _quem(self, con: sqlite3.Connection) -> Quem:
-        quem = identificar(self.headers, con)
+        quem = identificar(self.headers, con, self.command)
         marcar_visto(con, quem.nome)
         return quem
 

@@ -1,60 +1,73 @@
-import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
-import { api, configurarAuth, ErroApi, type ModoAuth } from "@/shared/api/cliente";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { api, configurarAuth, ErroApi } from "@/shared/api/cliente";
 import { gravar, ler } from "@/shared/lib/armazenamento";
 
 interface Sessao {
   nome: string;
+  admin: boolean;
+  /** "verificando" só na abertura do app, enquanto o cookie é conferido com /eu. */
+  estado: "verificando" | "dentro" | "fora";
   logado: boolean;
   entrar: (nome: string, token: string) => Promise<void>;
   sair: (motivo?: string) => void;
   motivoSaida: string | null;
 }
 
-const ContextoSessao = createContext<Sessao | null>(null);
-
-// Roda uma vez, antes do primeiro render: o cliente da API nasce com a credencial salva.
-function estadoInicial(): { modo: ModoAuth; token: string; nome: string } {
-  const modo: ModoAuth = ler("relay-modo") === "cookie" ? "cookie" : "bearer";
-  const token = modo === "bearer" ? (ler("relay-token") ?? "") : "";
-  configurarAuth(modo, token);
-  return { modo, token, nome: ler("relay-nome") ?? "" };
+interface RespostaEu {
+  nome: string | null;
+  admin: boolean;
 }
 
+const ContextoSessao = createContext<Sessao | null>(null);
+
+// O token nunca fica no navegador: vira cookie HttpOnly no servidor (POST /sessao).
+configurarAuth("cookie", "");
+// Limpa o que versões antigas guardavam.
+gravar("relay-token", null);
+gravar("relay-modo", null);
+
 export function ProvedorSessao({ children }: { children: ReactNode }) {
-  const [estado] = useState(estadoInicial);
-  const [nome, setNome] = useState(estado.nome);
-  const [logado, setLogado] = useState(Boolean(estado.nome && (estado.modo === "cookie" || estado.token)));
+  const [nome, setNome] = useState(() => ler("relay-nome") ?? "");
+  const [admin, setAdmin] = useState(false);
+  const [estado, setEstado] = useState<Sessao["estado"]>("verificando");
   const [motivoSaida, setMotivo] = useState<string | null>(null);
 
+  useEffect(() => {
+    const c = new AbortController();
+    api<RespostaEu>("/eu", { sinal: c.signal })
+      .then((eu) => {
+        if (eu.nome) setNome(eu.nome);
+        setAdmin(eu.admin);
+        setEstado(eu.nome ? "dentro" : "fora");
+      })
+      .catch((e: unknown) => {
+        if (!c.signal.aborted) setEstado(e instanceof ErroApi && e.status === 401 ? "fora" : "dentro");
+      });
+    return () => c.abort();
+  }, []);
+
   const entrar = useCallback(async (novoNome: string, token: string) => {
-    let modo: ModoAuth = "cookie";
-    try {
-      configurarAuth("cookie", "");
-      await api<void>("/sessao", { metodo: "POST", corpo: { token } });
-    } catch (e) {
-      // Servidor sem /sessao (404/405, ou 401 por checar o token antes da rota): Bearer.
-      if (!(e instanceof ErroApi) || ![401, 404, 405].includes(e.status)) throw e;
-      modo = "bearer";
-      configurarAuth("bearer", token);
-      await api<unknown>("/salas");
-    }
-    gravar("relay-modo", modo);
-    gravar("relay-token", modo === "bearer" ? token : null);
-    gravar("relay-nome", novoNome);
-    setNome(novoNome);
+    // Token de admin usa o nome digitado; token de agente traz o nome do próprio servidor.
+    const eu = await api<RespostaEu>("/sessao", { metodo: "POST", corpo: { token, nome: novoNome } });
+    const final = eu.nome ?? novoNome;
+    gravar("relay-nome", final);
+    setNome(final);
+    setAdmin(eu.admin);
     setMotivo(null);
-    setLogado(true);
+    setEstado("dentro");
   }, []);
 
   const sair = useCallback((motivo?: string) => {
     void api<void>("/sessao", { metodo: "DELETE" }).catch(() => undefined);
-    configurarAuth("bearer", "");
-    gravar("relay-token", null);
     setMotivo(motivo ?? null);
-    setLogado(false);
+    setAdmin(false);
+    setEstado("fora");
   }, []);
 
-  const valor = useMemo(() => ({ nome, logado, entrar, sair, motivoSaida }), [nome, logado, entrar, sair, motivoSaida]);
+  const valor = useMemo<Sessao>(
+    () => ({ nome, admin, estado, logado: estado === "dentro", entrar, sair, motivoSaida }),
+    [nome, admin, estado, entrar, sair, motivoSaida],
+  );
   return <ContextoSessao.Provider value={valor}>{children}</ContextoSessao.Provider>;
 }
 

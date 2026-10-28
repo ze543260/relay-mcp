@@ -10,6 +10,7 @@ import { useConversa } from "@/features/mensagens/useConversa";
 import { Participantes } from "@/features/presenca/Participantes";
 import { BarraLateral } from "@/features/salas/BarraLateral";
 import { PaletaSalas } from "@/features/salas/PaletaSalas";
+import type { Mensagem } from "@/shared/api/tipos";
 import { useTema } from "@/shared/lib/tema";
 import { textos } from "@/shared/lib/textos";
 import { gravar, lerJson } from "@/shared/lib/armazenamento";
@@ -17,7 +18,7 @@ import { rotaSala } from "../router";
 
 export function RotaSala() {
   const { sala } = rotaSala.useParams();
-  const { nome, logado, sair } = useSessao();
+  const { nome, admin, estado: estadoSessao, logado, sair } = useSessao();
   const navegar = useNavigate();
   const qc = useQueryClient();
   const [vistas, setVistas] = useState<Record<string, number>>(() => lerJson("relay-vistas", {}));
@@ -44,16 +45,17 @@ export function RotaSala() {
   const perderAcesso = useCallback(() => sair(textos.sessao.expirada), [sair]);
   const { tema, escolher: escolherTema } = useTema();
   const [paletaAberta, setPaletaAberta] = useState(false);
+  const [respondendo, setRespondendo] = useState<Mensagem | null>(null);
   const conversa = useConversa({ sala, ativo: logado, aoChegar, aoPerderAcesso: perderAcesso });
   const autores = [...new Set(conversa.mensagens.map((m) => m.de))];
 
-  if (!logado) return <Navigate to="/entrar" search={{ volta: sala }} replace />;
+  if (estadoSessao === "fora") return <Navigate to="/entrar" search={{ volta: sala }} replace />;
 
   const escolher = (s: string) => void navegar({ to: "/s/$sala", params: { sala: s } });
 
   return (
     <SidebarProvider className="h-dvh min-h-0">
-      <BarraLateral sala={sala} nome={nome} vistas={vistas} estado={conversa.estado} tema={tema}
+      <BarraLateral sala={sala} nome={nome} admin={admin} vistas={vistas} estado={conversa.estado} tema={tema}
         aoEscolher={escolher} aoBuscar={() => setPaletaAberta(true)} aoTema={escolherTema} aoSair={() => sair()} />
       <PaletaSalas aberta={paletaAberta} setAberta={setPaletaAberta} salaAtual={sala} aoEscolher={escolher} />
       <SidebarInset className="min-h-0 min-w-0">
@@ -64,8 +66,9 @@ export function RotaSala() {
           <Participantes autores={autores} />
         </header>
         <Conversa key={sala} sala={sala} eu={nome} carregando={conversa.estado.tipo === "carregando"}
-          ultimaLida={ultimaLida.id} aoLer={aoLer} {...conversa} />
-        <Composer sala={sala} nome={nome} aoEnviar={(texto) => conversa.enviar(texto, nome)} />
+          ultimaLida={ultimaLida.id} aoLer={aoLer} admin={admin} aoResponder={setRespondendo} {...conversa} />
+        <Composer key={`c-${sala}`} sala={sala} nome={nome} respondendo={respondendo} aoCancelarResposta={() => setRespondendo(null)}
+          aoEnviar={(texto, replyTo) => conversa.enviar(texto, nome, replyTo)} />
       </SidebarInset>
     </SidebarProvider>
   );

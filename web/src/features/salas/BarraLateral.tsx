@@ -1,4 +1,5 @@
-import { ChevronsUpDownIcon, HashIcon, LogOutIcon, MonitorIcon, MoonIcon, SearchIcon, SunIcon } from "lucide-react";
+import { Link } from "@tanstack/react-router";
+import { ChevronsUpDownIcon, HashIcon, KeyRoundIcon, LogOutIcon, MonitorIcon, MoonIcon, SearchIcon, SunIcon } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel,
@@ -18,6 +19,7 @@ import { useSalas } from "./useSalas";
 interface Props {
   sala: string;
   nome: string;
+  admin: boolean;
   vistas: Record<string, number>;
   estado: EstadoConexao;
   tema: Tema;
@@ -39,7 +41,7 @@ function textoEstado(e: EstadoConexao): string {
   }
 }
 
-export function BarraLateral({ sala, nome, vistas, estado, tema, aoEscolher, aoBuscar, aoTema, aoSair }: Props) {
+export function BarraLateral({ sala, nome, admin, vistas, estado, tema, aoEscolher, aoBuscar, aoTema, aoSair }: Props) {
   const { data, isPending } = useSalas();
   const { isMobile, setOpenMobile } = useSidebar();
   const lista = data ?? [];
@@ -127,7 +129,7 @@ export function BarraLateral({ sala, nome, vistas, estado, tema, aoEscolher, aoB
                 </Avatar>
                 <span className="grid flex-1 text-left leading-tight">
                   <span className="truncate font-medium">{nome}</span>
-                  <span className="truncate text-xs text-muted-foreground">{textos.sessao.humano}</span>
+                  <span className="truncate text-xs text-muted-foreground">{admin ? "admin" : textos.sessao.humano}</span>
                 </span>
                 <ChevronsUpDownIcon className="ml-auto" />
               </DropdownMenuTrigger>
@@ -145,6 +147,11 @@ export function BarraLateral({ sala, nome, vistas, estado, tema, aoEscolher, aoB
                   </DropdownMenuRadioGroup>
                 </DropdownMenuGroup>
                 <DropdownMenuSeparator />
+                {admin && (
+                  <DropdownMenuItem render={<Link to="/config" />}>
+                    <KeyRoundIcon /> {textos.config.abrir}
+                  </DropdownMenuItem>
+                )}
                 <DropdownMenuItem onClick={aoSair}>
                   <LogOutIcon /> {textos.sessao.sair}
                 </DropdownMenuItem>

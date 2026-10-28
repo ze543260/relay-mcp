@@ -8,6 +8,7 @@ export interface Mensagem {
   /** ISO 8601 (contrato novo). */
   criado_em?: string;
   client_id?: string;
+  reply_to?: number;
 }
 
 export interface Sala {
@@ -20,7 +21,16 @@ export interface Sala {
 
 export interface Agente {
   nome: string;
-  visto_em: string;
+  visto_em: string | null;
+  online: boolean;
+  tipo: "ia" | "humano";
+  tem_token: boolean;
+}
+
+export interface AgenteCriado {
+  nome: string;
+  tipo: "ia" | "humano";
+  token: string;
 }
 
 export interface PaginaHistorico {

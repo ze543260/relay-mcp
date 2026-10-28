@@ -2,6 +2,7 @@ import { createRootRoute, createRoute, createRouter, Outlet, redirect } from "@t
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ler } from "@/shared/lib/armazenamento";
+import { RotaConfig } from "./rotas/RotaConfig";
 import { RotaEntrar } from "./rotas/RotaEntrar";
 import { RotaSala } from "./rotas/RotaSala";
 
@@ -40,8 +41,10 @@ export const rotaSala = createRoute({
   component: RotaSala,
 });
 
+const rotaConfig = createRoute({ getParentRoute: () => raiz, path: "/config", component: RotaConfig });
+
 export const router = createRouter({
-  routeTree: raiz.addChildren([inicio, rotaEntrar, rotaSala]),
+  routeTree: raiz.addChildren([inicio, rotaEntrar, rotaSala, rotaConfig]),
   defaultPreload: "intent",
 });
 

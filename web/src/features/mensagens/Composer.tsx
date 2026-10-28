@@ -1,34 +1,43 @@
-import { SendHorizontalIcon } from "lucide-react";
-import { useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { CornerUpLeftIcon, SendHorizontalIcon, XIcon } from "lucide-react";
+import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import type { Mensagem } from "@/shared/api/tipos";
+import { resumo } from "@/shared/lib/formato";
 import { textos } from "@/shared/lib/textos";
 
 interface Props {
   sala: string;
   nome: string;
-  aoEnviar: (texto: string) => void;
+  respondendo: Mensagem | null;
+  aoCancelarResposta: () => void;
+  aoEnviar: (texto: string, replyTo?: number) => void;
 }
 
 const toque = typeof matchMedia === "function" ? matchMedia("(pointer: coarse)") : null;
 const t = textos.composer;
 
 /** Envio é otimista (useConversa): limpa na hora e a mensagem aparece como "enviando…". */
-export function Composer({ sala, nome, aoEnviar }: Props) {
+export function Composer({ sala, nome, respondendo, aoCancelarResposta, aoEnviar }: Props) {
   const [texto, setTexto] = useState("");
   const ref = useRef<HTMLTextAreaElement>(null);
+
+  // Escolheu "Responder": foca a caixa.
+  useEffect(() => { if (respondendo) ref.current?.focus(); }, [respondendo]);
 
   function enviar(e?: FormEvent) {
     e?.preventDefault();
     const conteudo = texto.trim();
     if (!conteudo) return;
-    aoEnviar(conteudo);
+    aoEnviar(conteudo, respondendo?.id);
     setTexto("");
+    aoCancelarResposta();
     ref.current?.focus();
   }
 
   function aoTeclar(e: KeyboardEvent<HTMLTextAreaElement>) {
     // No toque, Enter quebra linha (envia pelo botão); no teclado físico, Shift+Enter quebra.
+    if (e.key === "Escape" && respondendo) return aoCancelarResposta();
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && !toque?.matches) {
       e.preventDefault();
       enviar();
@@ -36,8 +45,18 @@ export function Composer({ sala, nome, aoEnviar }: Props) {
   }
 
   return (
+    <div className="border-t">
+    {respondendo && (
+      <div className="flex items-center gap-2 px-4 pt-2 text-xs text-muted-foreground md:px-6">
+        <CornerUpLeftIcon className="size-3.5 text-primary" />
+        <span className="min-w-0 flex-1 truncate">
+          <b className="font-medium text-foreground">{t.respondendo(respondendo.de)}</b> · {resumo(respondendo.texto, 120)}
+        </span>
+        <Button type="button" variant="ghost" size="icon-xs" aria-label={t.cancelarResposta} onClick={aoCancelarResposta}><XIcon /></Button>
+      </div>
+    )}
     <form onSubmit={enviar}
-      className="flex items-end gap-2 border-t px-3 pt-2 pb-[calc(.5rem+env(safe-area-inset-bottom))] md:px-6 md:py-3">
+      className="flex items-end gap-2 px-3 pt-2 pb-[calc(.5rem+env(safe-area-inset-bottom))] md:px-6 md:py-3">
       <label htmlFor="entrada" className="sr-only">{t.rotulo}</label>
       <Textarea id="entrada" ref={ref} rows={1} value={texto} placeholder={t.placeholder(nome, sala)}
         onChange={(e) => setTexto(e.target.value)} onKeyDown={aoTeclar}
@@ -48,5 +67,6 @@ export function Composer({ sala, nome, aoEnviar }: Props) {
         <SendHorizontalIcon className="size-4.5 md:hidden" aria-hidden />
       </Button>
     </form>
+    </div>
   );
 }

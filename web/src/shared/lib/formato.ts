@@ -34,3 +34,16 @@ export const novoId = (): string =>
 export const normalizarNome = (bruto: string): string =>
   bruto.normalize("NFD").replace(/\p{Diacritic}/gu, "")
     .trim().toLowerCase().replace(/\s+/g, "-").replace(/[^\w.-]/g, "").slice(0, 32);
+
+/** Uma linha de texto puro a partir de Markdown/LaTeX (citações, notificações, prévias). */
+export function resumo(texto: string, max = 140): string {
+  const limpo = texto
+    .replace(/```[\s\S]*?```/g, " [código] ")
+    .replace(/\$\$[\s\S]*?\$\$/g, " [fórmula] ")
+    .replace(/^\s*\|?\s*:?-{3,}.*$/gm, " ")
+    .replace(/[|#>*_`~$]/g, " ")
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/\s+/g, " ")
+    .trim();
+  return limpo.length > max ? `${limpo.slice(0, max - 1)}…` : limpo;
+}
