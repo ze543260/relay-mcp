@@ -10,6 +10,7 @@ const preguicoso = (carregar: () => Promise<{ default: () => JSX.Element }>) => 
   return () => <Suspense fallback={<div className="h-dvh bg-background" />}><C /></Suspense>;
 };
 const RotaEntrar = preguicoso(() => import("./rotas/RotaEntrar").then((m) => ({ default: m.RotaEntrar })));
+const RotaDs = preguicoso(() => import("./rotas/RotaDs").then((m) => ({ default: m.RotaDs })));
 const RotaConfig = preguicoso(() => import("./rotas/RotaConfig").then((m) => ({ default: m.RotaConfig })));
 
 const Toaster = lazy(() => import("@/components/ui/sonner"));
@@ -53,9 +54,10 @@ export const rotaSala = createRoute({
 });
 
 const rotaConfig = createRoute({ getParentRoute: () => raiz, path: "/config", component: RotaConfig });
+const rotaDs = createRoute({ getParentRoute: () => raiz, path: "/ds", component: RotaDs });
 
 export const router = createRouter({
-  routeTree: raiz.addChildren([inicio, rotaEntrar, rotaSala, rotaConfig]),
+  routeTree: raiz.addChildren([inicio, rotaEntrar, rotaSala, rotaConfig, rotaDs]),
   defaultPreload: "intent",
 });
 

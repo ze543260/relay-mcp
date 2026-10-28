@@ -357,7 +357,7 @@ class Handler(BaseHTTPRequestHandler):
         if not os.path.isdir(DIST):
             if caminho == "/":
                 alvo = PAGINA_LEGADA
-        elif caminho in ("/", "/entrar", "/config") or caminho.startswith("/s/"):
+        elif caminho in ("/", "/entrar", "/config", "/ds") or caminho.startswith("/s/"):
             alvo = os.path.join(DIST, "index.html")  # rotas do app (TanStack Router)
         else:
             real = os.path.realpath(os.path.join(DIST, caminho.lstrip("/")))

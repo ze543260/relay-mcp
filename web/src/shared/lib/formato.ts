@@ -1,6 +1,6 @@
 import type { Mensagem } from "../api/tipos";
 
-const CORES = ["#c96442", "#3b7dd8", "#2f8f5b", "#8b5cf6", "#d4a017", "#d0453a", "#0e9aa7", "#b4529b"] as const;
+import { CORES_AGENTES as CORES } from "@/styles/tokens";
 
 export function corDe(nome: string): string {
   let h = 0;

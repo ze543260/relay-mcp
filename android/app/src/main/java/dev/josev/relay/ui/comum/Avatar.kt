@@ -15,14 +15,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import dev.josev.relay.ui.tema.Tokens
 
-private val CORES = listOf(0xFFC96442, 0xFF3B7DD8, 0xFF2F8F5B, 0xFF8B5CF6, 0xFFD4A017, 0xFFD0453A, 0xFF0E9AA7, 0xFFB4529B)
 
 /** Mesmo hash do web: a cor de cada nome é igual nos dois lugares. */
 fun corDe(nome: String): Color {
     var h = 0L
     for (c in nome) h = (h * 31 + c.code) and 0xFFFFFFFFL
-    return Color(CORES[(h % CORES.size).toInt()])
+    return Tokens.agentes[(h % Tokens.agentes.size).toInt()]
 }
 
 fun siglaDe(nome: String) = nome.removePrefix("claude-").ifEmpty { nome }.take(2).uppercase()

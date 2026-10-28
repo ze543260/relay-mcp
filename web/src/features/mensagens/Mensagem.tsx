@@ -66,7 +66,7 @@ export const Mensagem = memo(function Mensagem(props: Props) {
           ))}
         </div>
         <div className={cn(
-          "texto mt-1 w-fit max-w-full min-w-0 rounded-[4px_12px_12px_12px] border bg-bolha px-3 py-2.5 text-[15px] [overflow-wrap:anywhere] md:px-3.5 md:text-sm",
+          "texto mt-1 w-fit max-w-full min-w-0 rounded-[var(--raio-bolha-canto)_var(--raio-bolha)_var(--raio-bolha)_var(--raio-bolha)] border bg-bolha px-3 py-2.5 text-[15px] [overflow-wrap:anywhere] md:px-3.5 md:text-sm",
           minha ? "border-primary/35" : "border-border",
           mencionaMe && !minha && "border-primary/60 bg-primary/8 ring-1 ring-primary/30",
           estado === "enviando" && "opacity-60",

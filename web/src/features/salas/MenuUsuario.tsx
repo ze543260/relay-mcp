@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { BellIcon, BellOffIcon, KeyRoundIcon, LogOutIcon, MonitorIcon, MoonIcon, SunIcon } from "lucide-react";
+import { BellIcon, BellOffIcon, KeyRoundIcon, LogOutIcon, MonitorIcon, MoonIcon, PaletteIcon, SunIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel,
@@ -53,7 +53,10 @@ export default function MenuUsuario({ nome, admin, tema, aoTema, notificacoes, a
             <KeyRoundIcon /> {textos.config.abrir}
           </DropdownMenuItem>
         )}
-        <DropdownMenuItem onClick={aoSair}>
+        <DropdownMenuItem render={<Link to="/ds" />}>
+        <PaletteIcon /> Design system
+      </DropdownMenuItem>
+      <DropdownMenuItem onClick={aoSair}>
           <LogOutIcon /> {textos.sessao.sair}
         </DropdownMenuItem>
       </DropdownMenuContent>

@@ -10,28 +10,10 @@
   &:where([data-theme="dark"], [data-theme="dark"] *) { @slot; }
 }
 
-/* Paleta do Relay: fonte única; os tokens do shadcn apontam para ela. */
-:root {
-  --fundo: #f6f6f4; --painel: #ffffff; --borda: #e6e5e1; --texto: #1d1c1a;
-  --suave: #6f6d68; --acento: #c96442; --acento-fundo: #f5e6df; --ok: #2f8f5b; --bolha: #ffffff;
-  --erro: #d0453a;
-  color-scheme: light dark;
-}
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --fundo: #141413; --painel: #1c1c1a; --borda: #2c2b28; --texto: #ecebe6;
-    --suave: #93918a; --acento: #d97757; --acento-fundo: #33241e; --ok: #4fbf82; --bolha: #232320;
-    --erro: #e5675d;
-  }
-}
-:root[data-theme="dark"] {
-    --fundo: #141413; --painel: #1c1c1a; --borda: #2c2b28; --texto: #ecebe6;
-    --suave: #93918a; --acento: #d97757; --acento-fundo: #33241e; --ok: #4fbf82; --bolha: #232320;
-    --erro: #e5675d;
-  color-scheme: dark;
-}
-:root[data-theme="light"] { color-scheme: light; }
-:root {
+/* Paleta, raios, espaços, tipo e movimento vêm do Relay DS (design/tokens.json → styles/tokens.css). */
+@import "./styles/tokens.css";
+
+:root, [data-theme] {
   --background: var(--fundo);
   --foreground: var(--texto);
   --card: var(--painel);
@@ -39,22 +21,22 @@
   --popover: var(--painel);
   --popover-foreground: var(--texto);
   --primary: var(--acento);
-  --primary-foreground: #ffffff;
+  --primary-foreground: var(--acento-texto);
   --secondary: var(--acento-fundo);
   --secondary-foreground: var(--texto);
-  --muted: var(--fundo);
+  --muted: var(--superficie);
   --muted-foreground: var(--suave);
   --accent: var(--acento-fundo);
   --accent-foreground: var(--texto);
   --destructive: var(--erro);
   --border: var(--borda);
-  --input: var(--borda);
+  --input: var(--borda-forte);
   --ring: var(--acento);
-  --radius: 0.625rem;
+  --radius: var(--raio-lg);
   --sidebar: var(--painel);
   --sidebar-foreground: var(--texto);
   --sidebar-primary: var(--acento);
-  --sidebar-primary-foreground: #ffffff;
+  --sidebar-primary-foreground: var(--acento-texto);
   --sidebar-accent: var(--acento-fundo);
   --sidebar-accent-foreground: var(--texto);
   --sidebar-border: var(--borda);
@@ -63,6 +45,9 @@
 
 @theme inline {
   --font-sans: Inter, system-ui, sans-serif;
+  --color-superficie: var(--superficie);
+  --color-codigo: var(--codigo);
+  --color-borda-forte: var(--borda-forte);
   --font-heading: var(--font-sans);
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
   --color-fundo: var(--fundo);
@@ -110,6 +95,7 @@
 
 @layer base {
   * { @apply border-border outline-ring/50; }
+  [data-theme] { color: var(--foreground); }
   html, body { height: 100%; overflow: hidden; }
   body { @apply bg-background font-sans text-[15px] leading-normal text-foreground md:text-sm; }
 }
@@ -133,10 +119,10 @@
 .texto strong { font-weight: 600; }
 .texto blockquote { border-left: 3px solid var(--borda); padding-left: 12px; color: var(--suave); }
 .texto hr { border-top: 1px solid var(--borda); margin: 12px 0; }
-.texto code { font: 12.5px var(--font-mono); background: var(--fundo); padding: 1px 5px; border-radius: 4px; }
-.texto pre { background: var(--fundo); border: 1px solid var(--borda); border-radius: 8px; padding: 10px 12px 14px; overflow-x: auto; scrollbar-width: thin; }
+.texto code { font: 12.5px var(--font-mono); background: var(--codigo); padding: 1px 5px; border-radius: 4px; }
+.texto pre { background: var(--codigo); border: 1px solid var(--borda); border-radius: 8px; padding: 10px 12px 14px; overflow-x: auto; scrollbar-width: thin; }
 .texto pre code, .texto pre code.hljs { background: none; padding: 0; line-height: 1.55; }
 .texto table { border-collapse: collapse; display: block; overflow-x: auto; max-width: 100%; }
 .texto :is(th, td) { border: 1px solid var(--borda); padding: 5px 10px; text-align: left; }
-.texto th { background: var(--fundo); font-weight: 600; }
+.texto th { background: var(--codigo); font-weight: 600; }
 .texto .katex-display { overflow-x: auto; overflow-y: hidden; padding: 2px 0; }

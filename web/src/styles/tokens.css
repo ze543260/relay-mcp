@@ -1,0 +1,108 @@
+/* Gerado por design/gerar.py a partir de design/tokens.json (Relay DS 1.0.0). Não edite à mão. */
+
+:root {
+  --fundo: #F6F6F4;
+  --painel: #FFFFFF;
+  --superficie: #F0EFEC;
+  --bolha: #FFFFFF;
+  --codigo: #F6F6F4;
+  --borda: #E6E5E1;
+  --borda-forte: #D6D5D0;
+  --texto: #1D1C1A;
+  --suave: #6F6D68;
+  --acento: #C96442;
+  --acento-texto: #FFFFFF;
+  --acento-fundo: #F5E6DF;
+  --ok: #2F8F5B;
+  --erro: #D0453A;
+  --raio-sm: 6px;
+  --raio-md: 8px;
+  --raio-lg: 10px;
+  --raio-xl: 14px;
+  --raio-bolha: 12px;
+  --raio-bolha-canto: 4px;
+  --raio-pilula: 999px;
+  --espaco-1: 4px;
+  --espaco-2: 8px;
+  --espaco-3: 12px;
+  --espaco-4: 16px;
+  --espaco-5: 20px;
+  --espaco-6: 24px;
+  --espaco-8: 32px;
+  --agente-0: #C96442;
+  --agente-1: #3B7DD8;
+  --agente-2: #2F8F5B;
+  --agente-3: #8B5CF6;
+  --agente-4: #D4A017;
+  --agente-5: #D0453A;
+  --agente-6: #0E9AA7;
+  --agente-7: #B4529B;
+  --alvo-toque: 44px;
+  --mov-rapido: 150ms;
+  --mov-padrao: 220ms;
+  --mov-entrada: 300ms;
+  --mov-curva: cubic-bezier(0.2, 0, 0, 1);
+  --tipo-legenda: 500 11px/16px;
+  --tipo-meta: 400 12px/16px;
+  --tipo-corpo: 400 15px/22px;
+  --tipo-corpo-desktop: 400 14px/20px;
+  --tipo-codigo: 400 12.5px/18px;
+  --tipo-titulo: 600 16px/22px;
+  --tipo-titulo-grande: 600 20px/26px;
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --fundo: #141413;
+    --painel: #1C1C1A;
+    --superficie: #232320;
+    --bolha: #232320;
+    --codigo: #141413;
+    --borda: #2C2B28;
+    --borda-forte: #3A3935;
+    --texto: #ECEBE6;
+    --suave: #93918A;
+    --acento: #D97757;
+    --acento-texto: #FFFFFF;
+    --acento-fundo: #33241E;
+    --ok: #4FBF82;
+    --erro: #E5675D;
+  }
+}
+
+[data-theme="dark"] {
+  --fundo: #141413;
+  --painel: #1C1C1A;
+  --superficie: #232320;
+  --bolha: #232320;
+  --codigo: #141413;
+  --borda: #2C2B28;
+  --borda-forte: #3A3935;
+  --texto: #ECEBE6;
+  --suave: #93918A;
+  --acento: #D97757;
+  --acento-texto: #FFFFFF;
+  --acento-fundo: #33241E;
+  --ok: #4FBF82;
+  --erro: #E5675D;
+  color-scheme: dark;
+}
+
+[data-theme="light"] {
+  --fundo: #F6F6F4;
+  --painel: #FFFFFF;
+  --superficie: #F0EFEC;
+  --bolha: #FFFFFF;
+  --codigo: #F6F6F4;
+  --borda: #E6E5E1;
+  --borda-forte: #D6D5D0;
+  --texto: #1D1C1A;
+  --suave: #6F6D68;
+  --acento: #C96442;
+  --acento-texto: #FFFFFF;
+  --acento-fundo: #F5E6DF;
+  --ok: #2F8F5B;
+  --erro: #D0453A;
+  color-scheme: light;
+}

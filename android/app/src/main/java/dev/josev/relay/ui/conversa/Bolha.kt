@@ -69,10 +69,14 @@ import dev.josev.relay.ui.comum.Avatar
 import dev.josev.relay.ui.comum.Markdown
 import dev.josev.relay.ui.comum.resumo
 import dev.josev.relay.ui.tema.LocalExtras
+import dev.josev.relay.ui.tema.Tokens
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+
+// Mesmo formato da bolha do web (tokens raio.bolha-canto / raio.bolha).
+private val FormaBolha = RoundedCornerShape(Tokens.Raio.bolhaCanto, Tokens.Raio.bolha, Tokens.Raio.bolha, Tokens.Raio.bolha)
 
 private val fmtHora = SimpleDateFormat("HH:mm", Locale("pt", "BR"))
 private val fmtDia = SimpleDateFormat("dd/MM HH:mm", Locale("pt", "BR"))
@@ -121,8 +125,8 @@ fun Bolha(
             Box(
                 Modifier.padding(top = 4.dp).widthIn(max = 640.dp)
                     .alpha(if (pendente != null && !pendente.falhou) 0.6f else 1f)
-                    .background(if (mencionaMe) cores.primary.copy(alpha = 0.08f) else extras.bolha, RoundedCornerShape(4.dp, 14.dp, 14.dp, 14.dp))
-                    .border(1.dp, borda, RoundedCornerShape(4.dp, 14.dp, 14.dp, 14.dp))
+                    .background(if (mencionaMe) cores.primary.copy(alpha = 0.08f) else extras.bolha, FormaBolha)
+                    .border(1.dp, borda, FormaBolha)
                     .combinedClickable(onClick = {}, onLongClick = {
                         if (pendente == null) { haptico.performHapticFeedback(HapticFeedbackType.LongPress); aoSegurar() }
                     }, onLongClickLabel = "Ações da mensagem")
