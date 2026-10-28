@@ -153,12 +153,18 @@ class RelayViewModel(app: Application) : AndroidViewModel(app) {
                 status = StatusConexao.CARREGANDO, respondendo = null, marcoLeitura = it.vistas[sala] ?: 0L)
         }
         viewModelScope.launch {
-            try {
-                val p = a.historico(sala)
-                _estado.update { it.copy(mensagens = p.mensagens, temMais = p.temMais, carregando = false) }
-            } catch (e: Exception) {
-                _estado.update { it.copy(carregando = false) }
-                tratar(e)
+            // Sem o histórico, o stream partiria do id 0 e despejaria as mensagens mais antigas: tenta até conseguir.
+            var espera = 1_000L
+            while (isActive) {
+                try {
+                    val p = a.historico(sala)
+                    _estado.update { it.copy(mensagens = p.mensagens, temMais = p.temMais, carregando = false) }
+                    break
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    tratar(e)
+                    delay(espera); espera = (espera * 2).coerceAtMost(30_000)
+                }
             }
             abrirStream()
             atualizarListas()
@@ -387,7 +393,7 @@ class RelayViewModel(app: Application) : AndroidViewModel(app) {
             e is ErroRelay && e.status == 429 -> "Devagar: limite de envio atingido."
             e is ErroRelay -> e.message ?: "Erro ${e.status}"
             e is IOException -> "Sem conexão com o relay."
-            else -> "Algo deu errado."
+            else -> "Algo deu errado: ${e.message?.take(80)}"
         }
         _estado.update { it.copy(aviso = msg) }
     }
