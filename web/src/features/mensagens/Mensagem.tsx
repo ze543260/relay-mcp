@@ -1,5 +1,6 @@
 import { CheckCheckIcon, CheckIcon, EllipsisIcon } from "lucide-react";
 import { lazy, memo, Suspense, useState } from "react";
+import { Textarea } from "@/components/ui/textarea";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { ListaAnexos } from "./Anexos";
@@ -26,6 +27,8 @@ interface Props {
   podeApagar?: boolean;
   aoResponder?: (m: TMensagem) => void;
   aoApagar?: (id: number) => void;
+  /** Só nas minhas: salva o texto novo (true = deu certo). */
+  aoEditar?: (id: number, texto: string) => Promise<boolean>;
   /** Apelido do autor, se houver (mostrado no lugar do nome, com o nome ao lado). */
   apelido?: string | null;
   /** Quem tem esta como última mensagem lida (avatares pequenos embaixo). */
@@ -39,12 +42,22 @@ interface Props {
 }
 
 export const Mensagem = memo(function Mensagem(props: Props) {
-  const { m, minha, mencionaMe, citada, podeApagar, aoResponder, aoApagar, estado, aoTentar, aoDescartar, vistoPor, vistaPorTodos, apelido } = props;
+  const { m, minha, mencionaMe, citada, podeApagar, aoResponder, aoApagar, estado, aoTentar, aoDescartar, vistoPor, vistaPorTodos, apelido, aoEditar } = props;
   const ms = instanteDe(m);
   // A lista virtual remonta itens ao rolar: só anima o que acabou de chegar.
   const [recente] = useState(() => Date.now() - ms < RECENTE_MS);
   const [acoes, setAcoes] = useState(false);
   const confirmada = estado === undefined;
+  const [editando, setEditando] = useState<string | null>(null);
+  const [salvando, setSalvando] = useState(false);
+
+  async function salvar() {
+    const novo = editando?.trim();
+    if (!novo || novo === m.texto.trim()) return setEditando(null);
+    setSalvando(true);
+    if (await aoEditar?.(m.id, novo)) setEditando(null);
+    setSalvando(false);
+  }
 
   // Mensagens do próprio relay (tarefas, reuniões): linha de evento, não bolha.
   if (m.de === "relay") {
@@ -59,7 +72,7 @@ export const Mensagem = memo(function Mensagem(props: Props) {
   }
 
   return (
-    <article className={cn("group/msg flex max-w-full gap-2 md:max-w-[760px] md:gap-3", recente && "motion-safe:animate-[entra_.3s_ease-out]")}>
+    <article className={cn("group/msg flex max-w-full gap-2 md:max-w-[760px] md:gap-3", minha && "ml-auto flex-row-reverse", recente && "motion-safe:animate-[entra_.3s_ease-out]")}>
       {/* IA = círculo, humano = quadrado arredondado. */}
       <Avatar aria-hidden className={cn("size-7 md:size-8", !ehIa(m.de) && "rounded-lg after:rounded-lg")}>
         <AvatarFallback className={cn("text-[10.5px] font-semibold tracking-wide text-white md:text-[11.5px]", !ehIa(m.de) && "rounded-lg")}
@@ -67,12 +80,13 @@ export const Mensagem = memo(function Mensagem(props: Props) {
           {siglaDe(m.de)}
         </AvatarFallback>
       </Avatar>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+      <div className={cn("min-w-0 flex-1", minha && "flex flex-col items-end")}>
+        <div className={cn("flex items-center gap-2 text-xs text-muted-foreground", minha && "flex-row-reverse")}>
           <b className="text-[13px] font-semibold text-foreground">{apelido ?? m.de}</b>
           {apelido && <span className="font-mono text-[11px]">{m.de}</span>}
           {m.para && <span className="text-primary">→ {m.para}</span>}
           <time dateTime={new Date(ms).toISOString()} className="tabular-nums">{horaDe(ms)}</time>
+          {m.editado && <span className="italic">({t.editada})</span>}
           {estado === "enviando" && <span>{t.enviando}</span>}
           {estado === "erro" && <span className="text-destructive">{t.falhou}</span>}
           {minha && estado === undefined && vistaPorTodos !== undefined && (
@@ -82,17 +96,34 @@ export const Mensagem = memo(function Mensagem(props: Props) {
           )}
           {confirmada && (acoes ? (
             <Suspense fallback={<Button variant="ghost" size="icon-xs" className={GATILHO} disabled><EllipsisIcon /></Button>}>
-              <AcoesMensagem m={m} podeApagar={Boolean(podeApagar)} classeGatilho={GATILHO} aoResponder={aoResponder} aoApagar={aoApagar} />
+              <AcoesMensagem m={m} podeApagar={Boolean(podeApagar)} classeGatilho={minha ? GATILHO.replace("ml-auto", "mr-auto") : GATILHO} aoResponder={aoResponder} aoApagar={aoApagar}
+                aoEditar={aoEditar && m.texto.trim() ? () => setEditando(m.texto) : undefined} />
             </Suspense>
           ) : (
-            <Button variant="ghost" size="icon-xs" aria-label={t.acoes} className={GATILHO} onClick={() => setAcoes(true)}>
+            <Button variant="ghost" size="icon-xs" aria-label={t.acoes} className={minha ? GATILHO.replace("ml-auto", "mr-auto") : GATILHO} onClick={() => setAcoes(true)}>
               <EllipsisIcon />
             </Button>
           ))}
         </div>
-        {(m.texto.trim() || citada || m.reply_to) && (
+        {editando !== null ? (
+          <div className="mt-1 w-full max-w-[600px]">
+            <Textarea autoFocus value={editando} disabled={salvando} aria-label={t.editar} className="min-h-16 text-[15px] md:text-sm"
+              onChange={(e) => setEditando(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") setEditando(null);
+                else if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void salvar(); }
+              }} />
+            <div className="mt-1 flex items-center justify-end gap-1">
+              <span className="mr-auto text-[11px] text-muted-foreground">{t.editarDica}</span>
+              <Button size="xs" variant="ghost" onClick={() => setEditando(null)}>{t.cancelar}</Button>
+              <Button size="xs" disabled={salvando} onClick={() => void salvar()}>{t.salvar}</Button>
+            </div>
+          </div>
+        ) : (m.texto.trim() || citada || m.reply_to) && (
         <div className={cn(
-            "texto mt-1 w-fit max-w-full min-w-0 rounded-[var(--raio-bolha-canto)_var(--raio-bolha)_var(--raio-bolha)_var(--raio-bolha)] border bg-bolha px-3 py-2.5 text-[15px] [overflow-wrap:anywhere] md:px-3.5 md:text-sm",
+            "texto mt-1 w-fit max-w-full min-w-0 border bg-bolha",
+            minha ? "rounded-[var(--raio-bolha)_var(--raio-bolha-canto)_var(--raio-bolha)_var(--raio-bolha)]" : "rounded-[var(--raio-bolha-canto)_var(--raio-bolha)_var(--raio-bolha)_var(--raio-bolha)]",
+            " px-3 py-2.5 text-[15px] [overflow-wrap:anywhere] md:px-3.5 md:text-sm",
             minha ? "border-primary/35" : "border-border",
             mencionaMe && !minha && "border-primary/60 bg-primary/8 ring-1 ring-primary/30",
             estado === "enviando" && "opacity-60",

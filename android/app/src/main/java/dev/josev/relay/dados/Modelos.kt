@@ -17,6 +17,7 @@ data class Mensagem(
     @SerialName("client_id") val clientId: String? = null,
     @SerialName("reply_to") val replyTo: Long? = null,
     val anexos: List<Anexo> = emptyList(),
+    val editado: Double? = null,
 )
 
 @Serializable

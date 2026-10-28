@@ -71,6 +71,10 @@ export function useConversa({ sala, ativo, aoChegar, aoPerderAcesso, aoEvento }:
     setMensagens((atual) => atual.filter((m) => m.id !== id));
   }, []);
 
+  const substituir = useCallback((m: Mensagem) => {
+    setMensagens((atual) => atual.map((x) => (x.id === m.id ? { ...x, ...m } : x)));
+  }, []);
+
   const longPoll = useCallback(async (sinal: AbortSignal) => {
     let falhas = 0;
     while (!sinal.aborted) {
@@ -104,6 +108,7 @@ export function useConversa({ sala, ativo, aoChegar, aoPerderAcesso, aoEvento }:
     es.onopen = () => { falhas = 0; setEstado({ tipo: "ao-vivo" }); };
     es.addEventListener("mensagem", (e) => anexar([JSON.parse((e as MessageEvent<string>).data) as Mensagem]));
     es.addEventListener("apagada", (e) => remover((JSON.parse((e as MessageEvent<string>).data) as { id: number }).id));
+    es.addEventListener("editada", (e) => substituir(JSON.parse((e as MessageEvent<string>).data) as Mensagem));
     es.addEventListener("tarefa", () => callbacks.current.aoEvento?.("tarefa"));
     es.addEventListener("reuniao", () => callbacks.current.aoEvento?.("reuniao"));
     es.addEventListener("leitura", () => callbacks.current.aoEvento?.("leitura"));
@@ -121,7 +126,7 @@ export function useConversa({ sala, ativo, aoChegar, aoPerderAcesso, aoEvento }:
       }
     };
     sinal.addEventListener("abort", () => es.close(), { once: true });
-  }, [sala, anexar, remover, longPoll]);
+  }, [sala, anexar, remover, substituir, longPoll]);
 
   const reconectar = useCallback(() => {
     controle.current?.abort();
@@ -230,5 +235,15 @@ export function useConversa({ sala, ativo, aoChegar, aoPerderAcesso, aoEvento }:
     }
   }, [remover]);
 
-  return { mensagens, pendentes, digitando, estado, temMais, carregandoAntigas, carregarAntigas, enviar, retentar, descartar, apagar };
+  const editar = useCallback(async (id: number, texto: string): Promise<boolean> => {
+    try {
+      substituir(await api<Mensagem>(`/mensagens/${id}`, { metodo: "PATCH", corpo: { texto } }));
+      return true;
+    } catch (e) {
+      avisar("erro", traduzirErro(e).mensagem);
+      return false;
+    }
+  }, [substituir]);
+
+  return { mensagens, pendentes, digitando, estado, temMais, carregandoAntigas, carregarAntigas, enviar, retentar, descartar, apagar, editar };
 }

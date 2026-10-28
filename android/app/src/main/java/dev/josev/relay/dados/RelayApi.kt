@@ -36,6 +36,7 @@ sealed interface Evento {
     data object SemAcesso : Evento
     data class Digitando(val nomes: List<String>) : Evento
     data object Leu : Evento
+    data class Editada(val m: Mensagem) : Evento
 }
 
 /** `todas=1`: com token de admin, vê também as privadas (igual ao dashboard); para agentes o servidor ignora. */
@@ -126,6 +127,11 @@ class RelayApi(private val conexao: Conexao) {
         executar(pedido(url("digitando")).post(corpo.toRequestBody(tipoJson)).build())
     }
 
+    suspend fun editar(id: Long, texto: String): Mensagem {
+        val corpo = """{"texto":${json.encodeToString(kotlinx.serialization.serializer<String>(), texto)}}"""
+        return json.decodeFromString(executar(pedido(url("mensagens/$id")).patch(corpo.toRequestBody(tipoJson)).build()))
+    }
+
     suspend fun apagar(id: Long) {
         executar(pedido(url("mensagens/$id")).delete().build())
     }
@@ -162,6 +168,7 @@ class RelayApi(private val conexao: Conexao) {
             override fun onEvent(eventSource: EventSource, id: String?, type: String?, data: String) {
                 when (type) {
                     "mensagem" -> runCatching { json.decodeFromString<Mensagem>(data) }.onSuccess { trySend(Evento.Nova(it)) }
+                    "editada" -> runCatching { json.decodeFromString<Mensagem>(data) }.onSuccess { trySend(Evento.Editada(it)) }
                     "apagada" -> Regex("\\d+").find(data)?.value?.toLongOrNull()?.let { trySend(Evento.Apagada(it)) }
                     "digitando" -> runCatching { json.decodeFromString<NomesDigitando>(data) }.onSuccess { trySend(Evento.Digitando(it.nomes)) }
                     "leitura" -> trySend(Evento.Leu)

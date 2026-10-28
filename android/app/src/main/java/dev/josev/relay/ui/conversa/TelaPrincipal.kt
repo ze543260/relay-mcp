@@ -316,7 +316,8 @@ private fun Conversa(vm: RelayViewModel, estado: Estado, aoMenu: (() -> Unit)?) 
 
     acoesDe?.let { m ->
         AcoesMensagem(m, podeApagar = estado.admin || m.de == eu, aoFechar = { acoesDe = null },
-            aoResponder = { vm.responder(m) }, aoApagar = { vm.apagar(m.id) })
+            aoResponder = { vm.responder(m) }, aoApagar = { vm.apagar(m.id) },
+            aoEditar = if (m.de == eu && m.texto.isNotBlank()) { t -> vm.editar(m.id, t) } else null)
     }
 }
 

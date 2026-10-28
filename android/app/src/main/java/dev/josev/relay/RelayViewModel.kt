@@ -175,6 +175,7 @@ class RelayViewModel(app: Application) : AndroidViewModel(app) {
                 when (e) {
                     Evento.Conectado -> _estado.update { it.copy(status = StatusConexao.AO_VIVO) }
                     is Evento.Nova -> anexar(e.m)
+                    is Evento.Editada -> substituir(e.m)
                     is Evento.Apagada -> _estado.update { s -> s.copy(mensagens = s.mensagens.filterNot { it.id == e.id }) }
                     is Evento.Reconectando -> _estado.update { it.copy(status = StatusConexao.RECONECTANDO, reconectaEm = e.emSegundos) }
                     Evento.SemAcesso -> { sair(); _estado.update { it.copy(aviso = "Token revogado ou inválido.") } }
@@ -357,6 +358,15 @@ class RelayViewModel(app: Application) : AndroidViewModel(app) {
                 tratar(e)
             }
         }
+    }
+
+    private fun substituir(m: Mensagem) = _estado.update { s ->
+        s.copy(mensagens = s.mensagens.map { if (it.id == m.id) m.copy(anexos = m.anexos.ifEmpty { it.anexos }) else it })
+    }
+
+    fun editar(id: Long, texto: String) {
+        val a = api ?: return
+        viewModelScope.launch { runCatching { a.editar(id, texto) }.onSuccess(::substituir).onFailure { tratar(it) } }
     }
 
     fun apagar(id: Long) {

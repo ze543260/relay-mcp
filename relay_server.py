@@ -141,6 +141,8 @@ MIGRACOES = [
     # 8: apelido de exibição (o nome técnico segue sendo a identidade)
     """CREATE TABLE IF NOT EXISTS apelido (
          nome TEXT PRIMARY KEY, apelido TEXT NOT NULL UNIQUE COLLATE NOCASE, definido_por TEXT NOT NULL, quando REAL NOT NULL);""",
+    # 9: edição de mensagem (quando foi editada; o texto antigo não é guardado)
+    "ALTER TABLE msg ADD COLUMN editado REAL;",
 ]
 
 STATUS_TAREFA = ("a_fazer", "fazendo", "revisao", "feito")
@@ -332,12 +334,14 @@ def marcar_visto(con: sqlite3.Connection, nome: str | None) -> None:
 
 # --- Consultas -------------------------------------------------------------
 
-COLUNAS = "id, de, para, texto, criado, client_id, reply_to"
+COLUNAS = "id, de, para, texto, criado, client_id, reply_to, editado"
 
 
 def linha_para_msg(r: tuple) -> dict:
-    i, de, para, texto, criado, client_id, reply_to = r
+    i, de, para, texto, criado, client_id, reply_to, editado = r
     m = {"id": i, "de": de, "para": para, "texto": texto, "criado": criado, "criado_em": iso(criado)}
+    if editado:
+        m["editado"] = editado
     if client_id:
         m["client_id"] = client_id
     if reply_to:
@@ -485,6 +489,8 @@ class Handler(BaseHTTPRequestHandler):
             m = re.fullmatch(r"/mensagens/(\d+)", caminho)
             if m and metodo == "DELETE":
                 return self.apagar_mensagem(int(m.group(1)))
+            if m and metodo == "PATCH":
+                return self.editar_mensagem(int(m.group(1)))
             m = re.fullmatch(r"/agentes/([^/]+)", caminho)
             if m and metodo == "DELETE":
                 return self.revogar_agente(unquote(m.group(1)))
@@ -759,6 +765,27 @@ class Handler(BaseHTTPRequestHandler):
         notificar()
         self._vazio()
 
+    def editar_mensagem(self, msg_id: int) -> None:
+        texto = self._corpo().get("texto")
+        if not isinstance(texto, str) or not texto.strip():
+            raise ErroHttp(400, "texto_vazio", "Mande o texto novo.")
+        if CREDENCIAL_RE.search(texto):
+            raise ErroHttp(422, "credencial_detectada",
+                           "A mensagem parece conter uma credencial (token, chave, senha). Não foi editada.")
+        with conectar() as con:
+            quem = self._quem(con)
+            linha = con.execute("SELECT sala, de FROM msg WHERE id=?", (msg_id,)).fetchone()
+            if not linha:
+                raise ErroHttp(404, "mensagem_inexistente", "Mensagem não existe.")
+            sala, autor = linha
+            if quem.nome != autor:
+                raise ErroHttp(403, "proibido", "Só o autor edita.")
+            con.execute("UPDATE msg SET texto=?, editado=? WHERE id=?", (texto, time.time(), msg_id))
+            registrar_evento(con, "editada", sala, msg_id)
+            m = linha_para_msg(con.execute(f"SELECT {COLUNAS} FROM msg WHERE id=?", (msg_id,)).fetchone())
+        notificar()
+        self._json(200, m)
+
     def _ler(self, con: sqlite3.Connection, quem: Quem, sala: str, eu: str | None, todas: bool,
              depois: int, sem_minhas: bool) -> list[dict]:
         filtro, args = filtro_visiveis(quem, eu, todas)
@@ -872,6 +899,14 @@ class Handler(BaseHTTPRequestHandler):
                     self.wfile.write(f"id: {m['id']}\nevent: mensagem\ndata: {dados}\n\n".encode())
                 for seq, tipo, ref in eventos:
                     ultimo_evento = seq
+                    if tipo == "editada":  # manda a mensagem inteira, se quem ouve pode vê-la
+                        with conectar() as con:
+                            filtro, args = filtro_visiveis(quem, eu, todas)
+                            r = con.execute(f"SELECT {COLUNAS} FROM msg WHERE id=? AND {filtro}", [ref, *args]).fetchone()
+                            if r:
+                                dados = json.dumps(com_anexos(con, [linha_para_msg(r)])[0], ensure_ascii=False)
+                                self.wfile.write(f"event: editada\ndata: {dados}\n\n".encode())
+                        continue
                     self.wfile.write(f"event: {tipo}\ndata: {json.dumps({'id': ref})}\n\n".encode())
                 digitando = [n for n in digitando_em(sala) if n != eu]
                 if digitando != ultimo_digitando:

@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.Done
 import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.outlined.AttachFile
 import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.foundation.horizontalScroll
@@ -84,6 +85,7 @@ import java.util.Locale
 
 // Mesmo formato da bolha do web (tokens raio.bolha-canto / raio.bolha).
 private val FormaBolha = RoundedCornerShape(Tokens.Raio.bolhaCanto, Tokens.Raio.bolha, Tokens.Raio.bolha, Tokens.Raio.bolha)
+private val FormaBolhaMinha = RoundedCornerShape(Tokens.Raio.bolha, Tokens.Raio.bolhaCanto, Tokens.Raio.bolha, Tokens.Raio.bolha)
 
 private val fmtHora = SimpleDateFormat("HH:mm", Locale("pt", "BR"))
 private val fmtDia = SimpleDateFormat("dd/MM HH:mm", Locale("pt", "BR"))
@@ -136,13 +138,16 @@ fun Bolha(
         else -> cores.outlineVariant
     }
     Row(modifier.fillMaxWidth().semantics(mergeDescendants = false) { contentDescription = "${m.de}: ${resumo(m.texto, 200)}" }) {
-        Avatar(m.de, 30.dp)
-        Column(Modifier.padding(start = 10.dp).weight(1f)) {
+        val forma = if (minha) FormaBolhaMinha else FormaBolha
+        if (!minha) Avatar(m.de, 30.dp)
+        Column(Modifier.padding(start = if (minha) 40.dp else 10.dp, end = if (minha) 10.dp else 0.dp).weight(1f),
+            horizontalAlignment = if (minha) Alignment.End else Alignment.Start) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(apelido ?: m.de, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
                 if (apelido != null) Text(m.de, style = MaterialTheme.typography.labelSmall, color = cores.onSurfaceVariant, fontFamily = dev.josev.relay.ui.tema.Mono)
                 m.para?.let { Text("→ $it", color = cores.primary, style = MaterialTheme.typography.bodyMedium) }
                 Text(hora(m.criado), color = cores.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
+                if (m.editado != null) Text("(editada)", color = cores.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium, fontStyle = androidx.compose.ui.text.font.FontStyle.Italic)
                 when {
                     pendente?.falhou == true -> Text("não enviada", color = cores.error, style = MaterialTheme.typography.bodyMedium)
                     pendente != null -> Text("enviando…", color = cores.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
@@ -154,8 +159,8 @@ fun Bolha(
             Box(
                 Modifier.padding(top = 4.dp).widthIn(max = 640.dp)
                     .alpha(if (pendente != null && !pendente.falhou) 0.6f else 1f)
-                    .background(if (mencionaMe) cores.primary.copy(alpha = 0.08f) else extras.bolha, FormaBolha)
-                    .border(1.dp, borda, FormaBolha)
+                    .background(if (mencionaMe) cores.primary.copy(alpha = 0.08f) else extras.bolha, forma)
+                    .border(1.dp, borda, forma)
                     .combinedClickable(onClick = {}, onLongClick = {
                         if (pendente == null) { haptico.performHapticFeedback(HapticFeedbackType.LongPress); aoSegurar() }
                     }, onLongClickLabel = "Ações da mensagem")
@@ -188,15 +193,18 @@ fun Bolha(
                 TextButton(aoDescartar, Modifier.height(32.dp)) { Text("Descartar") }
             }
         }
+        if (minha) Avatar(m.de, 30.dp)
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AcoesMensagem(m: Mensagem, podeApagar: Boolean, aoFechar: () -> Unit, aoResponder: () -> Unit, aoApagar: () -> Unit) {
+fun AcoesMensagem(m: Mensagem, podeApagar: Boolean, aoFechar: () -> Unit, aoResponder: () -> Unit, aoApagar: () -> Unit,
+                  aoEditar: ((String) -> Unit)? = null) {
     val area = LocalClipboard.current
     val escopo = androidx.compose.runtime.rememberCoroutineScope()
     var confirmar by remember { mutableStateOf(false) }
+    var editando by remember { mutableStateOf<String?>(null) }
     ModalBottomSheet(onDismissRequest = aoFechar) {
         Column(Modifier.navigationBarsPadding().padding(bottom = 8.dp)) {
             Text(resumo(m.texto, 160), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -209,9 +217,25 @@ fun AcoesMensagem(m: Mensagem, podeApagar: Boolean, aoFechar: () -> Unit, aoResp
                 escopo.launch { area.setClipEntry(ClipEntry(android.content.ClipData.newPlainText("mensagem", m.texto))) }
                 aoFechar()
             }, leadingContent = { Icon(Icons.Outlined.ContentCopy, null) }, colors = cor)
+            if (aoEditar != null) ListItem({ Text("Editar") }, Modifier.combinedClickableSimples { editando = m.texto },
+                leadingContent = { Icon(Icons.Outlined.Edit, null) }, colors = cor)
             if (podeApagar) ListItem({ Text("Apagar", color = MaterialTheme.colorScheme.error) }, Modifier.combinedClickableSimples { confirmar = true },
                 leadingContent = { Icon(Icons.Outlined.Delete, null, tint = MaterialTheme.colorScheme.error) }, colors = cor)
         }
+    }
+    editando?.let { texto ->
+        AlertDialog(
+            onDismissRequest = { editando = null },
+            title = { Text("Editar mensagem") },
+            text = { androidx.compose.material3.OutlinedTextField(texto, { editando = it }, Modifier.fillMaxWidth(), minLines = 2, maxLines = 8) },
+            confirmButton = {
+                TextButton(enabled = texto.isNotBlank(), onClick = {
+                    if (texto.trim() != m.texto.trim()) aoEditar?.invoke(texto.trim())
+                    editando = null; aoFechar()
+                }) { Text("Salvar") }
+            },
+            dismissButton = { TextButton({ editando = null }) { Text("Cancelar") } },
+        )
     }
     if (confirmar) AlertDialog(
         onDismissRequest = { confirmar = false },

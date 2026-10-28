@@ -26,6 +26,7 @@ interface Props {
   admin: boolean;
   aoResponder: (m: TMensagem) => void;
   apagar: (id: number) => void;
+  editar: (id: number, texto: string) => Promise<boolean>;
   digitando: string[];
   /** nome -> último id lido (sem mim). */
   leituras: Map<string, number>;
@@ -59,7 +60,7 @@ function Digitando({ nomes }: { nomes: string[] }) {
 
 /** Lista virtualizada com marcador de não lidas: só o que está visível (+ margem) fica no DOM. */
 export function Conversa(props: Props) {
-  const { sala, eu, mensagens, pendentes, carregando, temMais, carregandoAntigas, ultimaLida, carregarAntigas, aoLer, retentar, descartar, admin, aoResponder, apagar, digitando, leituras, apelidos } = props;
+  const { sala, eu, mensagens, pendentes, carregando, temMais, carregandoAntigas, ultimaLida, carregarAntigas, aoLer, retentar, descartar, admin, aoResponder, apagar, editar, digitando, leituras, apelidos } = props;
   const mostrar = (n: string) => apelidos.get(n) ?? n;
   // Avatares de "visto": cada leitor aparece na última mensagem que leu (estilo Messenger).
   const vistoEm = new Map<number, string[]>();
@@ -225,7 +226,7 @@ export function Conversa(props: Props) {
                     <Mensagem m={it.m} minha={it.m.de === eu} apelido={apelidos.get(it.m.de)} mencionaMe={mencao.test(it.m.texto)}
                       vistoPor={vistoEm.get(it.m.id)} vistaPorTodos={it.m.de === eu ? vistaPorTodos(it.m.id) : undefined}
                       citada={it.m.reply_to ? porId.get(it.m.reply_to) : undefined}
-                      podeApagar={admin || it.m.de === eu} aoResponder={aoResponder} aoApagar={apagar} />
+                      podeApagar={admin || it.m.de === eu} aoResponder={aoResponder} aoApagar={apagar} aoEditar={it.m.de === eu ? editar : undefined} />
                   ) : (
                     <Mensagem
                       m={{ id: -1, de: it.p.de, para: null, texto: it.p.texto, criado_em: it.p.criado_em, reply_to: it.p.reply_to, anexos: it.p.anexos }}

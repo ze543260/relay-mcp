@@ -18,6 +18,8 @@ export interface Mensagem {
   client_id?: string;
   reply_to?: number;
   anexos?: Anexo[];
+  /** Epoch em segundos da última edição. */
+  editado?: number;
 }
 
 export interface Sala {
