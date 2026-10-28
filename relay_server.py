@@ -143,9 +143,20 @@ MIGRACOES = [
          nome TEXT PRIMARY KEY, apelido TEXT NOT NULL UNIQUE COLLATE NOCASE, definido_por TEXT NOT NULL, quando REAL NOT NULL);""",
     # 9: edição de mensagem (quando foi editada; o texto antigo não é guardado)
     "ALTER TABLE msg ADD COLUMN editado REAL;",
+    # 10: memória da equipe (docs/PLANO-MEMORIA.md): fatos com origem; nada se apaga, o novo supera o antigo.
+    # O índice FTS é mantido pelo código (migrar() divide por ";", então sem triggers).
+    """CREATE TABLE IF NOT EXISTS fato (
+         id INTEGER PRIMARY KEY, sala TEXT NOT NULL, sujeito TEXT NOT NULL, predicado TEXT NOT NULL, objeto TEXT NOT NULL,
+         origem_tipo TEXT NOT NULL, origem_id TEXT NOT NULL, estado TEXT NOT NULL DEFAULT 'vigente',
+         superado_por INTEGER REFERENCES fato(id), autor TEXT NOT NULL, confirmado_por TEXT, criado REAL NOT NULL);
+       CREATE INDEX IF NOT EXISTS fato_vigente ON fato(sala, sujeito COLLATE NOCASE) WHERE estado='vigente';
+       CREATE INDEX IF NOT EXISTS fato_origem ON fato(origem_tipo, origem_id);
+       CREATE VIRTUAL TABLE IF NOT EXISTS fato_busca USING fts5(
+         sujeito, predicado, objeto, content='fato', content_rowid='id', tokenize='unicode61 remove_diacritics 2');""",
 ]
 
 STATUS_TAREFA = ("a_fazer", "fazendo", "revisao", "feito")
+ORIGENS_FATO = ("msg", "ata", "tarefa", "arquivo")
 # Formatos prontos: pauta padrão de cada tipo de reunião.
 FORMATOS = {
     "daily": ["O que fiz desde a última", "O que vou fazer agora", "Bloqueios"],
@@ -242,6 +253,22 @@ def evento_reuniao(con: sqlite3.Connection, r: dict) -> None:
         registrar_evento(con, "reuniao", r["canal"], r["id"])
 
 
+COLS_FATO = "id, sala, sujeito, predicado, objeto, origem_tipo, origem_id, estado, superado_por, autor, confirmado_por, criado"
+
+
+def fato_para_json(r: tuple) -> dict:
+    i, sala, suj, pred, obj, otipo, oid, estado, superado_por, autor, confirmado_por, criado = r
+    return {"id": i, "sala": sala, "sujeito": suj, "predicado": pred, "objeto": obj,
+            "origem": {"tipo": otipo, "id": oid}, "estado": estado, "superado_por": superado_por,
+            "autor": autor, "confirmado_por": confirmado_por, "criado_em": iso(criado)}
+
+
+def consulta_fts(termo: str) -> str:
+    """Termo livre -> expressão FTS5 segura: cada palavra entre aspas, com prefixo (`reun` acha `reunião`)."""
+    palavras = re.findall(r"\w+", termo)[:8]
+    return " ".join(f'"{p}"*' for p in palavras)
+
+
 COLS_TAREFA = "id, sala, titulo, descricao, status, responsavel, sprint_id, msg_id, criada_por, criado, atualizado, prazo"
 COLS_REUNIAO = "id, sala, titulo, formato, pauta, participantes, item, vez, rodada, estado, inicio, limite, ata, criada_por, canal"
 
@@ -283,6 +310,7 @@ class Balde:
 
 
 ENVIOS = Balde(capacidade=10, por_segundo=0.5)   # rajada de 10, depois 30/min
+FATOS = Balde(capacidade=20, por_segundo=1 / 3)   # rajada de 20, depois 20/min
 
 
 # --- Identidade ------------------------------------------------------------
@@ -483,6 +511,8 @@ class Handler(BaseHTTPRequestHandler):
                 ("POST", "/sprints"): self.criar_sprint,
                 ("GET", "/reunioes"): self.reunioes,
                 ("POST", "/reunioes"): self.criar_reuniao,
+                ("GET", "/fatos"): self.fatos,
+                ("POST", "/fatos"): self.registrar_fato,
             }
             if (metodo, caminho) in rotas:
                 return rotas[(metodo, caminho)](q)
@@ -503,6 +533,9 @@ class Handler(BaseHTTPRequestHandler):
             m = re.fullmatch(r"/tarefas/(\d+)", caminho)
             if m and metodo in ("PATCH", "DELETE"):
                 return (self.alterar_tarefa if metodo == "PATCH" else self.apagar_tarefa)(int(m.group(1)))
+            m = re.fullmatch(r"/fatos/(\d+)", caminho)
+            if m and metodo == "GET":
+                return self.ver_fato(int(m.group(1)))
             m = re.fullmatch(r"/sprints/(\d+)", caminho)
             if m and metodo == "PATCH":
                 return self.alterar_sprint(int(m.group(1)))
@@ -1383,6 +1416,116 @@ class Handler(BaseHTTPRequestHandler):
         notificar()
         r["tarefas_criadas"] = [i for i, _, _ in criadas]
         self._json(200, r)
+
+    # memória da equipe (docs/PLANO-MEMORIA.md, fase 1)
+
+    def fatos(self, q: dict) -> None:
+        """Busca nos fatos da sala: `q` (texto livre, FTS), `sujeito` (exato), `historico=1` inclui superados."""
+        sala = validar_sala(q.get("sala"))
+        limite = min(max(int(q.get("limite") or 10), 1), 50)
+        filtro, args = ["f.sala=?"], [sala]
+        if q.get("historico") != "1":
+            filtro.append("f.estado='vigente'")
+        if q.get("sujeito"):
+            filtro.append("f.sujeito=? COLLATE NOCASE")
+            args.append(q["sujeito"])
+        cols = ", ".join(f"f.{c}" for c in COLS_FATO.split(", "))
+        with conectar() as con:
+            self._quem(con)
+            termo = consulta_fts(q.get("q") or "")
+            if termo:
+                sql = (f"SELECT {cols} FROM fato_busca JOIN fato f ON f.id=fato_busca.rowid "
+                       f"WHERE fato_busca MATCH ? AND {' AND '.join(filtro)} ORDER BY bm25(fato_busca), f.criado DESC LIMIT ?")
+                args = [termo, *args]
+            else:
+                sql = f"SELECT {cols} FROM fato f WHERE {' AND '.join(filtro)} ORDER BY f.criado DESC LIMIT ?"
+            linhas = con.execute(sql, [*args, limite]).fetchall()
+        self._json(200, [fato_para_json(r) for r in linhas])
+
+    def ver_fato(self, fid: int) -> None:
+        """O fato e a cadeia de versões: as que ele superou (antes) e as que o superaram (depois)."""
+        with conectar() as con:
+            self._quem(con)
+            linha = con.execute(f"SELECT {COLS_FATO} FROM fato WHERE id=?", (fid,)).fetchone()
+            if not linha:
+                raise ErroHttp(404, "fato_inexistente", "Fato não existe.")
+            fato = fato_para_json(linha)
+            antes, atual = [], fid
+            while anterior := con.execute(f"SELECT {COLS_FATO} FROM fato WHERE superado_por=?", (atual,)).fetchone():
+                antes.append(fato_para_json(anterior))
+                atual = anterior[0]
+            depois, atual = [], fato["superado_por"]
+            while atual and (seguinte := con.execute(f"SELECT {COLS_FATO} FROM fato WHERE id=?", (atual,)).fetchone()):
+                depois.append(fato_para_json(seguinte))
+                atual = seguinte[8]
+        fato["versoes_anteriores"], fato["versoes_seguintes"] = antes, depois
+        self._json(200, fato)
+
+    def _validar_origem(self, con: sqlite3.Connection, sala: str, tipo: str, oid: str) -> None:
+        """A origem tem que existir, ser da mesma sala e ser pública (mensagem privada não vira fato da sala)."""
+        if tipo == "arquivo":
+            linha = con.execute("SELECT m.sala, m.para FROM arquivo a JOIN msg m ON m.id=a.msg_id WHERE a.id=?",
+                                (oid,)).fetchone()
+        elif not oid.isdigit():
+            raise ErroHttp(400, "origem_invalida", "origem_id deve ser o id numérico da origem.")
+        elif tipo == "msg":
+            linha = con.execute("SELECT sala, para FROM msg WHERE id=?", (int(oid),)).fetchone()
+        elif tipo == "ata":
+            linha = con.execute("SELECT sala, NULL FROM reuniao WHERE id=? AND estado='encerrada'", (int(oid),)).fetchone()
+        else:
+            linha = con.execute("SELECT sala, NULL FROM tarefa WHERE id=?", (int(oid),)).fetchone()
+        if not linha:
+            raise ErroHttp(400, "origem_inexistente", f"Origem {tipo} {oid} não existe (ata: só de reunião encerrada).")
+        if linha[0] != sala:
+            raise ErroHttp(400, "origem_outra_sala", "A origem é de outra sala.")
+        if linha[1] is not None:
+            raise ErroHttp(400, "origem_privada", "Mensagem privada não pode ser origem de fato da sala.")
+
+    def registrar_fato(self, _q: dict) -> None:
+        c = self._corpo()
+        sala = validar_sala(c.get("sala"))
+        campos = {}
+        for campo, maximo in (("sujeito", 120), ("predicado", 120), ("objeto", 500)):
+            valor = " ".join(str(c.get(campo) or "").split())
+            if not 1 <= len(valor) <= maximo:
+                raise ErroHttp(400, f"{campo}_invalido", f"{campo}: 1–{maximo} caracteres.")
+            if CREDENCIAL_RE.search(valor):
+                raise ErroHttp(422, "credencial_detectada", "O fato parece conter uma credencial. Não foi registrado.")
+            campos[campo] = valor
+        otipo, oid = c.get("origem_tipo"), str(c.get("origem_id") or "").strip()
+        if otipo not in ORIGENS_FATO or not oid:
+            raise ErroHttp(400, "origem_obrigatoria", f"Todo fato precisa de origem: origem_tipo ({', '.join(ORIGENS_FATO)}) e origem_id.")
+        supera = c.get("supera")
+        if supera is not None and not isinstance(supera, int):
+            raise ErroHttp(400, "supera_invalido", "supera deve ser o id de um fato.")
+        with conectar() as con:
+            autor = self._nome(self._quem(con), c)
+            espera = FATOS.consumir(autor)
+            if espera:
+                raise ErroHttp(429, "limite_excedido", "Devagar: limite de fatos atingido.", espera)
+            self._validar_origem(con, sala, otipo, oid)
+            if supera is not None:
+                antigo = con.execute("SELECT sala, estado FROM fato WHERE id=?", (supera,)).fetchone()
+                if not antigo or antigo[0] != sala:
+                    raise ErroHttp(400, "supera_inexistente", "O fato a superar não existe nesta sala.")
+                if antigo[1] != "vigente":
+                    raise ErroHttp(409, "fato_nao_vigente", "Esse fato já foi superado; supere a versão vigente.")
+            cur = con.execute(
+                f"INSERT INTO fato ({COLS_FATO.replace('id, ', '', 1)}) VALUES (?,?,?,?,?,?,'vigente',NULL,?,NULL,?)",
+                (sala, campos["sujeito"], campos["predicado"], campos["objeto"], otipo, oid, autor, time.time()),
+            )
+            fid = cur.lastrowid
+            con.execute("INSERT INTO fato_busca (rowid, sujeito, predicado, objeto) VALUES (?,?,?,?)",
+                        (fid, campos["sujeito"], campos["predicado"], campos["objeto"]))
+            # Condicional: se outro pedido superou o mesmo fato no meio, a exceção desfaz esta transação inteira.
+            if supera is not None and con.execute(
+                    "UPDATE fato SET estado='superado', superado_por=? WHERE id=? AND estado='vigente'", (fid, supera)).rowcount == 0:
+                raise ErroHttp(409, "fato_nao_vigente", "Esse fato acabou de ser superado; supere a versão vigente.")
+            registrar_evento(con, "fato", sala, fid)
+            linha = con.execute(f"SELECT {COLS_FATO} FROM fato WHERE id=?", (fid,)).fetchone()
+        notificar()
+        self._json(201, fato_para_json(linha))
+
 
 def marcar_visto_sem_con(nome: str | None) -> None:
     if nome:
