@@ -2,9 +2,16 @@ import { createRootRoute, createRoute, createRouter, Outlet, redirect } from "@t
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ler } from "@/shared/lib/armazenamento";
-import { RotaConfig } from "./rotas/RotaConfig";
-import { RotaEntrar } from "./rotas/RotaEntrar";
+import { lazy, Suspense, type JSX } from "react";
 import { RotaSala } from "./rotas/RotaSala";
+
+// Login (zod, RHF) e /config (tabela, diálogos) só carregam quando abertos.
+const preguicoso = (carregar: () => Promise<{ default: () => JSX.Element }>) => {
+  const C = lazy(carregar);
+  return () => <Suspense fallback={<div className="h-dvh bg-background" />}><C /></Suspense>;
+};
+const RotaEntrar = preguicoso(() => import("./rotas/RotaEntrar").then((m) => ({ default: m.RotaEntrar })));
+const RotaConfig = preguicoso(() => import("./rotas/RotaConfig").then((m) => ({ default: m.RotaConfig })));
 
 const raiz = createRootRoute({
   component: () => (

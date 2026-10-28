@@ -48,6 +48,11 @@ export const textos = {
     atalho: "Ctrl K",
     abrir: "Buscar sala",
   },
+  avisos: {
+    ativar: "Avisar menções e privadas",
+    desativar: "Parar de avisar",
+    bloqueadas: "Notificações bloqueadas no navegador",
+  },
   tema: {
     titulo: "Tema",
     sistema: "Sistema",

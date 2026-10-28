@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { ChevronsUpDownIcon, HashIcon, KeyRoundIcon, LogOutIcon, MonitorIcon, MoonIcon, SearchIcon, SunIcon } from "lucide-react";
+import { BellIcon, BellOffIcon, ChevronsUpDownIcon, HashIcon, KeyRoundIcon, LogOutIcon, MonitorIcon, MoonIcon, SearchIcon, SunIcon } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel,
@@ -26,6 +26,7 @@ interface Props {
   aoEscolher: (sala: string) => void;
   aoBuscar: () => void;
   aoTema: (tema: Tema) => void;
+  notificacoes: { ativas: boolean; negadas: boolean; alternar: () => void } | null;
   aoSair: () => void;
 }
 
@@ -41,7 +42,7 @@ function textoEstado(e: EstadoConexao): string {
   }
 }
 
-export function BarraLateral({ sala, nome, admin, vistas, estado, tema, aoEscolher, aoBuscar, aoTema, aoSair }: Props) {
+export function BarraLateral({ sala, nome, admin, vistas, estado, tema, aoEscolher, aoBuscar, aoTema, notificacoes, aoSair }: Props) {
   const { data, isPending } = useSalas();
   const { isMobile, setOpenMobile } = useSidebar();
   const lista = data ?? [];
@@ -147,6 +148,12 @@ export function BarraLateral({ sala, nome, admin, vistas, estado, tema, aoEscolh
                   </DropdownMenuRadioGroup>
                 </DropdownMenuGroup>
                 <DropdownMenuSeparator />
+                {notificacoes && (
+                  <DropdownMenuItem disabled={notificacoes.negadas} onClick={notificacoes.alternar}>
+                    {notificacoes.ativas ? <BellOffIcon /> : <BellIcon />}
+                    {notificacoes.negadas ? textos.avisos.bloqueadas : notificacoes.ativas ? textos.avisos.desativar : textos.avisos.ativar}
+                  </DropdownMenuItem>
+                )}
                 {admin && (
                   <DropdownMenuItem render={<Link to="/config" />}>
                     <KeyRoundIcon /> {textos.config.abrir}
