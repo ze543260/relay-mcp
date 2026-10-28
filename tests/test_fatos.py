@@ -26,10 +26,10 @@ threading.Thread(target=SERVIDOR.serve_forever, daemon=True).start()
 URL = f"http://127.0.0.1:{SERVIDOR.server_address[1]}"
 
 
-def pedir(metodo: str, caminho: str, corpo: dict | None = None) -> tuple[int, object]:
+def pedir(metodo: str, caminho: str, corpo: dict | None = None, token: str = "admin-de-teste") -> tuple[int, object]:
     req = urllib.request.Request(
         URL + caminho, method=metodo, data=json.dumps(corpo).encode() if corpo is not None else None,
-        headers={"Authorization": "Bearer admin-de-teste", "Content-Type": "application/json"},
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
     )
     try:
         with urllib.request.urlopen(req, timeout=10) as r:
@@ -51,6 +51,20 @@ def fato(sala: str, origem: int, **extra: object) -> tuple[int, dict]:
     corpo = {"sala": sala, "de": "claude-joao", "sujeito": "relay", "predicado": "usa", "objeto": "SSE para tempo real",
              "origem_tipo": "msg", "origem_id": str(origem), **extra}
     return pedir("POST", "/fatos", corpo)
+
+
+def token(nome: str, tipo: str) -> str:
+    status, r = pedir("POST", "/agentes", {"nome": nome, "tipo": tipo})
+    assert status == 201, r
+    return r["token"]
+
+
+def reuniao_encerrada(sala: str, participantes: list[str], fatos: list[dict]) -> dict:
+    status, r = pedir("POST", "/reunioes", {"sala": sala, "de": "jose", "participantes": participantes})
+    assert status == 201, r
+    status, r = pedir("POST", f"/reunioes/{r['id']}/encerrar", {"de": "jose", "ata": "decidimos", "fatos": fatos})
+    assert status == 200, r
+    return r
 
 
 class TestFatos(unittest.TestCase):
@@ -127,6 +141,74 @@ class TestFatos(unittest.TestCase):
         origem = mensagem("t8", "x")
         status, r = fato("t8", origem, objeto="token ghp_" + "a" * 36)
         self.assertEqual((status, r["codigo"]), (422, "credencial_detectada"))
+
+    def test_ata_propoe_candidatos_fora_da_busca(self) -> None:
+        r = reuniao_encerrada("c1", ["ana", "claude-x"], [
+            {"sujeito": "deploy", "predicado": "acontece", "objeto": "às sextas"},
+            {"sujeito": "api", "predicado": "usa", "objeto": "problem+json"},
+        ])
+        self.assertEqual(len(r["fatos_candidatos"]), 2)
+        _, candidatos = pedir("GET", "/fatos/candidatos?sala=c1")
+        self.assertEqual([f["id"] for f in candidatos], r["fatos_candidatos"])
+        self.assertTrue(all(f["origem"] == {"tipo": "ata", "id": str(r["id"])} for f in candidatos))
+        _, vigentes = pedir("GET", "/fatos?sala=c1&q=deploy")
+        self.assertEqual(vigentes, [])  # candidato não é memória ainda
+        _, hist = pedir("GET", "/fatos?sala=c1&historico=1")
+        self.assertEqual(len(hist), 2)
+
+    def test_so_humano_participante_confirma(self) -> None:
+        humano = token("ana", "humano")
+        de_fora = token("bia", "humano")
+        ia = token("claude-x", "ia")
+        r = reuniao_encerrada("c2", ["ana", "claude-x"], [{"sujeito": "web", "predicado": "usa", "objeto": "React"}])
+        fid = r["fatos_candidatos"][0]
+        caminho = f"/fatos/{fid}/confirmar"
+        self.assertEqual(pedir("POST", caminho, {"de": "ana"})[1]["codigo"], "requer_humano")  # admin + de
+        self.assertEqual(pedir("POST", caminho, {}, token=ia)[1]["codigo"], "requer_humano")   # agente participante
+        self.assertEqual(pedir("POST", caminho, {}, token=de_fora)[1]["codigo"], "proibido")  # humano de fora
+        status, f = pedir("POST", caminho, {}, token=humano)
+        self.assertEqual((status, f["estado"], f["confirmado_por"]), (200, "vigente", "ana"))
+        _, achados = pedir("GET", "/fatos?sala=c2&q=react")
+        self.assertEqual([a["id"] for a in achados], [fid])
+        status, r2 = pedir("POST", caminho, {}, token=humano)
+        self.assertEqual((status, r2["codigo"]), (409, "fato_decidido"))
+
+    def test_sessao_aberta_com_admin_nao_conta_como_humano(self) -> None:
+        token("carla", "humano")
+        r = reuniao_encerrada("c3", ["carla"], [{"sujeito": "a", "predicado": "b", "objeto": "c"}])
+        req = urllib.request.Request(URL + "/sessao", method="POST", headers={"Content-Type": "application/json"},
+                                     data=json.dumps({"token": "admin-de-teste", "nome": "carla"}).encode())
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            cookie = resp.headers["Set-Cookie"].split(";", 1)[0]
+        req = urllib.request.Request(URL + f"/fatos/{r['fatos_candidatos'][0]}/confirmar", method="POST", data=b"{}",
+                                     headers={"Cookie": cookie, "X-Relay": "1", "Content-Type": "application/json"})
+        with self.assertRaises(urllib.error.HTTPError) as erro:
+            urllib.request.urlopen(req, timeout=10)
+        self.assertEqual(json.loads(erro.exception.read())["codigo"], "requer_humano")
+
+    def test_rejeitar_e_confirmar_com_supera(self) -> None:
+        dani = token("dani", "humano")
+        origem = mensagem("c4", "antes era X")
+        _, antigo = fato("c4", origem, objeto="X")
+        r = reuniao_encerrada("c4", ["dani"], [
+            {"sujeito": "relay", "predicado": "usa", "objeto": "Y", "supera": antigo["id"]},
+            {"sujeito": "relay", "predicado": "usa", "objeto": "Z"},
+        ])
+        novo, ruim = r["fatos_candidatos"]
+        _, rej = pedir("POST", f"/fatos/{ruim}/rejeitar", {}, token=dani)
+        self.assertEqual(rej["estado"], "rejeitado")
+        _, ok = pedir("POST", f"/fatos/{novo}/confirmar", {}, token=dani)
+        self.assertEqual(ok["estado"], "vigente")
+        _, velho = pedir("GET", f"/fatos/{antigo['id']}")
+        self.assertEqual((velho["estado"], velho["superado_por"]), ("superado", novo))
+
+    def test_ata_com_supera_invalido_nao_encerra(self) -> None:
+        status, r = pedir("POST", "/reunioes", {"sala": "c5", "de": "jose", "participantes": ["jose"]})
+        status, erro = pedir("POST", f"/reunioes/{r['id']}/encerrar",
+                             {"de": "jose", "ata": "x", "fatos": [{"sujeito": "a", "predicado": "b", "objeto": "c", "supera": 999_999}]})
+        self.assertEqual((status, erro["codigo"]), (400, "supera_inexistente"))
+        _, reuniao = pedir("GET", f"/reunioes/{r['id']}")
+        self.assertNotEqual(reuniao["estado"], "encerrada")  # tudo ou nada
 
     def test_migracao_preserva_dados_existentes(self) -> None:
         caminho = os.path.join(PASTA, "antigo.sqlite")

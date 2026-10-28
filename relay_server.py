@@ -156,6 +156,9 @@ MIGRACOES = [
        CREATE INDEX IF NOT EXISTS fato_origem ON fato(origem_tipo, origem_id);
        CREATE VIRTUAL TABLE IF NOT EXISTS fato_busca USING fts5(
          sujeito, predicado, objeto, content='fato', content_rowid='id', tokenize='unicode61 remove_diacritics 2');""",
+    # 11: candidato vindo de ata guarda qual fato pretende superar (só vale quando um humano confirma)
+    """ALTER TABLE fato ADD COLUMN supera INTEGER REFERENCES fato(id);
+       CREATE INDEX IF NOT EXISTS fato_candidato ON fato(sala) WHERE estado='candidato';""",
 ]
 
 STATUS_TAREFA = ("a_fazer", "fazendo", "revisao", "feito")
@@ -256,14 +259,70 @@ def evento_reuniao(con: sqlite3.Connection, r: dict) -> None:
         registrar_evento(con, "reuniao", r["canal"], r["id"])
 
 
-COLS_FATO = "id, sala, sujeito, predicado, objeto, origem_tipo, origem_id, estado, superado_por, autor, confirmado_por, criado"
+COLS_FATO = ("id, sala, sujeito, predicado, objeto, origem_tipo, origem_id, estado, superado_por, autor, "
+             "confirmado_por, criado, supera")
+MAX_FATOS_ATA = 20
 
 
 def fato_para_json(r: tuple) -> dict:
-    i, sala, suj, pred, obj, otipo, oid, estado, superado_por, autor, confirmado_por, criado = r
+    i, sala, suj, pred, obj, otipo, oid, estado, superado_por, autor, confirmado_por, criado, supera = r
     return {"id": i, "sala": sala, "sujeito": suj, "predicado": pred, "objeto": obj,
-            "origem": {"tipo": otipo, "id": oid}, "estado": estado, "superado_por": superado_por,
+            "origem": {"tipo": otipo, "id": oid}, "estado": estado, "supera": supera, "superado_por": superado_por,
             "autor": autor, "confirmado_por": confirmado_por, "criado_em": iso(criado)}
+
+
+def campos_fato(d: dict) -> dict:
+    """sujeito/predicado/objeto normalizados e validados (tamanho e filtro de credencial)."""
+    campos = {}
+    for campo, maximo in (("sujeito", 120), ("predicado", 120), ("objeto", 500)):
+        valor = " ".join(str(d.get(campo) or "").split())
+        if not 1 <= len(valor) <= maximo:
+            raise ErroHttp(400, f"{campo}_invalido", f"{campo}: 1–{maximo} caracteres.")
+        if CREDENCIAL_RE.search(valor):
+            raise ErroHttp(422, "credencial_detectada", "O fato parece conter uma credencial. Não foi registrado.")
+        campos[campo] = valor
+    supera = d.get("supera")
+    if supera is not None and (not isinstance(supera, int) or isinstance(supera, bool)):
+        raise ErroHttp(400, "supera_invalido", "supera deve ser o id de um fato.")
+    campos["supera"] = supera
+    return campos
+
+
+def checar_supera(con: sqlite3.Connection, sala: str, supera: int | None) -> None:
+    if supera is None:
+        return
+    antigo = con.execute("SELECT sala, estado FROM fato WHERE id=?", (supera,)).fetchone()
+    if not antigo or antigo[0] != sala:
+        raise ErroHttp(400, "supera_inexistente", "O fato a superar não existe nesta sala.")
+    if antigo[1] != "vigente":
+        raise ErroHttp(409, "fato_nao_vigente", "Esse fato já foi superado; supere a versão vigente.")
+
+
+def inserir_fato(con: sqlite3.Connection, sala: str, campos: dict, otipo: str, oid: str, estado: str, autor: str) -> int:
+    cur = con.execute(
+        f"INSERT INTO fato ({COLS_FATO.replace('id, ', '', 1)}) VALUES (?,?,?,?,?,?,?,NULL,?,NULL,?,?)",
+        (sala, campos["sujeito"], campos["predicado"], campos["objeto"], otipo, oid, estado, autor, time.time(),
+         campos["supera"]),
+    )
+    con.execute("INSERT INTO fato_busca (rowid, sujeito, predicado, objeto) VALUES (?,?,?,?)",
+                (cur.lastrowid, campos["sujeito"], campos["predicado"], campos["objeto"]))
+    return cur.lastrowid
+
+
+def superar(con: sqlite3.Connection, novo: int, supera: int | None) -> None:
+    # Condicional: se outro pedido superou o mesmo fato no meio, a exceção desfaz a transação inteira.
+    if supera is not None and con.execute(
+            "UPDATE fato SET estado='superado', superado_por=? WHERE id=? AND estado='vigente'", (novo, supera)).rowcount == 0:
+        raise ErroHttp(409, "fato_nao_vigente", "Esse fato acabou de ser superado; supere a versão vigente.")
+
+
+def humano_confirmado(con: sqlite3.Connection, quem: "Quem") -> str | None:
+    """Nome de quem é humano com identidade forte: token (ou sessão dele) cujo tipo é 'humano'.
+    O token de admin nunca conta, nem a sessão aberta com ele: ali o nome é escolhido livremente."""
+    if quem.admin or not quem.nome:
+        return None
+    linha = con.execute("SELECT 1 FROM agente WHERE nome=? AND tipo='humano' AND revogado IS NULL", (quem.nome,)).fetchone()
+    return quem.nome if linha else None
 
 
 def consulta_fts(termo: str) -> str:
@@ -516,6 +575,7 @@ class Handler(BaseHTTPRequestHandler):
                 ("POST", "/reunioes"): self.criar_reuniao,
                 ("GET", "/fatos"): self.fatos,
                 ("POST", "/fatos"): self.registrar_fato,
+                ("GET", "/fatos/candidatos"): self.candidatos,
             }
             if (metodo, caminho) in rotas:
                 return rotas[(metodo, caminho)](q)
@@ -536,9 +596,11 @@ class Handler(BaseHTTPRequestHandler):
             m = re.fullmatch(r"/tarefas/(\d+)", caminho)
             if m and metodo in ("PATCH", "DELETE"):
                 return (self.alterar_tarefa if metodo == "PATCH" else self.apagar_tarefa)(int(m.group(1)))
-            m = re.fullmatch(r"/fatos/(\d+)", caminho)
-            if m and metodo == "GET":
+            m = re.fullmatch(r"/fatos/(\d+)(?:/(confirmar|rejeitar))?", caminho)
+            if m and metodo == "GET" and m.group(2) is None:
                 return self.ver_fato(int(m.group(1)))
+            if m and metodo == "POST" and m.group(2):
+                return self.decidir_fato(int(m.group(1)), m.group(2))
             m = re.fullmatch(r"/sprints/(\d+)", caminho)
             if m and metodo == "PATCH":
                 return self.alterar_sprint(int(m.group(1)))
@@ -1384,6 +1446,10 @@ class Handler(BaseHTTPRequestHandler):
         acoes = c.get("acoes") or []
         if not isinstance(acoes, list) or len(acoes) > 30:
             raise ErroHttp(400, "acoes_invalidas", "acoes deve ser uma lista de até 30 {titulo, responsavel}.")
+        propostos = c.get("fatos") or []
+        if not isinstance(propostos, list) or len(propostos) > MAX_FATOS_ATA or not all(isinstance(p, dict) for p in propostos):
+            raise ErroHttp(400, "fatos_invalidos", f"fatos deve ser uma lista de até {MAX_FATOS_ATA} {{sujeito, predicado, objeto, supera?}}.")
+        propostos = [campos_fato(p) for p in propostos]
         with conectar() as con:
             quem = self._quem(con)
             eu = self._nome(quem, c)
@@ -1413,11 +1479,22 @@ class Handler(BaseHTTPRequestHandler):
                 linhas = "\n".join(f"- **#{i}** {t}" + (f" → @{p}" if p else "") for i, t, p in criadas)
                 mensagem_sistema(con, r["sala"], f"📋 Ações da reunião #{rid} viraram tarefas:\n{linhas}")
             con.execute("UPDATE reuniao SET estado='encerrada', ata=? WHERE id=?", (ata, rid))
+            # Fatos da ata entram como candidatos: só viram memória quando um humano participante confirmar.
+            candidatos = []
+            for p in propostos:
+                checar_supera(con, r["sala"], p["supera"])
+                candidatos.append(inserir_fato(con, r["sala"], p, "ata", str(rid), "candidato", eu))
+            if candidatos:
+                n = len(candidatos)
+                mensagem_sistema(con, r["sala"], f"🧠 {n} fato{'s' if n > 1 else ''} da reunião #{rid} "
+                                                 f"aguarda{'m' if n > 1 else ''} confirmação de um participante.")
+                registrar_evento(con, "fato", r["sala"], candidatos[0])
             evento_reuniao(con, r)
             registrar_evento(con, "tarefa", r["sala"], 0)
             r = self._reuniao(con, rid)
         notificar()
         r["tarefas_criadas"] = [i for i, _, _ in criadas]
+        r["fatos_candidatos"] = candidatos
         self._json(200, r)
 
     # memória da equipe (docs/PLANO-MEMORIA.md, fase 1)
@@ -1489,47 +1566,63 @@ class Handler(BaseHTTPRequestHandler):
     def registrar_fato(self, _q: dict) -> None:
         c = self._corpo()
         sala = validar_sala(c.get("sala"))
-        campos = {}
-        for campo, maximo in (("sujeito", 120), ("predicado", 120), ("objeto", 500)):
-            valor = " ".join(str(c.get(campo) or "").split())
-            if not 1 <= len(valor) <= maximo:
-                raise ErroHttp(400, f"{campo}_invalido", f"{campo}: 1–{maximo} caracteres.")
-            if CREDENCIAL_RE.search(valor):
-                raise ErroHttp(422, "credencial_detectada", "O fato parece conter uma credencial. Não foi registrado.")
-            campos[campo] = valor
+        campos = campos_fato(c)
         otipo, oid = c.get("origem_tipo"), str(c.get("origem_id") or "").strip()
         if otipo not in ORIGENS_FATO or not oid:
             raise ErroHttp(400, "origem_obrigatoria", f"Todo fato precisa de origem: origem_tipo ({', '.join(ORIGENS_FATO)}) e origem_id.")
-        supera = c.get("supera")
-        if supera is not None and not isinstance(supera, int):
-            raise ErroHttp(400, "supera_invalido", "supera deve ser o id de um fato.")
         with conectar() as con:
             autor = self._nome(self._quem(con), c)
             espera = FATOS.consumir(autor)
             if espera:
                 raise ErroHttp(429, "limite_excedido", "Devagar: limite de fatos atingido.", espera)
             self._validar_origem(con, sala, otipo, oid)
-            if supera is not None:
-                antigo = con.execute("SELECT sala, estado FROM fato WHERE id=?", (supera,)).fetchone()
-                if not antigo or antigo[0] != sala:
-                    raise ErroHttp(400, "supera_inexistente", "O fato a superar não existe nesta sala.")
-                if antigo[1] != "vigente":
-                    raise ErroHttp(409, "fato_nao_vigente", "Esse fato já foi superado; supere a versão vigente.")
-            cur = con.execute(
-                f"INSERT INTO fato ({COLS_FATO.replace('id, ', '', 1)}) VALUES (?,?,?,?,?,?,'vigente',NULL,?,NULL,?)",
-                (sala, campos["sujeito"], campos["predicado"], campos["objeto"], otipo, oid, autor, time.time()),
-            )
-            fid = cur.lastrowid
-            con.execute("INSERT INTO fato_busca (rowid, sujeito, predicado, objeto) VALUES (?,?,?,?)",
-                        (fid, campos["sujeito"], campos["predicado"], campos["objeto"]))
-            # Condicional: se outro pedido superou o mesmo fato no meio, a exceção desfaz esta transação inteira.
-            if supera is not None and con.execute(
-                    "UPDATE fato SET estado='superado', superado_por=? WHERE id=? AND estado='vigente'", (fid, supera)).rowcount == 0:
-                raise ErroHttp(409, "fato_nao_vigente", "Esse fato acabou de ser superado; supere a versão vigente.")
+            checar_supera(con, sala, campos["supera"])
+            fid = inserir_fato(con, sala, campos, otipo, oid, "vigente", autor)
+            superar(con, fid, campos["supera"])
             registrar_evento(con, "fato", sala, fid)
             linha = con.execute(f"SELECT {COLS_FATO} FROM fato WHERE id=?", (fid,)).fetchone()
         notificar()
         self._json(201, fato_para_json(linha))
+
+    def candidatos(self, q: dict) -> None:
+        """Fatos propostos em atas que ainda esperam um humano confirmar ou rejeitar."""
+        sala = validar_sala(q.get("sala"))
+        with conectar() as con:
+            self._quem(con)
+            linhas = con.execute(f"SELECT {COLS_FATO} FROM fato WHERE sala=? AND estado='candidato' ORDER BY id",
+                                 (sala,)).fetchall()
+        self._json(200, [fato_para_json(r) for r in linhas])
+
+    def decidir_fato(self, fid: int, acao: str) -> None:
+        """Confirmar ou rejeitar um candidato. Só humano com identidade forte e participante da reunião de origem."""
+        with conectar() as con:
+            quem = self._quem(con)
+            eu = humano_confirmado(con, quem)
+            if not eu:
+                raise ErroHttp(403, "requer_humano",
+                               "Só um humano com token próprio (tipo humano) confirma fatos; token de admin não conta.")
+            linha = con.execute(f"SELECT {COLS_FATO} FROM fato WHERE id=?", (fid,)).fetchone()
+            if not linha:
+                raise ErroHttp(404, "fato_inexistente", "Fato não existe.")
+            f = fato_para_json(linha)
+            if f["estado"] != "candidato":
+                raise ErroHttp(409, "fato_decidido", f"Esse fato já está {f['estado']}.")
+            r = self._reuniao(con, int(f["origem"]["id"]))
+            if eu not in r["participantes"] and eu != r["criada_por"]:
+                raise ErroHttp(403, "proibido", "Só participantes da reunião de origem decidem os fatos dela.")
+            estado = "vigente" if acao == "confirmar" else "rejeitado"
+            if estado == "vigente":
+                checar_supera(con, f["sala"], f["supera"])
+            # Condicional no estado: dois humanos decidindo ao mesmo tempo, só o primeiro vale.
+            if con.execute("UPDATE fato SET estado=?, confirmado_por=? WHERE id=? AND estado='candidato'",
+                           (estado, eu, fid)).rowcount == 0:
+                raise ErroHttp(409, "fato_decidido", "Esse fato acabou de ser decidido por outra pessoa.")
+            if estado == "vigente":
+                superar(con, fid, f["supera"])
+            registrar_evento(con, "fato", f["sala"], fid)
+            linha = con.execute(f"SELECT {COLS_FATO} FROM fato WHERE id=?", (fid,)).fetchone()
+        notificar()
+        self._json(200, fato_para_json(linha))
 
 
 def marcar_visto_sem_con(nome: str | None) -> None:

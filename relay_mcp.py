@@ -238,11 +238,16 @@ async def passar_vez(reuniao: int) -> str:
 
 
 @mcp.tool()
-async def encerrar_reuniao(reuniao: int, ata: str, acoes: list[dict] | None = None) -> str:
+async def encerrar_reuniao(reuniao: int, ata: str, acoes: list[dict] | None = None,
+                           fatos: list[dict] | None = None) -> str:
     """Encerra a reunião com a ata (decisões em Markdown). Cada ação {titulo, responsavel}
-    vira uma tarefa no quadro (na sprint ativa, se houver)."""
-    r = await asyncio.to_thread(_req, "POST", f"/reunioes/{reuniao}/encerrar", {"ata": ata, "acoes": acoes or [], "de": NOME})
-    return _fmt_reuniao(r) + f"\nTarefas criadas: {r.get('tarefas_criadas') or 'nenhuma'}"
+    vira uma tarefa no quadro (na sprint ativa, se houver).
+    `fatos`: até 20 decisões da ata como {sujeito, predicado, objeto, supera?} para a memória da equipe.
+    Entram como candidatos: só viram memória quando um humano participante confirmar (você não confirma)."""
+    corpo = {"ata": ata, "acoes": acoes or [], "fatos": fatos or [], "de": NOME}
+    r = await asyncio.to_thread(_req, "POST", f"/reunioes/{reuniao}/encerrar", corpo)
+    return (_fmt_reuniao(r) + f"\nTarefas criadas: {r.get('tarefas_criadas') or 'nenhuma'}"
+            + f"\nFatos aguardando confirmação: {r.get('fatos_candidatos') or 'nenhum'}")
 
 
 if __name__ == "__main__":
