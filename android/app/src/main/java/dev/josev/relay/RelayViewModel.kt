@@ -112,6 +112,8 @@ class RelayViewModel(app: Application) : AndroidViewModel(app) {
             false
         }
         api = nova
+        dev.josev.relay.notificacoes.Notificacoes.criarCanais(getApplication())
+        dev.josev.relay.notificacoes.Notificacoes.agendar(getApplication())
         _estado.update {
             it.copy(verificando = false, conexao = c, admin = isAdmin, sala = config.sala(), vistas = config.vistas(), aviso = null)
         }
@@ -124,6 +126,7 @@ class RelayViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun sair() {
+        dev.josev.relay.notificacoes.Notificacoes.cancelarAgenda(getApplication())
         stream?.cancel(); periodico?.cancel(); api = null
         viewModelScope.launch { config.sair() }
         _estado.value = Estado(verificando = false)
@@ -135,8 +138,14 @@ class RelayViewModel(app: Application) : AndroidViewModel(app) {
         runCatching { a.agentes() }.onSuccess { ag -> _estado.update { it.copy(agentes = ag) } }
     }
 
+    /** Vindo de uma notificação: abre a sala agora ou depois de conectar. */
+    fun irPara(sala: String) {
+        if (api != null) abrirSala(sala) else viewModelScope.launch { config.salvarSala(sala) }
+    }
+
     fun abrirSala(sala: String) {
         val a = api ?: return
+        dev.josev.relay.notificacoes.Notificacoes.limpar(getApplication(), sala)
         stream?.cancel()
         viewModelScope.launch { config.salvarSala(sala) }
         _estado.update {

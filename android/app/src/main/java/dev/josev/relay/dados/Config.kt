@@ -43,5 +43,10 @@ class Config(private val contexto: Context) {
         if ((it[kVista(sala)] ?: 0L) < id) it[kVista(sala)] = id
     }
 
+    /** Último id já notificado por sala (separado de "vista": notificar não é ler). */
+    private fun kNotificado(sala: String) = longPreferencesKey("notificado:$sala")
+    suspend fun notificado(sala: String): Long = contexto.dados.data.first()[kNotificado(sala)] ?: 0L
+    suspend fun marcarNotificado(sala: String, id: Long) = contexto.dados.edit { it[kNotificado(sala)] = id }
+
     suspend fun sair() = contexto.dados.edit { it.remove(kToken) }
 }

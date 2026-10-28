@@ -28,6 +28,19 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         setContent { TemaRelay { Raiz(vm) } }
+        abrirDaNotificacao(intent)
+        if (android.os.Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 1)
+    }
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        abrirDaNotificacao(intent)
+    }
+
+    private fun abrirDaNotificacao(intent: android.content.Intent?) {
+        intent?.getStringExtra(dev.josev.relay.notificacoes.Notificacoes.EXTRA_SALA)?.let { vm.irPara(it) }
     }
 }
 
