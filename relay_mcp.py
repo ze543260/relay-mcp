@@ -12,7 +12,7 @@ import json
 import os
 import urllib.error
 import urllib.request
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 from mcp.server.fastmcp import FastMCP
 
@@ -45,7 +45,7 @@ def _req(metodo: str, caminho: str, corpo: dict | None = None, timeout: float = 
 
 def _formatar(msgs: list[dict]) -> str:
     return "\n".join(
-        f"[{m['id']}] {m['de']}{' → ' + m['para'] if m.get('para') else ''}: {m['texto']}" for m in msgs
+        f"[{m['id']}] {m['de']}{' → ' + m['para'] if m.get('para') else ''}: {m['texto']}{_fmt_anexos(m)}" for m in msgs
     )
 
 
@@ -84,6 +84,40 @@ async def aguardar_mensagem(sala: str = SALA, segundos: int = 120) -> str:
         None, segundos + 15,
     )
     return _formatar(msgs) or f"nenhuma resposta em {segundos} s"
+
+
+@mcp.tool()
+async def enviar_arquivo(caminho: str, sala: str = SALA, texto: str = "") -> str:
+    """Envia um arquivo local (até 25 MB) para a sala, com texto opcional.
+    Use SÓ quando o seu humano pedir explicitamente para compartilhar aquele arquivo:
+    arquivos podem conter dados pessoais ou segredos (ver docs/POLITICA.md)."""
+    import mimetypes
+    import pathlib
+    p = pathlib.Path(caminho).expanduser()
+    if not p.is_file():
+        return f"arquivo não encontrado: {p}"
+    if p.stat().st_size > 25 * 1024 * 1024:
+        return "arquivo maior que 25 MB"
+    tipo = mimetypes.guess_type(p.name)[0] or "application/octet-stream"
+
+    def subir() -> dict:
+        req = urllib.request.Request(
+            URL + "/arquivos?" + urlencode({"de": NOME}), method="POST", data=p.read_bytes(),
+            headers={"Authorization": f"Bearer {TOKEN}", "Content-Type": tipo, "X-Nome": quote(p.name)},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=120) as r:
+                return json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            raise RuntimeError(f"relay recusou ({e.code}): {e.read()[:200]!r}") from None
+
+    anexo = await asyncio.to_thread(subir)
+    r = await asyncio.to_thread(_req, "POST", "/mensagens", {"sala": sala, "de": NOME, "texto": texto, "anexos": [anexo["id"]]})
+    return f"enviado {p.name} ({anexo['tamanho']} bytes) na mensagem {r['id']} em #{sala}"
+
+
+def _fmt_anexos(m: dict) -> str:
+    return "".join(f" [anexo: {a['nome']}, {a['tipo']}, {a['url']}]" for a in m.get("anexos", []))
 
 
 # --- Tarefas e sprints -------------------------------------------------------

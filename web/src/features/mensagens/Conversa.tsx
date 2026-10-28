@@ -193,7 +193,7 @@ export function Conversa(props: Props) {
                       podeApagar={admin || it.m.de === eu} aoResponder={aoResponder} aoApagar={apagar} />
                   ) : (
                     <Mensagem
-                      m={{ id: -1, de: it.p.de, para: null, texto: it.p.texto, criado_em: it.p.criado_em, reply_to: it.p.reply_to }}
+                      m={{ id: -1, de: it.p.de, para: null, texto: it.p.texto, criado_em: it.p.criado_em, reply_to: it.p.reply_to, anexos: it.p.anexos }}
                       citada={it.p.reply_to ? porId.get(it.p.reply_to) : undefined}
                       minha estado={it.p.estado}
                       aoTentar={() => retentar(it.p.client_id)} aoDescartar={() => descartar(it.p.client_id)} />

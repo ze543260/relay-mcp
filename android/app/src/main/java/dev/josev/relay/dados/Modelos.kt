@@ -4,6 +4,9 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 @Serializable
+data class Anexo(val id: String, val nome: String, val tipo: String, val tamanho: Long, val url: String)
+
+@Serializable
 data class Mensagem(
     val id: Long,
     val de: String,
@@ -13,6 +16,7 @@ data class Mensagem(
     @SerialName("criado_em") val criadoEm: String? = null,
     @SerialName("client_id") val clientId: String? = null,
     @SerialName("reply_to") val replyTo: Long? = null,
+    val anexos: List<Anexo> = emptyList(),
 )
 
 @Serializable
@@ -51,6 +55,7 @@ data class NovaMensagem(
     val de: String? = null,
     @SerialName("client_id") val clientId: String,
     @SerialName("reply_to") val replyTo: Long? = null,
+    val anexos: List<String>? = null,
 )
 
 /** Mensagem minha ainda não confirmada pelo servidor (envio otimista). */
@@ -60,6 +65,7 @@ data class Pendente(
     val texto: String,
     val replyTo: Long?,
     val criadoMs: Long,
+    val anexos: List<Anexo> = emptyList(),
     val falhou: Boolean = false,
     val idReal: Long? = null,
 )

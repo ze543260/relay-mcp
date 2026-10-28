@@ -91,6 +91,26 @@ class RelayApi(private val conexao: Conexao) {
         return json.decodeFromString<IdCriado>(executar(pedido(url("mensagens")).post(corpo).build())).id
     }
 
+    /** Sobe bytes crus (POST /arquivos); o servidor guarda e devolve o id para anexar. */
+    suspend fun subirArquivo(bytes: ByteArray, nome: String, tipo: String): Anexo {
+        val req = pedido(url("arquivos", "de" to conexao.nome))
+            .header("X-Nome", java.net.URLEncoder.encode(nome, "UTF-8").replace("+", "%20"))
+            .post(bytes.toRequestBody(tipo.toMediaType()))
+            .build()
+        return json.decodeFromString(executar(req))
+    }
+
+    /** Bytes de um anexo (imagens na conversa). */
+    suspend fun baixarBytes(caminho: String): ByteArray = withContext(Dispatchers.IO) {
+        http.newCall(pedido(base.resolve(caminho) ?: url(caminho)).build()).execute().use { r ->
+            if (!r.isSuccessful) throw erroDe(r.code, r.body.string(), null)
+            r.body.bytes()
+        }
+    }
+
+    fun urlAbsoluta(caminho: String): String = (base.resolve(caminho) ?: url(caminho)).toString()
+    val tokenAtual: String get() = conexao.token
+
     suspend fun apagar(id: Long) {
         executar(pedido(url("mensagens/$id")).delete().build())
     }

@@ -98,6 +98,17 @@ private fun textoStatus(e: Estado) = when (e.status) {
 
 @Composable
 fun TelaPrincipal(vm: RelayViewModel, estado: Estado) {
+    val acoes = remember(vm) {
+        object : AcoesAnexo {
+            override suspend fun imagem(url: String) = vm.imagem(url)
+            override fun baixar(anexo: dev.josev.relay.dados.Anexo) = vm.baixar(anexo)
+        }
+    }
+    androidx.compose.runtime.CompositionLocalProvider(LocalAcoesAnexo provides acoes) { TelaPrincipalConteudo(vm, estado) }
+}
+
+@Composable
+private fun TelaPrincipalConteudo(vm: RelayViewModel, estado: Estado) {
     val largo = LocalConfiguration.current.screenWidthDp >= 840
     val gaveta = rememberDrawerState(DrawerValue.Closed)
     val escopo = rememberCoroutineScope()
@@ -264,7 +275,7 @@ private fun Conversa(vm: RelayViewModel, estado: Estado, aoMenu: (() -> Unit)?) 
                                 aoSegurar = { acoesDe = it.m }, modifier = Modifier.animateItem(),
                             )
                             is Item.Pend -> Bolha(
-                                m = Mensagem(-1, it.p.de, texto = it.p.texto, criado = it.p.criadoMs / 1000.0, replyTo = it.p.replyTo),
+                                m = Mensagem(-1, it.p.de, texto = it.p.texto, criado = it.p.criadoMs / 1000.0, replyTo = it.p.replyTo, anexos = it.p.anexos),
                                 minha = true, eu = eu, citada = it.p.replyTo?.let(porId::get),
                                 pendente = it.p, aoTentar = { vm.retentar(it.p.clientId) }, aoDescartar = { vm.descartar(it.p.clientId) },
                                 modifier = Modifier.animateItem(),
@@ -288,7 +299,8 @@ private fun Conversa(vm: RelayViewModel, estado: Estado, aoMenu: (() -> Unit)?) 
                 val online = estado.agentes.associate { it.nome to it.online }
                 (estado.mensagens.map { it.de } + estado.agentes.map { it.nome }).distinct().map { it to (online[it] ?: false) }
             }
-            Composer(estado.sala, eu, estado.respondendo, candidatos, aoCancelarResposta = { vm.responder(null) }, aoEnviar = vm::enviar)
+            Composer(estado.sala, eu, estado.respondendo, candidatos, aoCancelarResposta = { vm.responder(null) }, aoEnviar = vm::enviar,
+                anexando = estado.anexando, aoAnexar = vm::anexar, aoRemoverAnexo = vm::removerAnexo)
         }
     }
 

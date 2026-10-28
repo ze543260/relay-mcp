@@ -1,3 +1,11 @@
+export interface Anexo {
+  id: string;
+  nome: string;
+  tipo: string;
+  tamanho: number;
+  url: string;
+}
+
 export interface Mensagem {
   id: number;
   de: string;
@@ -9,6 +17,7 @@ export interface Mensagem {
   criado_em?: string;
   client_id?: string;
   reply_to?: number;
+  anexos?: Anexo[];
 }
 
 export interface Sala {

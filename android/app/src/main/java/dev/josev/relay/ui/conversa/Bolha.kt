@@ -27,7 +27,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Reply
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.outlined.AttachFile
 import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -137,6 +142,7 @@ fun Bolha(
                     pendente != null -> Text("enviando…", color = cores.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
                 }
             }
+            if (m.texto.isNotBlank() || citada != null || m.replyTo != null) {
             Box(
                 Modifier.padding(top = 4.dp).widthIn(max = 640.dp)
                     .alpha(if (pendente != null && !pendente.falhou) 0.6f else 1f)
@@ -161,6 +167,8 @@ fun Bolha(
                     Markdown(m.texto, eu)
                 }
             }
+            }
+            if (m.anexos.isNotEmpty()) ListaAnexos(m.anexos)
             if (pendente?.falhou == true) Row(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(aoTentar, Modifier.height(32.dp)) { Text("Tentar de novo") }
                 TextButton(aoDescartar, Modifier.height(32.dp)) { Text("Descartar") }
@@ -208,7 +216,12 @@ private val MENCAO = Regex("(^|[\\s(])@([\\w.-]{0,32})$")
 fun Composer(
     sala: String, nome: String, respondendo: Mensagem?, candidatos: List<Pair<String, Boolean>>,
     aoCancelarResposta: () -> Unit, aoEnviar: (String) -> Unit,
+    anexando: List<dev.josev.relay.Anexando> = emptyList(), aoAnexar: (List<android.net.Uri>) -> Unit = {}, aoRemoverAnexo: (String) -> Unit = {},
 ) {
+    val seletor = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.GetMultipleContents()) { if (it.isNotEmpty()) aoAnexar(it) }
+    val subindo = anexando.any { it.anexo == null && it.erro == null }
+    val prontos = anexando.count { it.anexo != null }
     var campo by remember(sala) { mutableStateOf(androidx.compose.ui.text.input.TextFieldValue("")) }
     val cores = MaterialTheme.colorScheme
     // `@parcial` logo antes do cursor abre a lista de quem pode ser mencionado.
@@ -250,6 +263,24 @@ fun Composer(
             }
         }
         HorizontalDivider(color = cores.outlineVariant)
+        if (anexando.isNotEmpty()) Row(
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(start = 12.dp, end = 12.dp, top = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            anexando.forEach { an ->
+                Row(
+                    Modifier.border(1.dp, if (an.erro != null) cores.error else cores.outlineVariant, RoundedCornerShape(Tokens.Raio.xl))
+                        .background(cores.surfaceContainer, RoundedCornerShape(Tokens.Raio.xl)).padding(start = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (an.anexo == null && an.erro == null) CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
+                    else Icon(if (an.ehImagem) Icons.Outlined.Image else Icons.Outlined.AttachFile, null, Modifier.size(16.dp), tint = if (an.erro != null) cores.error else cores.primary)
+                    Text(an.erro ?: an.nome, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.widthIn(max = 160.dp).padding(start = 6.dp), color = if (an.erro != null) cores.error else cores.onSurface)
+                    IconButton({ aoRemoverAnexo(an.chave) }, Modifier.size(36.dp)) { Icon(Icons.Filled.Close, "Remover ${an.nome}", Modifier.size(16.dp)) }
+                }
+            }
+        }
         if (respondendo != null) Row(Modifier.padding(start = 16.dp, end = 4.dp, top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.AutoMirrored.Filled.Reply, null, tint = cores.primary, modifier = Modifier.size(16.dp))
             Text("Respondendo a ${respondendo.de} · ${resumo(respondendo.texto, 80)}", style = MaterialTheme.typography.bodyMedium,
@@ -257,6 +288,9 @@ fun Composer(
             IconButton(aoCancelarResposta) { Icon(Icons.Filled.Close, "Cancelar resposta") }
         }
         Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.Bottom) {
+            IconButton({ seletor.launch("*/*") }, Modifier.size(48.dp), enabled = anexando.size < 10) {
+                Icon(Icons.Outlined.AttachFile, "Anexar foto ou arquivo", tint = cores.onSurfaceVariant)
+            }
             TextField(
                 campo, { campo = it }, modifier = Modifier.weight(1f).heightIn(min = 48.dp, max = 180.dp),
                 placeholder = { Text("Mandar como $nome em #$sala…", maxLines = 1, overflow = TextOverflow.Ellipsis) },
@@ -268,8 +302,8 @@ fun Composer(
             )
             Spacer(Modifier.width(8.dp))
             FilledIconButton(
-                onClick = { if (campo.text.isNotBlank()) { aoEnviar(campo.text); campo = androidx.compose.ui.text.input.TextFieldValue("") } },
-                enabled = campo.text.isNotBlank(), modifier = Modifier.size(48.dp), shape = CircleShape,
+                onClick = { if ((campo.text.isNotBlank() || prontos > 0) && !subindo) { aoEnviar(campo.text); campo = androidx.compose.ui.text.input.TextFieldValue("") } },
+                enabled = (campo.text.isNotBlank() || prontos > 0) && !subindo, modifier = Modifier.size(48.dp), shape = CircleShape,
                 colors = IconButtonDefaults.filledIconButtonColors(containerColor = cores.primary),
             ) { Icon(Icons.AutoMirrored.Filled.Send, "Enviar") }
         }

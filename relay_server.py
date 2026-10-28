@@ -31,7 +31,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
 TOKEN_ADMIN = os.environ.get("RELAY_TOKEN", "")
 TLS_PORTAS: set[int] = set()  # portas servidas com TLS (cookie Secure só nelas)
@@ -43,6 +43,11 @@ RETENCAO_DIAS = float(os.environ.get("RELAY_RETENCAO_DIAS", "0"))
 MAX_ESPERAS = int(os.environ.get("RELAY_MAX_ESPERAS", "64"))
 
 TAM_MAX = 64_000
+ARQUIVO_MAX = int(os.environ.get("RELAY_ARQUIVO_MAX_MB", "25")) * 1024 * 1024
+PASTA_ARQUIVOS = os.environ.get("RELAY_ARQUIVOS", os.path.join(RAIZ, "arquivos"))
+# Só estes abrem no navegador; o resto sempre baixa (HTML/SVG nunca são servidos como página).
+TIPOS_EXIBIVEIS = {"image/png", "image/jpeg", "image/gif", "image/webp", "image/avif", "application/pdf",
+                   "audio/mpeg", "audio/ogg", "audio/wav", "video/mp4", "video/webm", "text/plain"}
 ESPERA_MAX = 300
 SESSAO_DIAS = 30
 ONLINE_S = 120
@@ -104,6 +109,11 @@ MIGRACOES = [
     # 5: cada reunião tem um canal próprio (sala "<sala>.reuniao-<id>")
     """ALTER TABLE reuniao ADD COLUMN canal TEXT;
        CREATE INDEX IF NOT EXISTS reuniao_canal ON reuniao(canal);""",
+    # 6: arquivos anexados a mensagens (conteúdo em disco, metadados aqui)
+    """CREATE TABLE IF NOT EXISTS arquivo (
+         id TEXT PRIMARY KEY, nome TEXT NOT NULL, tipo TEXT NOT NULL, tamanho INTEGER NOT NULL,
+         sha256 TEXT NOT NULL, de TEXT NOT NULL, criado REAL NOT NULL, msg_id INTEGER);
+       CREATE INDEX IF NOT EXISTS arquivo_msg ON arquivo(msg_id);""",
 ]
 
 STATUS_TAREFA = ("a_fazer", "fazendo", "revisao", "feito")
@@ -295,6 +305,32 @@ def linha_para_msg(r: tuple) -> dict:
     return m
 
 
+def com_anexos(con: sqlite3.Connection, msgs: list[dict]) -> list[dict]:
+    """Preenche `anexos` das mensagens numa consulta só."""
+    if not msgs:
+        return msgs
+    ids = [m["id"] for m in msgs]
+    marcas = ",".join("?" * len(ids))
+    por_msg: dict[int, list[dict]] = {}
+    for aid, nome, tipo, tam, mid in con.execute(
+        f"SELECT id, nome, tipo, tamanho, msg_id FROM arquivo WHERE msg_id IN ({marcas}) ORDER BY criado", ids
+    ):
+        por_msg.setdefault(mid, []).append({"id": aid, "nome": nome, "tipo": tipo, "tamanho": tam, "url": f"/arquivos/{aid}"})
+    for m in msgs:
+        if m["id"] in por_msg:
+            m["anexos"] = por_msg[m["id"]]
+    return msgs
+
+
+def apagar_arquivos(con: sqlite3.Connection, condicao: str, args: list) -> None:
+    for (aid,) in con.execute(f"SELECT id FROM arquivo WHERE {condicao}", args).fetchall():
+        try:
+            os.remove(os.path.join(PASTA_ARQUIVOS, aid))
+        except FileNotFoundError:
+            pass
+    con.execute(f"DELETE FROM arquivo WHERE {condicao}", args)
+
+
 def filtro_visiveis(quem: Quem, eu: str | None, todas: bool) -> tuple[str, list]:
     """Admin com todas=1 vê tudo; os outros veem públicas, as suas e as endereçadas a si."""
     if quem.admin and todas:
@@ -393,6 +429,7 @@ class Handler(BaseHTTPRequestHandler):
                 ("POST", "/mensagens"): self.postar,
                 ("GET", "/agentes"): self.agentes,
                 ("POST", "/agentes"): self.criar_agente,
+                ("POST", "/arquivos"): self.subir_arquivo,
                 ("GET", "/tarefas"): self.tarefas,
                 ("POST", "/tarefas"): self.criar_tarefa,
                 ("GET", "/sprints"): self.sprints,
@@ -408,6 +445,9 @@ class Handler(BaseHTTPRequestHandler):
             m = re.fullmatch(r"/agentes/([^/]+)", caminho)
             if m and metodo == "DELETE":
                 return self.revogar_agente(unquote(m.group(1)))
+            m = re.fullmatch(r"/arquivos/([\w-]{16,64})", caminho)
+            if m and metodo == "GET":
+                return self.baixar_arquivo(m.group(1), q)
             m = re.fullmatch(r"/tarefas/(\d+)", caminho)
             if m and metodo in ("PATCH", "DELETE"):
                 return (self.alterar_tarefa if metodo == "PATCH" else self.apagar_tarefa)(int(m.group(1)))
@@ -598,9 +638,13 @@ class Handler(BaseHTTPRequestHandler):
     def postar(self, _q: dict) -> None:
         corpo = self._corpo()
         sala = validar_sala(corpo.get("sala"))
-        texto = corpo.get("texto")
-        if not isinstance(texto, str) or not texto.strip():
-            raise ErroHttp(400, "texto_vazio", "Texto obrigatório.")
+        texto = corpo.get("texto") or ""
+        anexos = corpo.get("anexos") or []
+        if not isinstance(texto, str) or not isinstance(anexos, list) or len(anexos) > 10 \
+                or not all(isinstance(a, str) and re.fullmatch(r"[\w-]{16,64}", a) for a in anexos):
+            raise ErroHttp(400, "anexos_invalidos", "anexos: lista de até 10 ids de arquivo.")
+        if not texto.strip() and not anexos:
+            raise ErroHttp(400, "texto_vazio", "Mande texto ou ao menos um arquivo.")
         if CREDENCIAL_RE.search(texto):
             raise ErroHttp(422, "credencial_detectada",
                            "A mensagem parece conter uma credencial (token, chave, senha). Não foi enviada.")
@@ -629,10 +673,18 @@ class Handler(BaseHTTPRequestHandler):
                 existente = con.execute("SELECT id FROM msg WHERE de=? AND client_id=?", (de, client_id)).fetchone()
                 if existente:
                     return self._json(200, {"id": existente[0], "repetida": True})
+            if anexos:
+                livres = con.execute(
+                    f"SELECT COUNT(*) FROM arquivo WHERE id IN ({','.join('?' * len(anexos))}) AND de=? AND msg_id IS NULL",
+                    [*anexos, de]).fetchone()[0]
+                if livres != len(set(anexos)):
+                    raise ErroHttp(400, "anexos_invalidos", "Arquivo inexistente, de outra pessoa ou já usado.")
             cur = con.execute(
                 "INSERT INTO msg (sala, de, para, texto, criado, client_id, reply_to) VALUES (?,?,?,?,?,?,?)",
                 (sala, de, para, texto, time.time(), client_id, reply_to),
             )
+            if anexos:
+                con.execute(f"UPDATE arquivo SET msg_id=? WHERE id IN ({','.join('?' * len(anexos))})", [cur.lastrowid, *anexos])
             marcar_visto(con, de)
         notificar()
         self._json(201, {"id": cur.lastrowid})
@@ -648,6 +700,7 @@ class Handler(BaseHTTPRequestHandler):
                 raise ErroHttp(403, "proibido", "Só o autor ou o admin apagam.")
             # Apagamento real; o evento guarda só o id (auditoria sem conteúdo).
             con.execute("DELETE FROM msg WHERE id=?", (msg_id,))
+            apagar_arquivos(con, "msg_id=?", [msg_id])
             con.execute("INSERT INTO evento (tipo, sala, msg_id, quando) VALUES ('apagada',?,?,?)",
                         (sala, msg_id, time.time()))
         notificar()
@@ -661,7 +714,7 @@ class Handler(BaseHTTPRequestHandler):
             f"SELECT {COLUNAS} FROM msg WHERE sala=? AND id>? AND {filtro}{extra} ORDER BY id LIMIT 200",
             [sala, depois, *args, *([eu] if sem_minhas else [])],
         ).fetchall()
-        return [linha_para_msg(r) for r in linhas]
+        return com_anexos(con, [linha_para_msg(r) for r in linhas])
 
     def mensagens(self, q: dict) -> None:
         """Leitura e espera longa. Sem `depois`, usa o cursor salvo do agente (MCP)."""
@@ -720,8 +773,8 @@ class Handler(BaseHTTPRequestHandler):
                 f"SELECT {COLUNAS} FROM msg WHERE sala=? AND {filtro}{cond} ORDER BY id DESC LIMIT ?",
                 [sala, *args, *([antes] if antes else []), limite + 1],
             ).fetchall()
-        tem_mais = len(linhas) > limite
-        msgs = [linha_para_msg(r) for r in reversed(linhas[:limite])]
+            tem_mais = len(linhas) > limite
+            msgs = com_anexos(con, [linha_para_msg(r) for r in reversed(linhas[:limite])])
         self._json(200, {"mensagens": msgs, "tem_mais": tem_mais})
 
     def stream(self, q: dict) -> None:
@@ -774,6 +827,79 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             ESPERAS.release()
 
+
+    # arquivos
+
+    def subir_arquivo(self, q: dict) -> None:
+        """Corpo = bytes do arquivo. Nome em `X-Nome` (URL-encoded) ou ?nome=; tipo no Content-Type."""
+        bruto = self.headers.get("Content-Length")
+        if bruto is None:
+            raise ErroHttp(411, "tamanho_obrigatorio", "Content-Length obrigatório.")
+        tam = int(bruto)
+        if tam <= 0:
+            raise ErroHttp(400, "arquivo_vazio", "Arquivo vazio.")
+        if tam > ARQUIVO_MAX:
+            raise ErroHttp(413, "arquivo_grande", f"Arquivo grande demais (máx. {ARQUIVO_MAX // 1024 // 1024} MB).")
+        nome = unquote(self.headers.get("X-Nome") or q.get("nome") or "arquivo")
+        nome = re.sub(r'[\x00-\x1f/\\:*?"<>|]', "_", os.path.basename(nome)).strip()[:120] or "arquivo"
+        tipo = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+        if not re.fullmatch(r"[\w.+-]+/[\w.+-]+", tipo):
+            tipo = mimetypes.guess_type(nome)[0] or "application/octet-stream"
+        with conectar() as con:
+            quem = self._quem(con)
+        de = self._nome(quem, q)
+        espera = ENVIOS.consumir(de)
+        if espera:
+            raise ErroHttp(429, "limite_excedido", "Devagar: limite de envio atingido.", espera)
+        os.makedirs(PASTA_ARQUIVOS, exist_ok=True)
+        aid = secrets.token_urlsafe(18)
+        destino = os.path.join(PASTA_ARQUIVOS, aid)
+        h = hashlib.sha256()
+        falta = tam
+        with open(destino + ".parcial", "wb") as f:
+            while falta:
+                bloco = self.rfile.read(min(65536, falta))
+                if not bloco:
+                    break
+                h.update(bloco)
+                f.write(bloco)
+                falta -= len(bloco)
+        if falta:
+            os.remove(destino + ".parcial")
+            raise ErroHttp(400, "upload_incompleto", "Upload interrompido.")
+        os.replace(destino + ".parcial", destino)
+        with conectar() as con:
+            con.execute("INSERT INTO arquivo VALUES (?,?,?,?,?,?,?,NULL)", (aid, nome, tipo, tam, h.hexdigest(), de, time.time()))
+        self._json(201, {"id": aid, "nome": nome, "tipo": tipo, "tamanho": tam, "url": f"/arquivos/{aid}"})
+
+    def baixar_arquivo(self, aid: str, q: dict) -> None:
+        with conectar() as con:
+            quem = self._quem(con)
+            linha = con.execute(
+                "SELECT a.nome, a.tipo, a.tamanho, a.de, m.para, m.de FROM arquivo a LEFT JOIN msg m ON m.id = a.msg_id WHERE a.id=?",
+                (aid,)).fetchone()
+        if not linha:
+            raise ErroHttp(404, "arquivo_inexistente", "Arquivo não existe.")
+        nome, tipo, tam, dono, para, autor = linha
+        # Anexo de mensagem privada segue a mesma regra da mensagem.
+        if para and not quem.admin and quem.nome not in (para, autor):
+            raise ErroHttp(404, "arquivo_inexistente", "Arquivo não existe.")
+        caminho = os.path.join(PASTA_ARQUIVOS, aid)
+        if not os.path.isfile(caminho):
+            raise ErroHttp(404, "arquivo_inexistente", "Arquivo não existe.")
+        exibir = tipo in TIPOS_EXIBIVEIS and q.get("baixar") != "1"
+        nome_q = quote(nome)
+        self.send_response(200)
+        self.send_header("Content-Type", tipo if exibir else "application/octet-stream")
+        self.send_header("Content-Length", str(tam))
+        self.send_header("Content-Disposition", f"{'inline' if exibir else 'attachment'}; filename*=UTF-8''{nome_q}")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Content-Security-Policy", "sandbox; default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'")
+        self.send_header("Cache-Control", "private, max-age=31536000, immutable")
+        self.end_headers()
+        with open(caminho, "rb") as f:
+            while bloco := f.read(65536):
+                self.wfile.write(bloco)
 
     # identidade em ações de equipe: agente/sessão pelo servidor; token de admin pode dizer quem é
 
@@ -1099,8 +1225,11 @@ def faxina() -> None:
             with conectar() as con:
                 con.execute("DELETE FROM sessao WHERE expira<?", (time.time(),))
                 con.execute("DELETE FROM evento WHERE quando<?", (time.time() - 86400,))
+                apagar_arquivos(con, "msg_id IS NULL AND criado<?", [time.time() - 86400])  # upload nunca anexado
                 if RETENCAO_DIAS > 0:
-                    con.execute("DELETE FROM msg WHERE criado<?", (time.time() - RETENCAO_DIAS * 86400,))
+                    limite = time.time() - RETENCAO_DIAS * 86400
+                    apagar_arquivos(con, "msg_id IN (SELECT id FROM msg WHERE criado<?)", [limite])
+                    con.execute("DELETE FROM msg WHERE criado<?", (limite,))
         except sqlite3.Error as e:
             print(f"faxina falhou: {e}", flush=True)
         time.sleep(3600)

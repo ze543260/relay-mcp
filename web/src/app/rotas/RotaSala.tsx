@@ -151,7 +151,7 @@ export function RotaSala() {
             <Conversa key={sala} sala={sala} eu={nome} carregando={conversa.estado.tipo === "carregando"}
               ultimaLida={ultimaLida.id} aoLer={aoLer} admin={admin} aoResponder={setRespondendo} {...conversa} />
             <Composer key={`c-${sala}`} sala={sala} rotuloSala={doCanal ? `🗓 ${doCanal.titulo}` : undefined} nome={nome} respondendo={respondendo} candidatos={candidatos} aoCancelarResposta={() => setRespondendo(null)}
-              aoEnviar={(texto, replyTo) => conversa.enviar(texto, nome, replyTo)} />
+              aoEnviar={(texto, replyTo, anexos) => conversa.enviar(texto, nome, replyTo, anexos)} />
           </>
         )}
       </SidebarInset>

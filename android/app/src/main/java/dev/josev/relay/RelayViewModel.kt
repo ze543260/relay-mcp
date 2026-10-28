@@ -16,6 +16,7 @@ import dev.josev.relay.dados.NovaMensagem
 import dev.josev.relay.dados.Pendente
 import dev.josev.relay.dados.RelayApi
 import dev.josev.relay.dados.Sala
+import androidx.compose.ui.graphics.asImageBitmap
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -27,6 +28,8 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.io.IOException
 import java.util.UUID
+
+data class Anexando(val chave: String, val nome: String, val tamanho: Long, val ehImagem: Boolean, val anexo: dev.josev.relay.dados.Anexo? = null, val erro: String? = null)
 
 enum class StatusConexao { CARREGANDO, AO_VIVO, RECONECTANDO, PAUSADO }
 
@@ -48,6 +51,8 @@ data class Estado(
     /** Última mensagem vista ao abrir a sala: o divisor "Novas mensagens" nasce dela. */
     val marcoLeitura: Long = 0,
     val respondendo: Mensagem? = null,
+    /** Arquivos escolhidos no composer: sobem na hora; o envio espera todos. */
+    val anexando: List<Anexando> = emptyList(),
     val aviso: String? = null,
 )
 
@@ -205,9 +210,81 @@ class RelayViewModel(app: Application) : AndroidViewModel(app) {
     fun enviar(texto: String) {
         val s = _estado.value
         val c = s.conexao ?: return
-        val p = Pendente(UUID.randomUUID().toString(), c.nome, texto.trim(), s.respondendo?.id, System.currentTimeMillis())
-        _estado.update { it.copy(pendentes = it.pendentes + p, respondendo = null) }
+        if (s.anexando.any { it.anexo == null && it.erro == null }) return
+        val anexos = s.anexando.mapNotNull { it.anexo }
+        if (texto.isBlank() && anexos.isEmpty()) return
+        val p = Pendente(UUID.randomUUID().toString(), c.nome, texto.trim(), s.respondendo?.id, System.currentTimeMillis(), anexos = anexos)
+        _estado.update { it.copy(pendentes = it.pendentes + p, respondendo = null, anexando = emptyList()) }
         postar(p)
+    }
+
+    /** Lê o arquivo do seletor do Android e sobe na hora (máx. 25 MB, 10 por mensagem). */
+    fun anexar(uris: List<android.net.Uri>) {
+        val a = api ?: return
+        val cr = getApplication<Application>().contentResolver
+        uris.take(10 - _estado.value.anexando.size).forEach { uri ->
+            var nome = "arquivo"; var tamanho = 0L
+            cr.query(uri, null, null, null, null)?.use { c ->
+                if (c.moveToFirst()) {
+                    c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME).takeIf { it >= 0 }?.let { nome = c.getString(it) ?: nome }
+                    c.getColumnIndex(android.provider.OpenableColumns.SIZE).takeIf { it >= 0 }?.let { tamanho = c.getLong(it) }
+                }
+            }
+            val tipo = cr.getType(uri) ?: "application/octet-stream"
+            val chave = UUID.randomUUID().toString()
+            _estado.update { it.copy(anexando = it.anexando + Anexando(chave, nome, tamanho, tipo.startsWith("image/"))) }
+            viewModelScope.launch {
+                try {
+                    if (tamanho > 25L * 1024 * 1024) throw ErroRelay(413, "arquivo_grande", "Arquivo grande demais (máx. 25 MB).")
+                    val bytes = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        cr.openInputStream(uri)?.use { it.readBytes() } ?: throw IOException("não consegui ler o arquivo")
+                    }
+                    val anexo = a.subirArquivo(bytes, nome, tipo)
+                    _estado.update { st -> st.copy(anexando = st.anexando.map { if (it.chave == chave) it.copy(anexo = anexo) else it }) }
+                } catch (e: Exception) {
+                    val msg = (e as? ErroRelay)?.message ?: "falhou"
+                    _estado.update { st -> st.copy(anexando = st.anexando.map { if (it.chave == chave) it.copy(erro = msg) else it }) }
+                }
+            }
+        }
+    }
+
+    fun removerAnexo(chave: String) = _estado.update { s -> s.copy(anexando = s.anexando.filterNot { it.chave == chave }) }
+
+    // Imagens dos anexos: cache em memória (decodificadas já reduzidas).
+    private val cacheImagens = android.util.LruCache<String, androidx.compose.ui.graphics.ImageBitmap>(40)
+
+    suspend fun imagem(url: String, larguraMax: Int = 1080): androidx.compose.ui.graphics.ImageBitmap? {
+        cacheImagens.get(url)?.let { return it }
+        val a = api ?: return null
+        return runCatching {
+            val bytes = a.baixarBytes(url)
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                val limites = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, limites)
+                var amostra = 1
+                while (limites.outWidth / (amostra * 2) >= larguraMax) amostra *= 2
+                android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size,
+                    android.graphics.BitmapFactory.Options().apply { inSampleSize = amostra })?.let {
+                    val img = it.asImageBitmap()
+                    cacheImagens.put(url, img)
+                    img
+                }
+            }
+        }.getOrNull()
+    }
+
+    /** Baixa um anexo para Downloads pelo gerenciador do Android (com o token no cabeçalho). */
+    fun baixar(anexo: dev.josev.relay.dados.Anexo) {
+        val a = api ?: return
+        val dm = getApplication<Application>().getSystemService(android.app.DownloadManager::class.java)
+        val req = android.app.DownloadManager.Request(android.net.Uri.parse(a.urlAbsoluta(anexo.url) + "?baixar=1"))
+            .addRequestHeader("Authorization", "Bearer ${a.tokenAtual}")
+            .setTitle(anexo.nome)
+            .setNotificationVisibility(android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+            .setDestinationInExternalPublicDir(android.os.Environment.DIRECTORY_DOWNLOADS, anexo.nome)
+        dm.enqueue(req)
+        _estado.update { it.copy(aviso = "Baixando ${anexo.nome}…") }
     }
 
     fun retentar(clientId: String) {
@@ -224,7 +301,8 @@ class RelayViewModel(app: Application) : AndroidViewModel(app) {
         val s = _estado.value
         viewModelScope.launch {
             try {
-                val id = a.enviar(NovaMensagem(s.sala, p.texto, de = s.conexao?.nome, clientId = p.clientId, replyTo = p.replyTo))
+                val id = a.enviar(NovaMensagem(s.sala, p.texto, de = s.conexao?.nome, clientId = p.clientId, replyTo = p.replyTo,
+                    anexos = p.anexos.map { it.id }.ifEmpty { null }))
                 _estado.update { st ->
                     if (id <= ultimoId) st.copy(pendentes = st.pendentes.filterNot { it.clientId == p.clientId })
                     else st.copy(pendentes = st.pendentes.map { if (it.clientId == p.clientId) it.copy(idReal = id) else it })

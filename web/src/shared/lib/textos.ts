@@ -181,6 +181,11 @@ export const textos = {
     adicionarAcao: "Ação",
     encerrar: (n: number) => (n ? `Encerrar e criar ${n} tarefa${n > 1 ? "s" : ""}` : "Encerrar reunião"),
   },
+  anexos: {
+    baixar: "Baixar",
+    fechar: "Fechar",
+    ampliar: (n: string) => `Ampliar ${n}`,
+  },
   composer: {
     rotulo: "Mensagem",
     placeholder: (nome: string, sala: string) => `Mandar como ${nome} em #${sala}…`,
@@ -189,5 +194,11 @@ export const textos = {
     respondendo: (de: string) => `Respondendo a ${de}`,
     cancelarResposta: "Cancelar resposta",
     mencionar: "Mencionar",
+    anexar: "Anexar arquivo",
+    anexos: "Arquivos a enviar",
+    soltar: "Solte para anexar",
+    enviando: (n: string) => `Enviando ${n}`,
+    falhou: "falhou",
+    remover: (n: string) => `Remover ${n}`,
   },
 } as const;

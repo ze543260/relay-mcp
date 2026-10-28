@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { avisar } from "@/shared/lib/avisar";
 import { api, ehAbort, ErroApi, listaDe } from "@/shared/api/cliente";
 import { traduzirErro } from "@/shared/api/erros";
-import type { Mensagem, PaginaHistorico, RespostaMensagens } from "@/shared/api/tipos";
+import type { Anexo, Mensagem, PaginaHistorico, RespostaMensagens } from "@/shared/api/tipos";
 import { novoId } from "@/shared/lib/formato";
 
 /** Mensagem enviada por mim que ainda não voltou do servidor. */
@@ -11,6 +11,7 @@ export interface Pendente {
   de: string;
   texto: string;
   reply_to?: number;
+  anexos?: Anexo[];
   criado_em: string;
   estado: "enviando" | "erro";
   idReal?: number;
@@ -184,7 +185,11 @@ export function useConversa({ sala, ativo, aoChegar, aoPerderAcesso, aoEvento }:
     try {
       const r = await api<{ id: number }>("/mensagens", {
         metodo: "POST",
-        corpo: { sala, texto: p.texto, client_id: p.client_id, ...(p.reply_to ? { reply_to: p.reply_to } : {}) },
+        corpo: {
+          sala, texto: p.texto, client_id: p.client_id,
+          ...(p.reply_to ? { reply_to: p.reply_to } : {}),
+          ...(p.anexos?.length ? { anexos: p.anexos.map((a) => a.id) } : {}),
+        },
       });
       setPendentes((ps) => r.id <= ultimoId.current
         ? ps.filter((x) => x.client_id !== p.client_id)
@@ -196,8 +201,8 @@ export function useConversa({ sala, ativo, aoChegar, aoPerderAcesso, aoEvento }:
     }
   }, [sala]);
 
-  const enviar = useCallback((texto: string, de: string, replyTo?: number) => {
-    const p: Pendente = { client_id: novoId(), de, texto, reply_to: replyTo, criado_em: new Date().toISOString(), estado: "enviando" };
+  const enviar = useCallback((texto: string, de: string, replyTo?: number, anexos?: Anexo[]) => {
+    const p: Pendente = { client_id: novoId(), de, texto, reply_to: replyTo, anexos, criado_em: new Date().toISOString(), estado: "enviando" };
     setPendentes((ps) => [...ps, p]);
     void postar(p);
   }, [postar]);

@@ -1,10 +1,12 @@
-import { CornerUpLeftIcon, SendHorizontalIcon, XIcon } from "lucide-react";
+import { CornerUpLeftIcon, FileIcon, PaperclipIcon, SendHorizontalIcon, UploadIcon, XIcon } from "lucide-react";
 import { useEffect, useId, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
-import type { Mensagem } from "@/shared/api/tipos";
+import { ehImagem, subirArquivo, tamanhoLegivel } from "@/shared/api/arquivos";
+import { traduzirErro } from "@/shared/api/erros";
+import type { Anexo, Mensagem } from "@/shared/api/tipos";
 import { corDe, ehIa, resumo, siglaDe } from "@/shared/lib/formato";
 import { textos } from "@/shared/lib/textos";
 
@@ -22,8 +24,20 @@ interface Props {
   /** Quem pode ser mencionado: participantes da sala + online. */
   candidatos: Candidato[];
   aoCancelarResposta: () => void;
-  aoEnviar: (texto: string, replyTo?: number) => void;
+  aoEnviar: (texto: string, replyTo?: number, anexos?: Anexo[]) => void;
 }
+
+/** Arquivo escolhido: sobe na hora; o envio espera todos terminarem. */
+interface Item {
+  chave: string;
+  arquivo: File;
+  previa: string | null;
+  progresso: number;
+  anexo?: Anexo;
+  erro?: string;
+}
+
+const MAX_ANEXOS = 10;
 
 const toque = typeof matchMedia === "function" ? matchMedia("(pointer: coarse)") : null;
 const t = textos.composer;
@@ -42,7 +56,63 @@ export function Composer({ sala, rotuloSala, nome, respondendo, candidatos, aoCa
   const [indice, setIndice] = useState(0);
   const [fechada, setFechada] = useState(false);
   const ref = useRef<HTMLTextAreaElement>(null);
+  const seletor = useRef<HTMLInputElement>(null);
   const idLista = useId();
+  const [itens, setItens] = useState<Item[]>([]);
+  const [arrastando, setArrastando] = useState(false);
+  const subindo = itens.some((i) => !i.anexo && !i.erro);
+  const prontos = itens.filter((i) => i.anexo).map((i) => i.anexo!);
+
+  function adicionar(arquivos: File[]) {
+    const novos = arquivos.slice(0, MAX_ANEXOS - itens.length).map((arquivo): Item => ({
+      chave: `${arquivo.name}-${arquivo.size}-${Math.random()}`,
+      arquivo,
+      previa: ehImagem(arquivo.type) ? URL.createObjectURL(arquivo) : null,
+      progresso: 0,
+    }));
+    if (!novos.length) return;
+    setItens((atual) => [...atual, ...novos]);
+    for (const n of novos) {
+      subirArquivo(n.arquivo, (f) => setItens((xs) => xs.map((x) => (x.chave === n.chave ? { ...x, progresso: f } : x))))
+        .then((anexo) => setItens((xs) => xs.map((x) => (x.chave === n.chave ? { ...x, anexo, progresso: 1 } : x))))
+        .catch((e: unknown) => setItens((xs) => xs.map((x) => (x.chave === n.chave ? { ...x, erro: traduzirErro(e).mensagem } : x))));
+    }
+    ref.current?.focus();
+  }
+
+  function remover(chave: string) {
+    setItens((xs) => {
+      const it = xs.find((x) => x.chave === chave);
+      if (it?.previa) URL.revokeObjectURL(it.previa);
+      return xs.filter((x) => x.chave !== chave);
+    });
+  }
+
+  // Arrastar arquivo para qualquer lugar da sala.
+  useEffect(() => {
+    const temArquivo = (e: DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes("Files");
+    let profundidade = 0;
+    const entrar = (e: DragEvent) => { if (temArquivo(e)) { profundidade++; setArrastando(true); } };
+    const sair = () => { profundidade = Math.max(0, profundidade - 1); if (!profundidade) setArrastando(false); };
+    const sobre = (e: DragEvent) => { if (temArquivo(e)) e.preventDefault(); };
+    const soltar = (e: DragEvent) => {
+      if (!temArquivo(e)) return;
+      e.preventDefault();
+      profundidade = 0;
+      setArrastando(false);
+      adicionar(Array.from(e.dataTransfer?.files ?? []));
+    };
+    window.addEventListener("dragenter", entrar);
+    window.addEventListener("dragleave", sair);
+    window.addEventListener("dragover", sobre);
+    window.addEventListener("drop", soltar);
+    return () => {
+      window.removeEventListener("dragenter", entrar);
+      window.removeEventListener("dragleave", sair);
+      window.removeEventListener("dragover", sobre);
+      window.removeEventListener("drop", soltar);
+    };
+  }); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Escolheu "Responder": foca a caixa.
   useEffect(() => { if (respondendo) ref.current?.focus(); }, [respondendo]);
@@ -72,9 +142,11 @@ export function Composer({ sala, rotuloSala, nome, respondendo, candidatos, aoCa
   function enviar(e?: FormEvent) {
     e?.preventDefault();
     const conteudo = texto.trim();
-    if (!conteudo) return;
-    aoEnviar(conteudo, respondendo?.id);
+    if ((!conteudo && !prontos.length) || subindo) return;
+    aoEnviar(conteudo, respondendo?.id, prontos.length ? prontos : undefined);
     setTexto("");
+    itens.forEach((i) => i.previa && URL.revokeObjectURL(i.previa));
+    setItens([]);
     setCursor(0);
     aoCancelarResposta();
     ref.current?.focus();
@@ -108,8 +180,39 @@ export function Composer({ sala, rotuloSala, nome, respondendo, candidatos, aoCa
     setFechada(false);
   }
 
+  const podeEnviar = (texto.trim().length > 0 || prontos.length > 0) && !subindo;
   return (
     <div className="relative border-t">
+      {arrastando && (
+        <div aria-hidden className="pointer-events-none fixed inset-0 z-40 grid place-items-center bg-background/70 backdrop-blur-sm">
+          <div className="grid place-items-center gap-2 rounded-2xl border-2 border-dashed border-primary bg-card px-10 py-8 text-sm font-medium">
+            <UploadIcon className="size-6 text-primary" />{t.soltar}
+          </div>
+        </div>
+      )}
+      {itens.length > 0 && (
+        <ul aria-label={t.anexos} className="flex gap-2 overflow-x-auto px-3 pt-2 md:px-6">
+          {itens.map((i) => (
+            <li key={i.chave} className={cn("relative flex h-16 flex-none items-center gap-2 overflow-hidden rounded-[var(--raio-xl)] border bg-card pr-8",
+              i.previa ? "w-16 pr-0" : "max-w-56 pl-3", i.erro && "border-destructive/60")}>
+              {i.previa ? <img src={i.previa} alt={i.arquivo.name} className="size-full object-cover" />
+                : <><FileIcon className="size-5 flex-none text-primary" aria-hidden />
+                  <span className="grid min-w-0 leading-tight"><span className="truncate text-xs font-medium">{i.arquivo.name}</span>
+                    <span className="truncate text-[11px] text-muted-foreground">{i.erro ?? tamanhoLegivel(i.arquivo.size)}</span></span></>}
+              {!i.anexo && !i.erro && (
+                <span className="absolute inset-x-0 bottom-0 h-1 bg-border" role="progressbar" aria-valuenow={Math.round(i.progresso * 100)} aria-label={t.enviando(i.arquivo.name)}>
+                  <span className="block h-full bg-primary transition-[width]" style={{ width: `${i.progresso * 100}%` }} />
+                </span>
+              )}
+              {i.erro && i.previa && <span className="absolute inset-0 grid place-items-center bg-destructive/70 text-[10px] font-medium text-white">{t.falhou}</span>}
+              <button type="button" onClick={() => remover(i.chave)} aria-label={t.remover(i.arquivo.name)}
+                className="absolute top-1 right-1 grid size-6 place-items-center rounded-full bg-background/90 text-foreground shadow-sm hover:bg-background">
+                <XIcon className="size-3.5" />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
       {aberta && (
         <ul id={idLista} role="listbox" aria-label={t.mencionar}
           className="absolute bottom-full left-3 z-20 mb-2 w-[min(18rem,calc(100%-1.5rem))] overflow-hidden rounded-xl border bg-popover p-1 text-popover-foreground shadow-lg md:left-6">
@@ -140,6 +243,11 @@ export function Composer({ sala, rotuloSala, nome, respondendo, candidatos, aoCa
       )}
       <form onSubmit={enviar}
         className="flex items-end gap-2 px-3 pt-2 pb-[calc(.5rem+env(safe-area-inset-bottom))] md:px-6 md:py-3">
+        <input ref={seletor} type="file" multiple hidden onChange={(e) => { adicionar(Array.from(e.target.files ?? [])); e.target.value = ""; }} />
+        <Button type="button" variant="ghost" size="icon" aria-label={t.anexar} title={t.anexar} disabled={itens.length >= MAX_ANEXOS}
+          onClick={() => seletor.current?.click()} className="size-11 flex-none rounded-full text-muted-foreground md:size-10">
+          <PaperclipIcon className="size-5" />
+        </Button>
         <label htmlFor="entrada" className="sr-only">{t.rotulo}</label>
         <Textarea id="entrada" ref={ref} rows={1} value={texto} placeholder={rotuloSala ? t.placeholderReuniao(nome, rotuloSala) : t.placeholder(nome, sala)}
           role="combobox" aria-expanded={aberta} aria-controls={aberta ? idLista : undefined} aria-autocomplete="list"
@@ -147,9 +255,13 @@ export function Composer({ sala, rotuloSala, nome, respondendo, candidatos, aoCa
           onChange={(e) => atualizar(e.target.value, e.target.selectionStart)}
           onSelect={(e) => setCursor(e.currentTarget.selectionStart)}
           onBlur={() => setFechada(true)} onFocus={() => setFechada(false)}
+          onPaste={(e) => {
+            const arquivos = Array.from(e.clipboardData.files);
+            if (arquivos.length) { e.preventDefault(); adicionar(arquivos); }
+          }}
           onKeyDown={aoTeclar}
           className="max-h-45 min-h-11 flex-1 resize-none rounded-[20px] bg-card px-3.5 py-2.5 text-base md:min-h-10 md:rounded-lg md:text-sm" />
-        <Button type="submit" disabled={!texto.trim()} aria-label={t.enviar}
+        <Button type="submit" disabled={!podeEnviar} aria-label={t.enviar}
           className="size-11 flex-none rounded-full md:h-10 md:w-auto md:rounded-lg md:px-4">
           <span className="hidden md:inline">{t.enviar}</span>
           <SendHorizontalIcon className="size-4.5 md:hidden" aria-hidden />
