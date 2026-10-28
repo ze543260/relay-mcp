@@ -2,8 +2,13 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
-/* Modo escuro segue o sistema (sem classe .dark). */
-@custom-variant dark (@media (prefers-color-scheme: dark));
+/* Escuro: data-theme="dark" força; sem atributo segue o sistema; data-theme="light" força claro. */
+@custom-variant dark {
+  @media (prefers-color-scheme: dark) {
+    &:where(:root:not([data-theme="light"]), :root:not([data-theme="light"]) *) { @slot; }
+  }
+  &:where([data-theme="dark"], [data-theme="dark"] *) { @slot; }
+}
 
 /* Paleta do Relay: fonte única; os tokens do shadcn apontam para ela. */
 :root {
@@ -13,12 +18,19 @@
   color-scheme: light dark;
 }
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --fundo: #141413; --painel: #1c1c1a; --borda: #2c2b28; --texto: #ecebe6;
     --suave: #93918a; --acento: #d97757; --acento-fundo: #33241e; --ok: #4fbf82; --bolha: #232320;
     --erro: #e5675d;
   }
 }
+:root[data-theme="dark"] {
+    --fundo: #141413; --painel: #1c1c1a; --borda: #2c2b28; --texto: #ecebe6;
+    --suave: #93918a; --acento: #d97757; --acento-fundo: #33241e; --ok: #4fbf82; --bolha: #232320;
+    --erro: #e5675d;
+  color-scheme: dark;
+}
+:root[data-theme="light"] { color-scheme: light; }
 :root {
   --background: var(--fundo);
   --foreground: var(--texto);

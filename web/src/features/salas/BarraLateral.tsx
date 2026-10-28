@@ -1,6 +1,9 @@
-import { ChevronsUpDownIcon, HashIcon, LogOutIcon } from "lucide-react";
+import { ChevronsUpDownIcon, HashIcon, LogOutIcon, MonitorIcon, MoonIcon, SearchIcon, SunIcon } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel,
+  DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupLabel, SidebarHeader, SidebarMenu,
   SidebarMenuBadge, SidebarMenuButton, SidebarMenuItem, SidebarMenuSkeleton, SidebarRail, useSidebar,
@@ -8,6 +11,8 @@ import {
 import type { EstadoConexao } from "@/features/mensagens/useConversa";
 import { cn } from "@/lib/utils";
 import { corDe, siglaDe } from "@/shared/lib/formato";
+import type { Tema } from "@/shared/lib/tema";
+import { textos } from "@/shared/lib/textos";
 import { useSalas } from "./useSalas";
 
 interface Props {
@@ -15,20 +20,26 @@ interface Props {
   nome: string;
   vistas: Record<string, number>;
   estado: EstadoConexao;
+  tema: Tema;
   aoEscolher: (sala: string) => void;
+  aoBuscar: () => void;
+  aoTema: (tema: Tema) => void;
   aoSair: () => void;
 }
 
+const ehTema = (v: unknown): v is Tema => v === "sistema" || v === "claro" || v === "escuro";
+
 function textoEstado(e: EstadoConexao): string {
+  const c = textos.conexao;
   switch (e.tipo) {
-    case "carregando": return "carregando…";
-    case "ao-vivo": return "ao vivo";
-    case "reconectando": return `reconectando em ${e.emSegundos} s`;
-    case "sem-acesso": return "sem acesso";
+    case "carregando": return c.carregando;
+    case "ao-vivo": return c.aoVivo;
+    case "reconectando": return c.reconectando(e.emSegundos);
+    case "sem-acesso": return c.semAcesso;
   }
 }
 
-export function BarraLateral({ sala, nome, vistas, estado, aoEscolher, aoSair }: Props) {
+export function BarraLateral({ sala, nome, vistas, estado, tema, aoEscolher, aoBuscar, aoTema, aoSair }: Props) {
   const { data, isPending } = useSalas();
   const { isMobile, setOpenMobile } = useSidebar();
   const lista = data ?? [];
@@ -61,9 +72,21 @@ export function BarraLateral({ sala, nome, vistas, estado, aoEscolher, aoSair }:
       </SidebarHeader>
 
       <SidebarContent>
+        <SidebarGroup className="pb-0">
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuButton tooltip={`${textos.paleta.abrir} (${textos.paleta.atalho})`} onClick={() => { if (isMobile) setOpenMobile(false); aoBuscar(); }}
+                className="text-muted-foreground">
+                <SearchIcon />
+                <span>{textos.paleta.abrir}</span>
+                <kbd className="ml-auto rounded border bg-muted px-1.5 font-mono text-[10px] group-data-[collapsible=icon]:hidden">{textos.paleta.atalho}</kbd>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
+        </SidebarGroup>
         <SidebarGroup>
-          <SidebarGroupLabel>Salas</SidebarGroupLabel>
-          <SidebarMenu aria-label="Lista de salas">
+          <SidebarGroupLabel>{textos.salas.titulo}</SidebarGroupLabel>
+          <SidebarMenu aria-label={textos.salas.lista}>
             {isPending && Array.from({ length: 3 }, (_, i) => (
               <SidebarMenuItem key={i}><SidebarMenuSkeleton showIcon /></SidebarMenuItem>
             ))}
@@ -78,11 +101,11 @@ export function BarraLateral({ sala, nome, vistas, estado, aoEscolher, aoSair }:
                     <HashIcon />
                     <span className="grid min-w-0 flex-1 leading-tight group-data-[collapsible=icon]:hidden">
                       <span className="truncate font-medium">{s.sala}</span>
-                      <span className="truncate text-xs text-muted-foreground">{s.agentes.filter(Boolean).join(", ") || "vazia"}</span>
+                      <span className="truncate text-xs text-muted-foreground">{s.agentes.filter(Boolean).join(", ") || textos.salas.vazia}</span>
                     </span>
                   </SidebarMenuButton>
                   <SidebarMenuBadge className={cn("group-data-[collapsible=icon]:hidden", naoLida && "bg-sidebar-primary text-sidebar-primary-foreground peer-hover/menu-button:text-sidebar-primary-foreground")}
-                    aria-label={naoLida ? `${s.total} mensagens, há não lidas` : `${s.total} mensagens`}>
+                    aria-label={naoLida ? textos.salas.naoLidas(s.total) : textos.salas.total(s.total)}>
                     {s.total}
                   </SidebarMenuBadge>
                 </SidebarMenuItem>
@@ -104,17 +127,26 @@ export function BarraLateral({ sala, nome, vistas, estado, aoEscolher, aoSair }:
                 </Avatar>
                 <span className="grid flex-1 text-left leading-tight">
                   <span className="truncate font-medium">{nome}</span>
-                  <span className="truncate text-xs text-muted-foreground">humano</span>
+                  <span className="truncate text-xs text-muted-foreground">{textos.sessao.humano}</span>
                 </span>
                 <ChevronsUpDownIcon className="ml-auto" />
               </DropdownMenuTrigger>
               <DropdownMenuContent side={isMobile ? "top" : "right"} align="end" className="min-w-56">
                 <DropdownMenuGroup>
-                  <DropdownMenuLabel>Conectado como {nome}</DropdownMenuLabel>
+                  <DropdownMenuLabel>{textos.sessao.conectadoComo(nome)}</DropdownMenuLabel>
+                </DropdownMenuGroup>
+                <DropdownMenuSeparator />
+                <DropdownMenuGroup>
+                  <DropdownMenuLabel className="text-xs text-muted-foreground">{textos.tema.titulo}</DropdownMenuLabel>
+                  <DropdownMenuRadioGroup value={tema} onValueChange={(v: unknown) => { if (ehTema(v)) aoTema(v); }}>
+                    <DropdownMenuRadioItem value="sistema"><MonitorIcon /> {textos.tema.sistema}</DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="claro"><SunIcon /> {textos.tema.claro}</DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="escuro"><MoonIcon /> {textos.tema.escuro}</DropdownMenuRadioItem>
+                  </DropdownMenuRadioGroup>
                 </DropdownMenuGroup>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={aoSair}>
-                  <LogOutIcon /> Sair
+                  <LogOutIcon /> {textos.sessao.sair}
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>

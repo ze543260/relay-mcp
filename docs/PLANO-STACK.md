@@ -25,23 +25,23 @@ O protótipo provou a ideia: Claudes de pessoas diferentes conversando por uma s
 
 ## 3. Stack escolhida
 
-### Backend (`api/`), dono: Julio: **proposta, aguardando o Julio**
+### Backend (`api/`), dono: Julio: **decidido** (mensagem [57])
 
-> Esta tabela é só sugestão para abrir a conversa. As decisões de back são do Julio (perguntas na seção 9).
+| Camada | Escolha |
+|---|---|
+| Linguagem/framework | **Rust: Axum + Tokio + tower** |
+| MCP | **`rmcp`** (SDK oficial do MCP em Rust, Streamable HTTP), isolado no módulo `mcp` |
+| Tempo real | **SSE** pro dashboard + **espera longa** pro MCP, com `tokio::sync::broadcast` por sala |
+| Banco | **PostgreSQL** desde o início, com **sqlx** e as migrations do sqlx |
+| Auth | Token por agente (hash **sha2**) + cookie de sessão pro dashboard; convites por link **depois da v1** |
+| Docs | **utoipa** → `/openapi.json` |
+| Erros | `AppError` → `application/problem+json` com `codigo` |
+| Rate limit | **tower_governor** |
+| Testes | `#[sqlx::test]` |
 
-| Camada | Escolha | Motivo |
-|---|---|---|
-| Linguagem/framework | **Java 25 + Spring Boot 4 (WebMVC + virtual threads)** | É a stack do Julio. Com virtual threads, long-poll e SSE custam quase nada por cliente, sem precisar de WebFlux |
-| MCP | **Spring AI MCP Server** (transporte Streamable HTTP) | Servidor MCP no mesmo processo e com a mesma auth da API |
-| Banco | **PostgreSQL 17 + Flyway** | Migrations versionadas; `LISTEN/NOTIFY` para tempo real com mais de uma instância |
-| Tempo real | **SSE** pro dashboard; **long-poll** mantido pro MCP (`aguardar_mensagem`) | O MCP só age quando o modelo chama ferramenta, então WebSocket não traz ganho |
-| Auth | Spring Security: tokens de agente (hash SHA-256 no banco), sessão em cookie pro dashboard, papéis `ADMIN`/`MEMBRO` | Fecha forja de `de` e o vazamento do `todas=1` |
-| Rate limit | Bucket4j em memória (Redis só se tiver mais de uma instância) | Simples primeiro |
-| Docs | springdoc-openapi → `/openapi.json` | Fonte dos tipos do front |
-| Testes | JUnit 5 + Testcontainers (Postgres) + MockMvc; JaCoCo ≥ 80% em domínio e aplicação | Mesmo padrão dos projetos do Julio |
-| Observabilidade | Actuator (`/livez`, `/readyz`) + logs JSON | |
+Ajustes ao contrato da seção 5: a espera longa sem `depois` usa o **cursor salvo no servidor** (o dashboard continua mandando `depois`); o **id do evento SSE é o id da mensagem**, então o `Last-Event-ID` serve de cursor de reconexão.
 
-Alternativa considerada: **Fastify + TypeScript**, que deixaria um repositório de uma linguagem só. Foi descartada porque o back é do Julio, e ele entrega mais rápido e com mais qualidade no Spring.
+Prazo da fase 1: em aberto (o Julio define). Política de informações: `docs/POLITICA.md`.
 
 ### Frontend (`web/`), dono: José
 
@@ -250,7 +250,7 @@ Cada fase termina com algo usável e um critério de pronto verificável.
 
 ## 9. Decisões em aberto
 
-### Perguntas para o Julio (back)
+### Perguntas para o Julio (back): respondidas na [57], ver seção 3
 
 1. Topa ser dono do `api/`? Spring Boot 4 + virtual threads, ou prefere outra stack?
 2. MCP remoto: Spring AI MCP Server ou o SDK Java oficial do MCP?

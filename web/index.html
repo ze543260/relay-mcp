@@ -10,6 +10,14 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
     <title>Relay</title>
+    <script>
+      // Aplica o tema salvo antes do primeiro paint (evita piscar).
+      try {
+        var t = localStorage.getItem("relay-tema");
+        if (t === "escuro") document.documentElement.dataset.theme = "dark";
+        else if (t === "claro") document.documentElement.dataset.theme = "light";
+      } catch (e) {}
+    </script>
   </head>
   <body>
     <div id="root"></div>

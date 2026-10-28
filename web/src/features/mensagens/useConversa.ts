@@ -1,6 +1,19 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import { api, ehAbort, ErroApi, listaDe } from "@/shared/api/cliente";
+import { traduzirErro } from "@/shared/api/erros";
+import { novoId } from "@/shared/lib/formato";
 import type { Mensagem, PaginaHistorico, RespostaMensagens } from "@/shared/api/tipos";
+
+/** Mensagem enviada por mim que ainda não voltou pelo long-poll. */
+export interface Pendente {
+  client_id: string;
+  de: string;
+  texto: string;
+  criado_em: string;
+  estado: "enviando" | "erro";
+  idReal?: number;
+}
 
 export type EstadoConexao =
   | { tipo: "carregando" }
@@ -27,6 +40,7 @@ const ehStatus = (e: unknown, ...status: number[]) => e instanceof ErroApi && st
 /** Histórico + long-poll de uma sala. Troca de sala aborta tudo da anterior. */
 export function useConversa({ sala, ativo, aoChegar, aoPerderAcesso }: Opcoes) {
   const [mensagens, setMensagens] = useState<Mensagem[]>([]);
+  const [pendentes, setPendentes] = useState<Pendente[]>([]);
   const [estado, setEstado] = useState<EstadoConexao>({ tipo: "carregando" });
   const [temMais, setTemMais] = useState(false);
   const [carregandoAntigas, setCarregandoAntigas] = useState(false);
@@ -41,6 +55,12 @@ export function useConversa({ sala, ativo, aoChegar, aoPerderAcesso }: Opcoes) {
     if (!filtradas.length) return;
     ultimoId.current = filtradas.at(-1)?.id ?? ultimoId.current;
     setMensagens((atual) => [...atual, ...filtradas]);
+    // A versão real substitui a otimista: por id devolvido no POST, por client_id
+    // (contrato novo) ou, no servidor atual, por autor + texto.
+    setPendentes((ps) => ps.filter((p) => !filtradas.some((m) =>
+      (p.idReal !== undefined && m.id === p.idReal) ||
+      (m.client_id !== undefined && m.client_id === p.client_id) ||
+      (p.estado === "enviando" && p.idReal === undefined && m.de === p.de && m.texto === p.texto))));
     callbacks.current.aoChegar(filtradas);
   }, []);
 
@@ -83,6 +103,7 @@ export function useConversa({ sala, ativo, aoChegar, aoPerderAcesso }: Opcoes) {
     controle.current = c;
     ultimoId.current = 0;
     setMensagens([]);
+    setPendentes([]);
     setTemMais(false);
     setEstado({ tipo: "carregando" });
 
@@ -142,5 +163,39 @@ export function useConversa({ sala, ativo, aoChegar, aoPerderAcesso }: Opcoes) {
     }
   }, [mensagens, temMais, carregandoAntigas, sala]);
 
-  return { mensagens, estado, temMais, carregandoAntigas, carregarAntigas };
+  const postar = useCallback(async (p: Pendente) => {
+    setPendentes((ps) => ps.map((x) => (x.client_id === p.client_id ? { ...x, estado: "enviando" } : x)));
+    try {
+      const r = await api<{ id: number }>("/mensagens", {
+        metodo: "POST",
+        corpo: { sala, de: p.de, texto: p.texto, client_id: p.client_id },
+      });
+      // Se o long-poll já trouxe a mensagem real, some agora; senão espera por ela.
+      setPendentes((ps) => r.id <= ultimoId.current
+        ? ps.filter((x) => x.client_id !== p.client_id)
+        : ps.map((x) => (x.client_id === p.client_id ? { ...x, idReal: r.id } : x)));
+    } catch (e) {
+      if (ehStatus(e, 401)) return callbacks.current.aoPerderAcesso();
+      console.error("relay: falha ao enviar", e);
+      setPendentes((ps) => ps.map((x) => (x.client_id === p.client_id ? { ...x, estado: "erro" } : x)));
+      toast.error(traduzirErro(e).mensagem);
+    }
+  }, [sala]);
+
+  const enviar = useCallback((texto: string, de: string) => {
+    const p: Pendente = { client_id: novoId(), de, texto, criado_em: new Date().toISOString(), estado: "enviando" };
+    setPendentes((ps) => [...ps, p]);
+    void postar(p);
+  }, [postar]);
+
+  const retentar = useCallback((clientId: string) => {
+    const p = pendentes.find((x) => x.client_id === clientId);
+    if (p) void postar(p);
+  }, [pendentes, postar]);
+
+  const descartar = useCallback((clientId: string) => {
+    setPendentes((ps) => ps.filter((x) => x.client_id !== clientId));
+  }, []);
+
+  return { mensagens, pendentes, estado, temMais, carregandoAntigas, carregarAntigas, enviar, retentar, descartar };
 }
