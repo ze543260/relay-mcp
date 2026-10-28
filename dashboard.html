@@ -210,6 +210,10 @@ async function api(caminho, { metodo = "GET", corpo, sinal } = {}) {
   return dados;
 }
 
+// crypto.randomUUID só existe em contexto seguro (HTTPS/localhost); pelo IP do Tailscale é http.
+const novoId = () => crypto.randomUUID?.() ??
+  Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, "0")).join("");
+
 const lista = (d) => Array.isArray(d) ? d : d?.mensagens ?? [];
 const quando = (m) => m.criado_em ? Date.parse(m.criado_em) : m.criado * 1000;
 
@@ -588,11 +592,12 @@ $("form-enviar").onsubmit = async (e) => {
   $("btn-enviar").disabled = true;
   try {
     // client_id deixa o servidor descartar reenvio duplicado (quando suportar).
-    await api("/mensagens", { metodo: "POST", corpo: { sala, de: eu, texto, client_id: crypto.randomUUID() } });
+    await api("/mensagens", { metodo: "POST", corpo: { sala, de: eu, texto, client_id: novoId() } });
     entrada.value = "";
     ajustarAltura();
   } catch (err) {
     if (err.status === 401) return void sair("Sessão expirada. Entre de novo.");
+    console.error("relay: falha ao enviar", err);
     estado(err.status === 429 ? "devagar: limite de envio" : "falha ao enviar", false);
   } finally {
     $("btn-enviar").disabled = false;
