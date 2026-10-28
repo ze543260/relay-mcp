@@ -2,7 +2,11 @@
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="theme-color" content="#f6f6f4" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#141413" media="(prefers-color-scheme: dark)">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
 <title>Relay</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -72,7 +76,7 @@ header h1 { font-size: 16px; font-weight: 600; }
 .texto blockquote { border-left: 3px solid var(--borda); padding-left: 12px; color: var(--suave); }
 .texto hr { border: 0; border-top: 1px solid var(--borda); margin: 12px 0; }
 .texto code { font: 12.5px "JetBrains Mono", monospace; background: var(--bg); padding: 1px 5px; border-radius: 4px; }
-.texto pre { background: var(--bg); border: 1px solid var(--borda); border-radius: 8px; padding: 10px 12px; overflow-x: auto; }
+.texto pre { background: var(--bg); border: 1px solid var(--borda); border-radius: 8px; padding: 10px 12px 14px; overflow-x: auto; scrollbar-width: thin; }
 .texto pre code { background: none; padding: 0; font-size: 12.5px; line-height: 1.55; }
 .texto pre code.hljs { background: none; padding: 0; }
 .texto table { border-collapse: collapse; display: block; overflow-x: auto; max-width: 100%; }
@@ -111,13 +115,37 @@ form.enviar textarea { flex: 1; min-width: 0; resize: none; background: var(--pa
 form.enviar textarea:focus { border-color: var(--acento); }
 form.enviar { align-items: flex-end; }
 time { font-variant-numeric: tabular-nums; }
+.feed { overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+.veu { display: none; }
+.btn .icone { display: none; }
 @media (max-width: 760px) {
+  body { font-size: 15px; }
   .app { grid-template-columns: 1fr; }
-  aside { position: fixed; inset: 0 auto 0 0; width: 82%; max-width: 300px; z-index: 5; transform: translateX(-100%); transition: transform .2s; }
-  aside.aberta { transform: none; box-shadow: 0 0 40px rgba(0,0,0,.3); }
-  .menu { display: block; }
-  header, .feed, form.enviar { padding-left: 16px; padding-right: 16px; }
-  .agentes { display: none; }
+  aside { position: fixed; inset: 0 auto 0 0; width: 84%; max-width: 320px; z-index: 6; transform: translateX(-100%); transition: transform .22s ease; padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
+  aside.aberta { transform: none; box-shadow: 0 0 40px rgba(0,0,0,.35); }
+  .veu { display: block; position: fixed; inset: 0; z-index: 5; background: rgba(0,0,0,.4); opacity: 0; pointer-events: none; transition: opacity .22s; }
+  .veu.aberto { opacity: 1; pointer-events: auto; }
+  .marca { padding: 16px 16px; }
+  .sala { padding: 12px 12px; min-height: 52px; }
+  .sair, .menu { min-width: 44px; min-height: 44px; display: grid; place-items: center; font-size: 18px; }
+  .menu { padding: 0; border: 0; margin-left: -8px; }
+  header { padding: calc(8px + env(safe-area-inset-top)) 16px 8px; gap: 8px; flex-wrap: wrap; }
+  header h1 { font-size: 16px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .agentes { order: 3; width: 100%; flex-wrap: nowrap; overflow-x: auto; margin: 0 -16px; padding: 2px 16px 4px; scrollbar-width: none; }
+  .agentes::-webkit-scrollbar { display: none; }
+  .chip { flex: none; }
+  .feed { padding: 16px 12px; gap: 12px; }
+  .msg { gap: 8px; max-width: 100%; }
+  .avatar { width: 28px; height: 28px; font-size: 10.5px; }
+  .texto { padding: 9px 12px; font-size: 15px; }
+  .texto pre { margin-left: -4px; margin-right: -4px; }
+  form.enviar { padding: 8px 12px calc(8px + env(safe-area-inset-bottom)); gap: 8px; }
+  form.enviar textarea { font-size: 16px; padding: 10px 14px; border-radius: 20px; }
+  .btn { min-height: 44px; }
+  #btn-enviar { width: 44px; height: 44px; padding: 0; border-radius: 50%; display: grid; place-items: center; }
+  #btn-enviar .rotulo-btn { display: none; }
+  #btn-enviar .icone { display: block; }
+  .porta input { font-size: 16px; }
 }
 </style>
 </head>
@@ -133,6 +161,7 @@ time { font-variant-numeric: tabular-nums; }
   </form>
 </div>
 
+<div class="veu" id="veu"></div>
 <div class="app">
   <aside id="lateral" aria-label="Salas">
     <div class="marca">
@@ -156,7 +185,7 @@ time { font-variant-numeric: tabular-nums; }
     <form class="enviar" id="form-enviar">
       <label class="sr" for="entrada">Mensagem</label>
       <textarea id="entrada" rows="1" placeholder="Mandar mensagem…" autocomplete="off"></textarea>
-      <button class="btn" id="btn-enviar">Enviar</button>
+      <button class="btn" id="btn-enviar" aria-label="Enviar"><span class="rotulo-btn">Enviar</span><svg class="icone" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
     </form>
   </main>
 </div>
@@ -572,6 +601,7 @@ async function abrir(nova) {
 // --- Envio ---------------------------------------------------------------
 
 const entrada = $("entrada");
+const toque = matchMedia("(pointer: coarse)");
 function ajustarAltura() {
   entrada.style.height = "auto";
   entrada.style.height = Math.min(entrada.scrollHeight, 180) + "px";
@@ -579,7 +609,7 @@ function ajustarAltura() {
 }
 entrada.addEventListener("input", ajustarAltura);
 entrada.addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+  if (e.key === "Enter" && !e.shiftKey && !e.isComposing && !toque.matches) {
     e.preventDefault();
     $("form-enviar").requestSubmit();
   }
@@ -609,13 +639,43 @@ $("form-enviar").onsubmit = async (e) => {
 
 function fecharLateral() {
   $("lateral").classList.remove("aberta");
+  $("veu").classList.remove("aberto");
   $("menu").setAttribute("aria-expanded", "false");
 }
 $("menu").onclick = () => {
   const aberta = $("lateral").classList.toggle("aberta");
+  $("veu").classList.toggle("aberto", aberta);
   $("menu").setAttribute("aria-expanded", String(aberta));
 };
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") fecharLateral(); });
+$("veu").onclick = fecharLateral;
+
+// Arrastar da lateral para a esquerda fecha.
+let toqueX = null;
+$("lateral").addEventListener("touchstart", (e) => { toqueX = e.touches[0].clientX; }, { passive: true });
+$("lateral").addEventListener("touchend", (e) => {
+  if (toqueX != null && toqueX - e.changedTouches[0].clientX > 60) fecharLateral();
+  toqueX = null;
+}, { passive: true });
+
+// Celular congela a aba em segundo plano e mata o long-poll: ao voltar, reconecta já.
+function reconectar() {
+  if (!eu || $("porta").style.display !== "none") return;
+  controle?.abort();
+  controle = new AbortController();
+  escutar(controle.signal);
+  carregarSalas();
+}
+document.addEventListener("visibilitychange", () => { if (!document.hidden) reconectar(); });
+addEventListener("online", reconectar);
+
+// Teclado abrindo encolhe o feed: se estava no fim, continua no fim.
+let presoNoFim = true;
+$("feed").addEventListener("scroll", () => {
+  const f = $("feed");
+  presoNoFim = f.scrollHeight - f.scrollTop - f.clientHeight < 80;
+}, { passive: true });
+new ResizeObserver(() => { if (presoNoFim) $("feed").scrollTop = $("feed").scrollHeight; }).observe($("feed"));
 
 setInterval(carregarPresenca, 30_000);
 setInterval(() => { if (!document.hidden) carregarSalas(); }, 60_000);
