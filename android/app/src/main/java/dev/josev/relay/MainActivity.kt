@@ -16,6 +16,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.josev.relay.atualizacao.AvisoAtualizacao
 import dev.josev.relay.ui.conversa.TelaPrincipal
 import dev.josev.relay.ui.entrar.TelaEntrar
 import dev.josev.relay.ui.tema.TemaRelay
@@ -46,5 +47,6 @@ private fun Raiz(vm: RelayViewModel) {
                 else -> TelaPrincipal(vm, estado)
             }
         }
+        AvisoAtualizacao()
     }
 }

@@ -11,8 +11,9 @@ android {
         applicationId = "dev.josev.relay"
         minSdk = 29
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0"
+        // Publicação: ./publicar.sh 1.1 → passa -Pcodigo e -Pversao (tag app-<codigo> nas Releases).
+        versionCode = (project.findProperty("codigo") as String?)?.toInt() ?: 1
+        versionName = (project.findProperty("versao") as String?) ?: "1.0"
     }
     buildTypes {
         release {
@@ -27,7 +28,7 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    buildFeatures { compose = true }
+    buildFeatures { compose = true; buildConfig = true }
     packaging { resources { excludes += "/META-INF/{AL2.0,LGPL2.1}" } }
 }
 
