@@ -36,6 +36,7 @@ sealed interface Evento {
     data object SemAcesso : Evento
 }
 
+/** `todas=1`: com token de admin, vê também as privadas (igual ao dashboard); para agentes o servidor ignora. */
 class RelayApi(private val conexao: Conexao) {
     private val json = Json { ignoreUnknownKeys = true; explicitNulls = false }
     private val base: HttpUrl = conexao.url.trimEnd('/').toHttpUrl()
@@ -83,7 +84,7 @@ class RelayApi(private val conexao: Conexao) {
     suspend fun agentes(): List<Agente> = json.decodeFromString(executar(pedido(url("agentes")).build()))
 
     suspend fun historico(sala: String, antes: Long? = null, limite: Int = 50): PaginaHistorico =
-        json.decodeFromString(executar(pedido(url("mensagens/historico", "sala" to sala, "antes" to antes, "limite" to limite, "eu" to conexao.nome)).build()))
+        json.decodeFromString(executar(pedido(url("mensagens/historico", "sala" to sala, "antes" to antes, "limite" to limite, "eu" to conexao.nome, "todas" to 1)).build()))
 
     suspend fun enviar(m: NovaMensagem): Long {
         val corpo = json.encodeToString(NovaMensagem.serializer(), m).toRequestBody(tipoJson)
@@ -117,7 +118,7 @@ class RelayApi(private val conexao: Conexao) {
     }
 
     private fun sse(sala: String, depois: Long): Flow<Evento> = callbackFlow {
-        val req = pedido(url("mensagens/stream", "sala" to sala, "eu" to conexao.nome))
+        val req = pedido(url("mensagens/stream", "sala" to sala, "eu" to conexao.nome, "todas" to 1))
             .header("Last-Event-ID", depois.toString())
             .header("Accept", "text/event-stream")
             .build()
