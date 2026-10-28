@@ -4,6 +4,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { NativeSelect } from "@/components/ui/native-select";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
@@ -16,7 +17,6 @@ import { formatarPrazo } from "./prazo";
 const PainelTarefa = lazy(() => import("./PainelTarefa"));
 
 const t = textos.equipe;
-const seletor = "h-8 rounded-[var(--raio-md)] border border-input bg-card px-2 text-xs outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50";
 
 /** Descrição em Markdown como texto corrido, para a prévia de 2 linhas do cartão. */
 const previa = (md: string): string => md
@@ -68,8 +68,10 @@ function Cartao({ tarefa, eu, admin, mover, pegar, apagar, abrir }: {
 }) {
   const i = STATUS.indexOf(tarefa.status);
   return (
-    <article className={cn("group/cartao grid min-w-0 gap-2 rounded-[var(--raio-xl)] border bg-card p-3 shadow-xs transition-colors hover:border-ring/40",
-      tarefa.prioridade === "urgente" && tarefa.status !== "feito" && "border-l-2 border-l-destructive")}>
+    <article className={cn("group/cartao relative grid min-w-0 gap-2 rounded-[var(--raio-xl)] border bg-card p-3 shadow-xs transition-colors hover:border-ring/40",
+      // Faixa interna (não a borda): acompanha o canto arredondado sem entortar.
+      tarefa.prioridade === "urgente" && tarefa.status !== "feito"
+        && "before:absolute before:inset-y-3 before:left-1 before:w-0.5 before:rounded-full before:bg-destructive")}>
       <div className="flex items-start gap-2">
         <span className="flex items-center gap-1 pt-px font-mono text-xs text-muted-foreground">
           #{tarefa.id}<IconePrioridade prioridade={tarefa.prioridade} />
@@ -109,6 +111,9 @@ export default function Quadro({ sala, eu, admin }: { sala: string; eu: string; 
   const [nomeSprint, setNomeSprint] = useState("");
   const [criandoSprint, setCriandoSprint] = useState(false);
   const [aberta, setAberta] = useState<number | null>(null);
+  // O painel (com Markdown/KaTeX) só baixa quando a pessoa chega perto do quadro, e daí fica montado.
+  const [painelPronto, setPainelPronto] = useState(false);
+  const prepararPainel = () => setPainelPronto(true);
   const [busca, setBusca] = useState("");
   const [prioridade, setPrioridade] = useState<Prioridade | "">("");
   const [etiqueta, setEtiqueta] = useState("");
@@ -168,16 +173,16 @@ export default function Quadro({ sala, eu, admin }: { sala: string; eu: string; 
           <Input type="search" value={busca} onChange={(e) => setBusca(e.target.value)} placeholder={t.buscar} aria-label={t.buscar}
             className="h-8 bg-card pl-7 text-xs" />
         </div>
-        <select className={seletor} value={prioridade} aria-label={t.painel.prioridade}
+        <NativeSelect className="rounded-lg bg-card" value={prioridade} aria-label={t.painel.prioridade}
           onChange={(e) => setPrioridade(e.target.value as Prioridade | "")}>
           <option value="">{t.todasPrioridades}</option>
           {PRIORIDADES.map((x) => <option key={x} value={x}>{t.prioridades[x]}</option>)}
-        </select>
+        </NativeSelect>
         {Boolean(etiquetas?.length) && (
-          <select className={seletor} value={etiqueta} aria-label={t.painel.etiquetas} onChange={(e) => setEtiqueta(e.target.value)}>
+          <NativeSelect className="rounded-lg bg-card" value={etiqueta} aria-label={t.painel.etiquetas} onChange={(e) => setEtiqueta(e.target.value)}>
             <option value="">{t.todasEtiquetas}</option>
             {etiquetas!.map((e) => <option key={e.id} value={e.nome}>{e.nome} ({e.tarefas})</option>)}
-          </select>
+          </NativeSelect>
         )}
         {filtrando && (
           <Button variant="ghost" size="sm" onClick={() => { setBusca(""); setPrioridade(""); setEtiqueta(""); }}>
@@ -186,7 +191,8 @@ export default function Quadro({ sala, eu, admin }: { sala: string; eu: string; 
         )}
       </div>
 
-      <div className="flex min-h-0 flex-1 snap-x snap-mandatory gap-3 overflow-x-auto p-3 md:p-6 xl:grid xl:snap-none xl:grid-cols-4">
+      <div onPointerEnter={prepararPainel} onFocusCapture={prepararPainel} onTouchStart={prepararPainel}
+        className="flex min-h-0 flex-1 snap-x snap-mandatory gap-3 overflow-x-auto p-3 md:p-6 xl:grid xl:snap-none xl:grid-cols-4">
         {STATUS.map((st) => {
           const coluna = visiveis.filter((x) => x.status === st);
           return (
@@ -217,10 +223,13 @@ export default function Quadro({ sala, eu, admin }: { sala: string; eu: string; 
           );
         })}
       </div>
-      {/* Sempre montado (só alterna `open`): montar o diálogo no próprio clique fazia ele ler esse clique como "fora" e fechar. */}
-      <Suspense fallback={null}>
-        <PainelTarefa id={aberta} sala={sala} membros={membros} fechar={() => setAberta(null)} />
-      </Suspense>
+      {/* Montado antes do clique e mantido (só alterna `open`): montar o diálogo no próprio clique
+          fazia ele ler esse clique como "fora" e fechar na hora. */}
+      {(painelPronto || aberta !== null) && (
+        <Suspense fallback={null}>
+          <PainelTarefa id={aberta} sala={sala} membros={membros} fechar={() => setAberta(null)} />
+        </Suspense>
+      )}
     </div>
   );
 }

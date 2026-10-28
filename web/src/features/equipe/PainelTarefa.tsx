@@ -3,12 +3,12 @@ import { useState, type FormEvent, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
+import { NativeSelect } from "@/components/ui/native-select";
 import { Progress } from "@/components/ui/progress";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
-import { horaDe } from "@/shared/lib/formato";
 import { textos } from "@/shared/lib/textos";
 import Markdown from "@/shared/markdown/Markdown";
 import {
@@ -16,11 +16,10 @@ import {
   type EdicaoTarefa, type Prioridade, type Status, type TarefaCompleta,
 } from "./api";
 import { ChipEtiqueta, IconePrioridade } from "./pecas";
+import { quandoMudou } from "./prazo";
 
 const t = textos.equipe;
 const p = t.painel;
-
-const seletor = "h-8 w-full rounded-[var(--raio-md)] border border-input bg-transparent px-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30";
 
 function Campo({ rotulo, children }: { rotulo: string; children: ReactNode }) {
   return (
@@ -38,30 +37,30 @@ function Detalhes({ tarefa, alterar, membros }: {
   return (
     <div className="grid grid-cols-2 gap-3">
       <Campo rotulo={p.status}>
-        <select className={seletor} value={tarefa.status} onChange={(e) => alterar({ status: e.target.value as Status })}>
+        <NativeSelect className="w-full" value={tarefa.status} onChange={(e) => alterar({ status: e.target.value as Status })}>
           {STATUS.map((s) => <option key={s} value={s}>{t.colunas[s]}</option>)}
-        </select>
+        </NativeSelect>
       </Campo>
       <Campo rotulo={p.prioridade}>
-        <select className={seletor} value={tarefa.prioridade} onChange={(e) => alterar({ prioridade: e.target.value as Prioridade })}>
+        <NativeSelect className="w-full" value={tarefa.prioridade} onChange={(e) => alterar({ prioridade: e.target.value as Prioridade })}>
           {PRIORIDADES.map((x) => <option key={x} value={x}>{t.prioridades[x]}</option>)}
-        </select>
+        </NativeSelect>
       </Campo>
       <Campo rotulo={p.estimativa}>
-        <select className={seletor} value={tarefa.estimativa ?? ""}
+        <NativeSelect className="w-full" value={tarefa.estimativa ?? ""}
           onChange={(e) => alterar({ estimativa: e.target.value ? Number(e.target.value) : null })}>
           <option value="">{t.semEstimativa}</option>
           {ESTIMATIVAS.map((n) => <option key={n} value={n}>{t.pontos(n)}</option>)}
-        </select>
+        </NativeSelect>
       </Campo>
       <Campo rotulo={p.prazo}>
         <Input type="date" className="h-8" value={prazo} onChange={(e) => alterar({ prazo: e.target.value || null })} />
       </Campo>
       <Campo rotulo={p.responsavel}>
-        <select className={seletor} value={tarefa.responsavel ?? ""} onChange={(e) => alterar({ responsavel: e.target.value || null })}>
+        <NativeSelect className="w-full" value={tarefa.responsavel ?? ""} onChange={(e) => alterar({ responsavel: e.target.value || null })}>
           <option value="">{p.ninguem}</option>
           {[...new Set([...(tarefa.responsavel ? [tarefa.responsavel] : []), ...membros])].map((n) => <option key={n} value={n}>{n}</option>)}
-        </select>
+        </NativeSelect>
       </Campo>
     </div>
   );
@@ -182,7 +181,7 @@ function Historico({ tarefa }: { tarefa: TarefaCompleta }) {
               {(a.antes || a.depois) && a.campo !== "criada" && (
                 <span className="text-muted-foreground"> · {a.antes ?? "∅"} → {a.depois ?? "∅"}</span>
               )}
-              <time className="block text-[11px] text-muted-foreground tabular-nums">{horaDe(Date.parse(a.quando))}</time>
+              <time dateTime={a.quando} className="block text-[11px] text-muted-foreground tabular-nums">{quandoMudou(a.quando)}</time>
             </li>
           ))}
         </ol>
