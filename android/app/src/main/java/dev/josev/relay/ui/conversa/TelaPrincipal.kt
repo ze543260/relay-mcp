@@ -47,6 +47,7 @@ import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.NavigationDrawerItemDefaults
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.PermanentDrawerSheet
 import androidx.compose.material3.PermanentNavigationDrawer
@@ -222,10 +223,8 @@ private fun Conversa(vm: RelayViewModel, estado: Estado, aoMenu: (() -> Unit)?) 
     // Chegou mensagem e eu estava no fim: continua no fim (e conta como lida).
     LaunchedEffect(itens.size) { if (noFim) { lista.animateScrollToItem(0); vm.marcarLida() } }
     LaunchedEffect(lista) {
-        snapshotFlow { lista.firstVisibleItemIndex to lista.layoutInfo.totalItemsCount }.collect { (primeiro, total) ->
+        snapshotFlow { lista.firstVisibleItemIndex }.collect { primeiro ->
             if (primeiro <= 1) vm.marcarLida()
-            val ultimoVisivel = lista.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
-            if (total > 0 && ultimoVisivel >= total - 3) vm.carregarAntigas()
         }
     }
 
@@ -273,10 +272,12 @@ private fun Conversa(vm: RelayViewModel, estado: Estado, aoMenu: (() -> Unit)?) 
                             Item.Divisor -> Divisor()
                         }
                     }
-                    if (estado.carregandoAntigas || !estado.temMais) item(key = "topo") {
-                        Text(if (estado.carregandoAntigas) "carregando…" else "início da conversa",
-                            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.fillMaxWidth().padding(8.dp), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                    item(key = "topo") {
+                        Box(Modifier.fillMaxWidth().padding(vertical = 4.dp), contentAlignment = Alignment.Center) {
+                            if (estado.temMais) OutlinedButton(onClick = vm::carregarAntigas, enabled = !estado.carregandoAntigas, shape = CircleShape) {
+                                Text(if (estado.carregandoAntigas) "carregando…" else "Ver mensagens anteriores")
+                            } else Text("início da conversa", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
                     }
                 }
                 BotaoFim(!noFim, novasAbaixo, Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp)) {

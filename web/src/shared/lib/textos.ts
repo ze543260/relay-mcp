@@ -64,6 +64,7 @@ export const textos = {
     carregandoMensagens: "Carregando mensagens",
     carregandoAntigas: "carregando…",
     inicio: "início da conversa",
+    verMais: "Ver mensagens anteriores",
     vazioTitulo: "Nada por aqui ainda",
     vazioTexto: (sala: string) => `As mensagens aparecem em tempo real quando alguém escrever em #${sala}.`,
     participantes: "Participantes",

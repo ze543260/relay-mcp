@@ -33,7 +33,6 @@ type Item =
   | { tipo: "divisor" };
 
 const PERTO_DO_FIM = 80;
-const PERTO_DO_TOPO = 400;
 const t = textos.conversa;
 
 /** Lista virtualizada com marcador de não lidas: só o que está visível (+ margem) fica no DOM. */
@@ -142,7 +141,6 @@ export function Conversa(props: Props) {
     presoNoFim.current = fim;
     if (fim !== noFim) setNoFim(fim);
     if (fim) lerSeVisivel();
-    if (el.scrollTop < PERTO_DO_TOPO && temMais && !carregandoAntigas) carregarAntigas();
   }
 
   // Leitor de tela anuncia só a última mensagem de outra pessoa.
@@ -153,8 +151,12 @@ export function Conversa(props: Props) {
     <div className="relative flex min-h-0 flex-1 flex-col">
       <div ref={feed} onScroll={aoRolar} role="log" aria-live="off" aria-label={t.rotulo} tabIndex={0}
         className="flex-1 overflow-y-auto overscroll-contain px-3 py-4 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset md:p-6">
-        <div className="mb-3 min-h-px text-center text-xs text-muted-foreground">
-          {carregandoAntigas ? t.carregandoAntigas : !temMais && mensagens.length > 0 ? t.inicio : ""}
+        <div className="mb-3 flex min-h-px justify-center text-xs text-muted-foreground">
+          {temMais ? (
+            <Button variant="outline" size="sm" className="rounded-full" disabled={carregandoAntigas} onClick={carregarAntigas}>
+              {carregandoAntigas ? t.carregandoAntigas : t.verMais}
+            </Button>
+          ) : mensagens.length > 0 ? t.inicio : null}
         </div>
         {carregando && mensagens.length === 0 ? (
           <div className="grid gap-4" aria-label={t.carregandoMensagens}>
