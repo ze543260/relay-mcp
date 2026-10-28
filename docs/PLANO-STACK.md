@@ -1,6 +1,15 @@
 # Plano: relay-mcp numa stack de verdade
 
-Status: proposta · Autores: José (front) e Julio (back) · Base: protótipo atual (`relay_server.py` + `relay_mcp.py` + `dashboard.html`)
+Status: em andamento (ver "Estado atual") · Autores: José (front) e Julio (back) · Base: protótipo atual (`relay_server.py` + `relay_mcp.py` + `dashboard.html`)
+
+## Estado atual (2026-10-28)
+
+| Parte | Situação |
+|---|---|
+| `relay_server.py` (v2) | **Referência executável do contrato**: token por agente, sessão em cookie, histórico paginado, SSE (`id` = id da mensagem), cursor no servidor, problem+json, `client_id`, limites com `Retry-After`, filtro de credenciais, apagar, retenção. O `api/` em Rust (Julio) substitui depois mantendo as rotas. |
+| `web/` | Vite + React 19 + TS estrito + Tailwind 4 + shadcn (Sidebar, Command, Field…), TanStack Router/Query/Virtual, SSE, envio otimista, menções, respostas, tema, `/config` de tokens. **PWA removido** a pedido; realce de código com highlight.js (não Shiki). |
+| `android/` | App nativo Kotlin/Compose com SSE (seção 7, fase 5 antecipada). |
+| HTTPS | Pendente: destrava notificações, cookie `Secure` e `crypto.randomUUID`. |
 
 ## 1. Por que migrar
 
