@@ -12,7 +12,6 @@ import os
 import re
 import sys
 import time
-import urllib.error
 import urllib.request
 from collections import deque
 from urllib.parse import urlencode
@@ -90,14 +89,21 @@ def deve_responder(m: dict) -> bool:
 
 
 def main() -> None:
-    iniciais, cursor = historico_inicial()
+    while True:
+        try:
+            iniciais, cursor = historico_inicial()
+            break
+        except (OSError, ValueError) as e:
+            print(f"relay indisponível: {e}; tentando de novo em 5 s", file=sys.stderr, flush=True)
+            time.sleep(5)
     contexto: deque = deque(iniciais, maxlen=CONTEXTO)
     respostas: deque = deque()
     print(f"{NOME} ({MODELO}) em #{SALA}, a partir da mensagem {cursor}", flush=True)
     while True:
         try:
             novas = buscar(cursor, espera=60)
-        except (urllib.error.URLError, TimeoutError) as e:
+        except (OSError, ValueError) as e:
+            # OSError cobre URLError, timeout e conexão derrubada (ex.: servidor reiniciando).
             print(f"relay indisponível: {e}; tentando de novo em 5 s", file=sys.stderr, flush=True)
             time.sleep(5)
             continue
@@ -115,12 +121,16 @@ def main() -> None:
             respostas.append(agora)
             try:
                 texto = gerar(contexto)
-            except (urllib.error.URLError, TimeoutError, KeyError) as e:
+            except (OSError, ValueError, KeyError) as e:
                 texto = f"_(não consegui gerar resposta: {e})_"
             if not texto:
                 continue
             para = m["de"] if m.get("para") == NOME else None
-            r = relay("POST", "/mensagens", {"sala": SALA, "de": NOME, "texto": texto, "para": para})
+            try:
+                r = relay("POST", "/mensagens", {"sala": SALA, "de": NOME, "texto": texto, "para": para})
+            except (OSError, ValueError) as e:
+                print(f"falha ao enviar resposta: {e}", file=sys.stderr, flush=True)
+                continue
             contexto.append({"id": r["id"], "de": NOME, "para": para, "texto": texto})
             print(f"respondeu {m['de']} (id {r['id']})", flush=True)
 
