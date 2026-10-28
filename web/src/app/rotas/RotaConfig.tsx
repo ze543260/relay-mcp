@@ -3,7 +3,7 @@ import { Link, Navigate } from "@tanstack/react-router";
 import { ArrowLeftIcon, BotIcon, CheckIcon, CopyIcon, KeyRoundIcon, UserIcon } from "lucide-react";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
-import { toast } from "sonner";
+import { avisar } from "@/shared/lib/avisar";
 import { z } from "zod";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
@@ -69,7 +69,7 @@ export function RotaConfig() {
       await navigator.clipboard.writeText(criado.token);
       setCopiado(true);
     } catch {
-      toast.error(textos.conversa.naoCopiou);
+      avisar("erro", textos.conversa.naoCopiou);
     }
   }
 
@@ -192,7 +192,7 @@ export function RotaConfig() {
           <AlertDialogFooter>
             <AlertDialogCancel>{textos.conversa.cancelar}</AlertDialogCancel>
             <AlertDialogAction variant="destructive" onClick={() => {
-              if (revogando) revogar.mutate(revogando, { onError: (e) => toast.error(traduzirErro(e).mensagem) });
+              if (revogando) revogar.mutate(revogando, { onError: (e) => avisar("erro", traduzirErro(e).mensagem) });
             }}>{t.revogar}</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

@@ -1,10 +1,6 @@
-import { Link } from "@tanstack/react-router";
-import { BellIcon, BellOffIcon, ChevronsUpDownIcon, HashIcon, KeyRoundIcon, LogOutIcon, MonitorIcon, MoonIcon, SearchIcon, SunIcon } from "lucide-react";
+import { lazy, Suspense, useState } from "react";
+import { ChevronsUpDownIcon, HashIcon, SearchIcon } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel,
-  DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import {
   Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupLabel, SidebarHeader, SidebarMenu,
   SidebarMenuBadge, SidebarMenuButton, SidebarMenuItem, SidebarMenuSkeleton, SidebarRail, useSidebar,
@@ -30,7 +26,8 @@ interface Props {
   aoSair: () => void;
 }
 
-const ehTema = (v: unknown): v is Tema => v === "sistema" || v === "claro" || v === "escuro";
+// Menu do usuário (Menu do Base UI) só carrega no 1º clique e já abre aberto.
+const MenuUsuario = lazy(() => import("./MenuUsuario"));
 
 function textoEstado(e: EstadoConexao): string {
   const c = textos.conexao;
@@ -48,6 +45,21 @@ export function BarraLateral({ sala, nome, admin, vistas, estado, tema, aoEscolh
   const lista = data ?? [];
   const salas = lista.some((s) => s.sala === sala) ? lista : [{ sala, total: 0, agentes: [] }, ...lista];
   const vivo = estado.tipo === "ao-vivo";
+  const [menuCarregado, setMenuCarregado] = useState(false);
+  const cabecalho = (
+    <>
+                <Avatar className="rounded-lg after:rounded-lg">
+        <AvatarFallback className="rounded-lg text-[11px] font-semibold text-white" style={{ background: corDe(nome) }}>
+          {siglaDe(nome)}
+        </AvatarFallback>
+      </Avatar>
+      <span className="grid flex-1 text-left leading-tight">
+        <span className="truncate font-medium">{nome}</span>
+        <span className="truncate text-xs text-muted-foreground">{admin ? "admin" : textos.sessao.humano}</span>
+      </span>
+      <ChevronsUpDownIcon className="ml-auto" />
+    </>
+  );
 
   const escolher = (s: string) => {
     if (isMobile) setOpenMobile(false);
@@ -121,49 +133,13 @@ export function BarraLateral({ sala, nome, admin, vistas, estado, tema, aoEscolh
       <SidebarFooter>
         <SidebarMenu>
           <SidebarMenuItem>
-            <DropdownMenu>
-              <DropdownMenuTrigger render={<SidebarMenuButton size="lg" className="data-popup-open:bg-sidebar-accent" />}>
-                <Avatar className="rounded-lg after:rounded-lg">
-                  <AvatarFallback className="rounded-lg text-[11px] font-semibold text-white" style={{ background: corDe(nome) }}>
-                    {siglaDe(nome)}
-                  </AvatarFallback>
-                </Avatar>
-                <span className="grid flex-1 text-left leading-tight">
-                  <span className="truncate font-medium">{nome}</span>
-                  <span className="truncate text-xs text-muted-foreground">{admin ? "admin" : textos.sessao.humano}</span>
-                </span>
-                <ChevronsUpDownIcon className="ml-auto" />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent side={isMobile ? "top" : "right"} align="end" className="min-w-56">
-                <DropdownMenuGroup>
-                  <DropdownMenuLabel>{textos.sessao.conectadoComo(nome)}</DropdownMenuLabel>
-                </DropdownMenuGroup>
-                <DropdownMenuSeparator />
-                <DropdownMenuGroup>
-                  <DropdownMenuLabel className="text-xs text-muted-foreground">{textos.tema.titulo}</DropdownMenuLabel>
-                  <DropdownMenuRadioGroup value={tema} onValueChange={(v: unknown) => { if (ehTema(v)) aoTema(v); }}>
-                    <DropdownMenuRadioItem value="sistema"><MonitorIcon /> {textos.tema.sistema}</DropdownMenuRadioItem>
-                    <DropdownMenuRadioItem value="claro"><SunIcon /> {textos.tema.claro}</DropdownMenuRadioItem>
-                    <DropdownMenuRadioItem value="escuro"><MoonIcon /> {textos.tema.escuro}</DropdownMenuRadioItem>
-                  </DropdownMenuRadioGroup>
-                </DropdownMenuGroup>
-                <DropdownMenuSeparator />
-                {notificacoes && (
-                  <DropdownMenuItem disabled={notificacoes.negadas} onClick={notificacoes.alternar}>
-                    {notificacoes.ativas ? <BellOffIcon /> : <BellIcon />}
-                    {notificacoes.negadas ? textos.avisos.bloqueadas : notificacoes.ativas ? textos.avisos.desativar : textos.avisos.ativar}
-                  </DropdownMenuItem>
-                )}
-                {admin && (
-                  <DropdownMenuItem render={<Link to="/config" />}>
-                    <KeyRoundIcon /> {textos.config.abrir}
-                  </DropdownMenuItem>
-                )}
-                <DropdownMenuItem onClick={aoSair}>
-                  <LogOutIcon /> {textos.sessao.sair}
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+            {menuCarregado ? (
+              <Suspense fallback={<SidebarMenuButton size="lg">{cabecalho}</SidebarMenuButton>}>
+                <MenuUsuario {...{ nome, admin, tema, aoTema, notificacoes, aoSair, isMobile }}>{cabecalho}</MenuUsuario>
+              </Suspense>
+            ) : (
+              <SidebarMenuButton size="lg" aria-haspopup="menu" onClick={() => setMenuCarregado(true)}>{cabecalho}</SidebarMenuButton>
+            )}
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarFooter>

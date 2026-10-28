@@ -1,6 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { api, ErroApi } from "@/shared/api/cliente";
 import type { Agente } from "@/shared/api/tipos";
@@ -33,13 +32,8 @@ export function Participantes({ autores }: { autores: string[] }) {
             {nome}
           </Badge>
         );
-        if (visto === undefined) return <span key={nome}>{chip}</span>;
-        return (
-          <Tooltip key={nome}>
-            <TooltipTrigger render={<span />}>{chip}</TooltipTrigger>
-            <TooltipContent>{off ? textos.conversa.vistoAs(horaDe(visto)) : textos.conversa.online}</TooltipContent>
-          </Tooltip>
-        );
+        const dica = visto === undefined ? undefined : off ? textos.conversa.vistoAs(horaDe(visto)) : textos.conversa.online;
+        return <span key={nome} title={dica}>{chip}</span>;
       })}
     </div>
   );

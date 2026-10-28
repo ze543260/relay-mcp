@@ -10,20 +10,11 @@ import { useIsMobile } from "@/hooks/use-mobile"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Separator } from "@/components/ui/separator"
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip"
 import { PanelLeftIcon } from "lucide-react"
+
+// Sheet (celular) e tooltip ficam fora do bundle inicial.
+const SidebarMobile = React.lazy(() => import("./sidebar-mobile"))
 
 const SIDEBAR_COOKIE_NAME = "sidebar_state"
 const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7
@@ -163,6 +154,8 @@ function Sidebar({
   collapsible?: "offcanvas" | "icon" | "none"
 }) {
   const { isMobile, state, openMobile, setOpenMobile } = useSidebar()
+  const [jaAbriuMobile, setJaAbriuMobile] = React.useState(false)
+  if (openMobile && !jaAbriuMobile) setJaAbriuMobile(true)
 
   if (collapsible === "none") {
     return (
@@ -180,28 +173,14 @@ function Sidebar({
   }
 
   if (isMobile) {
+    // Só monta (e baixa) o Sheet depois da primeira abertura.
+    if (!openMobile && !jaAbriuMobile) return null
     return (
-      <Sheet open={openMobile} onOpenChange={setOpenMobile} {...props}>
-        <SheetContent
-          dir={dir}
-          data-sidebar="sidebar"
-          data-slot="sidebar"
-          data-mobile="true"
-          className="w-(--sidebar-width) bg-sidebar p-0 text-sidebar-foreground [&>button]:hidden"
-          style={
-            {
-              "--sidebar-width": SIDEBAR_WIDTH_MOBILE,
-            } as React.CSSProperties
-          }
-          side={side}
-        >
-          <SheetHeader className="sr-only">
-            <SheetTitle>Sidebar</SheetTitle>
-            <SheetDescription>Displays the mobile sidebar.</SheetDescription>
-          </SheetHeader>
-          <div className="flex h-full w-full flex-col">{children}</div>
-        </SheetContent>
-      </Sheet>
+      <React.Suspense fallback={null}>
+        <SidebarMobile open={openMobile} onOpenChange={setOpenMobile} side={side} dir={dir} largura={SIDEBAR_WIDTH_MOBILE}>
+          {children}
+        </SidebarMobile>
+      </React.Suspense>
     )
   }
 
@@ -507,18 +486,21 @@ function SidebarMenuButton({
 }: useRender.ComponentProps<"button"> &
   React.ComponentProps<"button"> & {
     isActive?: boolean
-    tooltip?: string | React.ComponentProps<typeof TooltipContent>
+    /** Recolhida no desktop: vira `title` nativo (sem floating-ui no bundle inicial). */
+    tooltip?: string
   } & VariantProps<typeof sidebarMenuButtonVariants>) {
   const { isMobile, state } = useSidebar()
-  const comp = useRender({
+  const mostrarDica = Boolean(tooltip) && state === "collapsed" && !isMobile
+  return useRender({
     defaultTagName: "button",
     props: mergeProps<"button">(
       {
         className: cn(sidebarMenuButtonVariants({ variant, size }), className),
+        title: mostrarDica ? tooltip : undefined,
       },
       props
     ),
-    render: !tooltip ? render : <TooltipTrigger render={render} />,
+    render,
     state: {
       slot: "sidebar-menu-button",
       sidebar: "menu-button",
@@ -526,28 +508,6 @@ function SidebarMenuButton({
       active: isActive,
     },
   })
-
-  if (!tooltip) {
-    return comp
-  }
-
-  if (typeof tooltip === "string") {
-    tooltip = {
-      children: tooltip,
-    }
-  }
-
-  return (
-    <Tooltip>
-      {comp}
-      <TooltipContent
-        side="right"
-        align="center"
-        hidden={state !== "collapsed" || isMobile}
-        {...tooltip}
-      />
-    </Tooltip>
-  )
 }
 
 function SidebarMenuAction({

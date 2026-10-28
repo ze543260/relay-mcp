@@ -1,7 +1,6 @@
 import { createRootRoute, createRoute, createRouter, Outlet, redirect } from "@tanstack/react-router";
-import { Toaster } from "@/components/ui/sonner";
-import { TooltipProvider } from "@/components/ui/tooltip";
 import { ler } from "@/shared/lib/armazenamento";
+import { useToasterPedido } from "@/shared/lib/avisar";
 import { lazy, Suspense, type JSX } from "react";
 import { RotaSala } from "./rotas/RotaSala";
 
@@ -13,14 +12,19 @@ const preguicoso = (carregar: () => Promise<{ default: () => JSX.Element }>) => 
 const RotaEntrar = preguicoso(() => import("./rotas/RotaEntrar").then((m) => ({ default: m.RotaEntrar })));
 const RotaConfig = preguicoso(() => import("./rotas/RotaConfig").then((m) => ({ default: m.RotaConfig })));
 
-const raiz = createRootRoute({
-  component: () => (
-    <TooltipProvider delay={300}>
+const Toaster = lazy(() => import("@/components/ui/sonner"));
+
+function Raiz() {
+  const toaster = useToasterPedido();
+  return (
+    <>
       <Outlet />
-      <Toaster position="top-center" />
-    </TooltipProvider>
-  ),
-});
+      {toaster && <Suspense fallback={null}><Toaster position="top-center" /></Suspense>}
+    </>
+  );
+}
+
+const raiz = createRootRoute({ component: Raiz });
 
 const inicio = createRoute({
   getParentRoute: () => raiz,

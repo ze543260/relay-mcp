@@ -1,20 +1,16 @@
-import { CopyIcon, CornerUpLeftIcon, EllipsisIcon, Trash2Icon } from "lucide-react";
+import { EllipsisIcon } from "lucide-react";
 import { lazy, memo, Suspense, useState } from "react";
-import { toast } from "sonner";
-import {
-  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
-  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import type { Mensagem as TMensagem } from "@/shared/api/tipos";
 import { corDe, ehIa, horaDe, instanteDe, resumo, siglaDe } from "@/shared/lib/formato";
 import { textos } from "@/shared/lib/textos";
 
-// KaTeX + highlight.js ficam fora do bundle inicial.
+// KaTeX + highlight.js e o menu de ações ficam fora do bundle inicial.
 const Markdown = lazy(() => import("@/shared/markdown/Markdown"));
+const AcoesMensagem = lazy(() => import("./AcoesMensagem"));
+const GATILHO = "ml-auto opacity-100 md:opacity-0 md:group-hover/msg:opacity-100 md:group-focus-within/msg:opacity-100 data-popup-open:opacity-100";
 
 const RECENTE_MS = 5000;
 const t = textos.conversa;
@@ -40,17 +36,8 @@ export const Mensagem = memo(function Mensagem(props: Props) {
   const ms = instanteDe(m);
   // A lista virtual remonta itens ao rolar: só anima o que acabou de chegar.
   const [recente] = useState(() => Date.now() - ms < RECENTE_MS);
-  const [confirmando, setConfirmando] = useState(false);
+  const [acoes, setAcoes] = useState(false);
   const confirmada = estado === undefined;
-
-  async function copiar() {
-    try {
-      await navigator.clipboard.writeText(m.texto);
-      toast.success(t.copiada);
-    } catch {
-      toast.error(t.naoCopiou);
-    }
-  }
 
   return (
     <article className={cn("group/msg flex max-w-full gap-2 md:max-w-[760px] md:gap-3", recente && "motion-safe:animate-[entra_.3s_ease-out]")}>
@@ -68,26 +55,15 @@ export const Mensagem = memo(function Mensagem(props: Props) {
           <time dateTime={new Date(ms).toISOString()} className="tabular-nums">{horaDe(ms)}</time>
           {estado === "enviando" && <span>{t.enviando}</span>}
           {estado === "erro" && <span className="text-destructive">{t.falhou}</span>}
-          {confirmada && (
-            <DropdownMenu>
-              <DropdownMenuTrigger render={
-                <Button variant="ghost" size="icon-xs" aria-label={t.acoes}
-                  className="ml-auto opacity-100 md:opacity-0 md:group-hover/msg:opacity-100 md:group-focus-within/msg:opacity-100 data-popup-open:opacity-100" />
-              }>
-                <EllipsisIcon />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="min-w-40">
-                <DropdownMenuItem onClick={() => aoResponder?.(m)}><CornerUpLeftIcon /> {t.responder}</DropdownMenuItem>
-                <DropdownMenuItem onClick={() => void copiar()}><CopyIcon /> {t.copiar}</DropdownMenuItem>
-                {podeApagar && (
-                  <>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem variant="destructive" onClick={() => setConfirmando(true)}><Trash2Icon /> {t.apagar}</DropdownMenuItem>
-                  </>
-                )}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          )}
+          {confirmada && (acoes ? (
+            <Suspense fallback={<Button variant="ghost" size="icon-xs" className={GATILHO} disabled><EllipsisIcon /></Button>}>
+              <AcoesMensagem m={m} podeApagar={Boolean(podeApagar)} classeGatilho={GATILHO} aoResponder={aoResponder} aoApagar={aoApagar} />
+            </Suspense>
+          ) : (
+            <Button variant="ghost" size="icon-xs" aria-label={t.acoes} className={GATILHO} onClick={() => setAcoes(true)}>
+              <EllipsisIcon />
+            </Button>
+          ))}
         </div>
         <div className={cn(
           "texto mt-1 w-fit max-w-full min-w-0 rounded-[4px_12px_12px_12px] border bg-bolha px-3 py-2.5 text-[15px] [overflow-wrap:anywhere] md:px-3.5 md:text-sm",
@@ -112,18 +88,6 @@ export const Mensagem = memo(function Mensagem(props: Props) {
           </div>
         )}
       </div>
-      <AlertDialog open={confirmando} onOpenChange={setConfirmando}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{t.apagarTitulo}</AlertDialogTitle>
-            <AlertDialogDescription>{t.apagarDescricao}</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>{t.cancelar}</AlertDialogCancel>
-            <AlertDialogAction variant="destructive" onClick={() => aoApagar?.(m.id)}>{t.apagar}</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </article>
   );
 });

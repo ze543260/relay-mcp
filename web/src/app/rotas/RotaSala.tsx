@@ -4,7 +4,6 @@ import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 
 // cmdk + Dialog só quando a paleta abre pela primeira vez.
 const PaletaSalas = lazy(() => import("@/features/salas/PaletaSalas").then((m) => ({ default: m.PaletaSalas })));
-import { Separator } from "@/components/ui/separator";
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { useSessao } from "@/features/auth/sessao";
 import { Composer } from "@/features/mensagens/Composer";
@@ -84,7 +83,7 @@ export function RotaSala() {
       <SidebarInset className="min-h-0 min-w-0">
         <header className="flex flex-wrap items-center gap-2 border-b px-4 pt-[calc(.5rem+env(safe-area-inset-top))] pb-2 md:flex-nowrap md:gap-3 md:py-3">
           <SidebarTrigger className="-ml-2 size-11 md:-ml-1 md:size-8" aria-label={textos.salas.alternarLateral} />
-          <Separator orientation="vertical" className="hidden h-4 md:block" />
+          <span aria-hidden className="hidden h-4 w-px bg-border md:block" />
           <h1 className="min-w-0 flex-1 truncate text-base font-semibold md:flex-none">#{sala}</h1>
           <Participantes autores={autores} />
         </header>

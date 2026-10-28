@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { toast } from "sonner";
+import { avisar } from "@/shared/lib/avisar";
 import { api, ehAbort, ErroApi, listaDe } from "@/shared/api/cliente";
 import { traduzirErro } from "@/shared/api/erros";
 import type { Mensagem, PaginaHistorico, RespostaMensagens } from "@/shared/api/tipos";
@@ -189,7 +189,7 @@ export function useConversa({ sala, ativo, aoChegar, aoPerderAcesso }: Opcoes) {
     } catch (e) {
       if (ehStatus(e, 401)) return callbacks.current.aoPerderAcesso();
       setPendentes((ps) => ps.map((x) => (x.client_id === p.client_id ? { ...x, estado: "erro" } : x)));
-      toast.error(traduzirErro(e).mensagem);
+      avisar("erro", traduzirErro(e).mensagem);
     }
   }, [sala]);
 
@@ -213,7 +213,7 @@ export function useConversa({ sala, ativo, aoChegar, aoPerderAcesso }: Opcoes) {
       await api<void>(`/mensagens/${id}`, { metodo: "DELETE" });
       remover(id);
     } catch (e) {
-      toast.error(traduzirErro(e).mensagem);
+      avisar("erro", traduzirErro(e).mensagem);
     }
   }, [remover]);
 
