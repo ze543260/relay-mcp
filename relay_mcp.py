@@ -159,36 +159,91 @@ async def registrar_fato(sujeito: str, predicado: str, objeto: str, origem_tipo:
 STATUS = ("a_fazer", "fazendo", "revisao", "feito")
 
 
+PRIORIDADES = ("urgente", "alta", "media", "baixa", "nenhuma")
+
+
 def _fmt_tarefa(t: dict) -> str:
     resp = f" → {t['responsavel']}" if t.get("responsavel") else ""
-    return f"#{t['id']} [{t['status']}] {t['titulo']}{resp}"
+    extras = []
+    if t.get("prioridade") and t["prioridade"] != "nenhuma":
+        extras.append(t["prioridade"])
+    if t.get("estimativa"):
+        extras.append(f"{t['estimativa']}pt")
+    if t.get("prazo"):
+        extras.append(f"prazo {t['prazo'][:10]}")
+    if (c := t.get("checklist")) and c["total"]:
+        extras.append(f"☑ {c['feitos']}/{c['total']}")
+    extras += [f"#{e['nome']}" for e in t.get("etiquetas", [])]
+    return f"#{t['id']} [{t['status']}] {t['titulo']}{resp}" + (f" ({', '.join(extras)})" if extras else "")
 
 
 @mcp.tool()
-async def listar_tarefas(sala: str = SALA, status: str | None = None, minhas: bool = False) -> str:
-    """Quadro de tarefas da sala. Filtre por `status` (a_fazer, fazendo, revisao, feito) ou só as `minhas`."""
-    ts = await asyncio.to_thread(_req, "GET", "/tarefas?" + urlencode({"sala": sala, "eu": NOME}))
-    ts = [t for t in ts if (not status or t["status"] == status) and (not minhas or t.get("responsavel") == NOME)]
+async def listar_tarefas(sala: str = SALA, status: str | None = None, minhas: bool = False,
+                         prioridade: str | None = None, etiqueta: str | None = None, busca: str | None = None) -> str:
+    """Quadro de tarefas da sala, na ordem da fila (prioridade primeiro). Filtros: `status` (a_fazer, fazendo,
+    revisao, feito), `prioridade` (urgente, alta, media, baixa, nenhuma), `etiqueta` (nome), `busca` (título/descrição)
+    ou só as `minhas`."""
+    q = {"sala": sala, "eu": NOME, "status": status, "prioridade": prioridade, "etiqueta": etiqueta, "q": busca,
+         "responsavel": NOME if minhas else None}
+    ts = await asyncio.to_thread(_req, "GET", "/tarefas?" + urlencode({k: v for k, v in q.items() if v}))
     return "\n".join(_fmt_tarefa(t) for t in ts) or "nenhuma tarefa"
 
 
 @mcp.tool()
-async def criar_tarefa(titulo: str, sala: str = SALA, responsavel: str | None = None, descricao: str | None = None) -> str:
-    """Cria uma tarefa no quadro da sala (status a_fazer)."""
-    corpo = {"sala": sala, "titulo": titulo, "responsavel": responsavel, "descricao": descricao, "de": NOME}
+async def ver_tarefa(id: int) -> str:
+    """Uma tarefa por inteiro: descrição, checklist (com o id de cada item) e as últimas mudanças."""
+    t = await asyncio.to_thread(_req, "GET", f"/tarefas/{id}")
+    linhas = [_fmt_tarefa(t)]
+    if t.get("descricao"):
+        linhas += ["", t["descricao"]]
+    if t.get("itens"):
+        linhas += ["", "Checklist:"] + [f"  [{'x' if i['feito'] else ' '}] {i['texto']} (item {i['id']})" for i in t["itens"]]
+    if t.get("atividade"):
+        linhas += ["", "Últimas mudanças:"] + [
+            f"  {a['quando'][:16].replace('T', ' ')} {a['de']}: {a['campo']}"
+            + (f" {a['antes'] or '∅'} → {a['depois'] or '∅'}" if a["antes"] or a["depois"] else "") for a in t["atividade"][:10]]
+    return "\n".join(linhas)
+
+
+@mcp.tool()
+async def criar_tarefa(titulo: str, sala: str = SALA, responsavel: str | None = None, descricao: str | None = None,
+                       prioridade: str | None = None, estimativa: int | None = None, prazo: str | None = None,
+                       etiquetas: list[str] | None = None) -> str:
+    """Cria uma tarefa no quadro da sala (status a_fazer). `descricao` aceita Markdown; `prioridade` urgente|alta|
+    media|baixa|nenhuma; `estimativa` em pontos 1, 2, 3, 5 ou 8; `prazo` ISO (2026-11-05); `etiquetas` por nome."""
+    corpo = {"sala": sala, "titulo": titulo, "responsavel": responsavel, "descricao": descricao, "prioridade": prioridade,
+             "estimativa": estimativa, "prazo": prazo, "etiquetas": etiquetas, "de": NOME}
     t = await asyncio.to_thread(_req, "POST", "/tarefas", {k: v for k, v in corpo.items() if v is not None})
     return "criada " + _fmt_tarefa(t)
 
 
 @mcp.tool()
-async def atualizar_tarefa(id: int, status: str | None = None, responsavel: str | None = None) -> str:
-    """Move uma tarefa (status: a_fazer, fazendo, revisao, feito) e/ou troca o responsável.
-    Para pegar uma tarefa: status='fazendo' e responsavel = seu nome."""
+async def atualizar_tarefa(id: int, status: str | None = None, responsavel: str | None = None,
+                           prioridade: str | None = None, estimativa: int | None = None, prazo: str | None = None,
+                           etiquetas: list[str] | None = None) -> str:
+    """Move uma tarefa (status: a_fazer, fazendo, revisao, feito), troca o responsável e/ou ajusta prioridade,
+    estimativa, prazo e etiquetas (a lista substitui as atuais). Para pegar uma tarefa: status='fazendo' e
+    responsavel = seu nome. Toda mudança fica no histórico da tarefa."""
     if status and status not in STATUS:
         return f"status inválido; use um de {', '.join(STATUS)}"
-    corpo = {"status": status, "responsavel": responsavel, "de": NOME}
+    if prioridade and prioridade not in PRIORIDADES:
+        return f"prioridade inválida; use uma de {', '.join(PRIORIDADES)}"
+    corpo = {"status": status, "responsavel": responsavel, "prioridade": prioridade, "estimativa": estimativa,
+             "prazo": prazo, "etiquetas": etiquetas, "de": NOME}
     t = await asyncio.to_thread(_req, "PATCH", f"/tarefas/{id}", {k: v for k, v in corpo.items() if v is not None})
     return "atualizada " + _fmt_tarefa(t)
+
+
+@mcp.tool()
+async def marcar_item(tarefa: int, item: int | None = None, texto: str | None = None, feito: bool = True) -> str:
+    """Checklist da tarefa: com `item` (id, de ver_tarefa) marca/desmarca; sem `item`, cria um item novo com `texto`."""
+    if item is None:
+        if not texto:
+            return "informe `item` para marcar ou `texto` para criar"
+        t = await asyncio.to_thread(_req, "POST", f"/tarefas/{tarefa}/checklist", {"texto": texto, "de": NOME})
+    else:
+        t = await asyncio.to_thread(_req, "PATCH", f"/tarefas/{tarefa}/checklist/{item}", {"feito": feito, "de": NOME})
+    return "ok " + _fmt_tarefa(t)
 
 
 # --- Reuniões -------------------------------------------------------------------

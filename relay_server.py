@@ -159,9 +159,32 @@ MIGRACOES = [
     # 11: candidato vindo de ata guarda qual fato pretende superar (só vale quando um humano confirma)
     """ALTER TABLE fato ADD COLUMN supera INTEGER REFERENCES fato(id);
        CREATE INDEX IF NOT EXISTS fato_candidato ON fato(sala) WHERE estado='candidato';""",
+    # 12: kanban fase 1 (docs/PLANO-KANBAN.md): prioridade, estimativa, ordem, etiquetas, checklist e
+    # histórico de atividade (quem mudou o quê, para auditoria)
+    """ALTER TABLE tarefa ADD COLUMN prioridade TEXT NOT NULL DEFAULT 'nenhuma';
+       ALTER TABLE tarefa ADD COLUMN estimativa INTEGER;
+       ALTER TABLE tarefa ADD COLUMN ordem REAL;
+       CREATE TABLE IF NOT EXISTS etiqueta (
+         id INTEGER PRIMARY KEY, sala TEXT NOT NULL, nome TEXT NOT NULL COLLATE NOCASE, cor INTEGER NOT NULL,
+         UNIQUE (sala, nome));
+       CREATE TABLE IF NOT EXISTS tarefa_etiqueta (
+         tarefa_id INTEGER NOT NULL, etiqueta_id INTEGER NOT NULL, PRIMARY KEY (tarefa_id, etiqueta_id));
+       CREATE TABLE IF NOT EXISTS checklist (
+         id INTEGER PRIMARY KEY, tarefa_id INTEGER NOT NULL, texto TEXT NOT NULL,
+         feito INTEGER NOT NULL DEFAULT 0, ordem REAL NOT NULL);
+       CREATE INDEX IF NOT EXISTS checklist_tarefa ON checklist(tarefa_id, ordem);
+       CREATE TABLE IF NOT EXISTS atividade (
+         id INTEGER PRIMARY KEY, tarefa_id INTEGER NOT NULL, de TEXT NOT NULL, campo TEXT NOT NULL,
+         antes TEXT, depois TEXT, quando REAL NOT NULL);
+       CREATE INDEX IF NOT EXISTS atividade_tarefa ON atividade(tarefa_id, id);""",
 ]
 
 STATUS_TAREFA = ("a_fazer", "fazendo", "revisao", "feito")
+PRIORIDADES = ("urgente", "alta", "media", "baixa", "nenhuma")   # na ordem da fila
+ESTIMATIVAS = (1, 2, 3, 5, 8)                                     # pontos (Fibonacci)
+CORES_ETIQUETA = 8          # índice na paleta do web (tokens --agente-0..7)
+DESCRICAO_MAX = 20_000
+MAX_ETIQUETAS, MAX_CHECKLIST = 10, 50
 ORIGENS_FATO = ("msg", "ata", "tarefa", "arquivo")
 # Formatos prontos: pauta padrão de cada tipo de reunião.
 FORMATOS = {
@@ -222,10 +245,91 @@ def mensagem_sistema(con: sqlite3.Connection, sala: str, texto: str) -> int:
 
 
 def tarefa_para_json(r: tuple) -> dict:
-    i, sala, titulo, desc, status, resp, sprint, msg, por, criado, atual, prazo = r
+    i, sala, titulo, desc, status, resp, sprint, msg, por, criado, atual, prazo, prioridade, estimativa, ordem = r
     return {"id": i, "sala": sala, "titulo": titulo, "descricao": desc, "status": status, "responsavel": resp,
             "sprint_id": sprint, "msg_id": msg, "criada_por": por, "criado_em": iso(criado),
-            "atualizado_em": iso(atual), "prazo": iso(prazo) if prazo else None}
+            "atualizado_em": iso(atual), "prazo": iso(prazo) if prazo else None,
+            "prioridade": prioridade, "estimativa": estimativa, "ordem": ordem}
+
+
+def com_extras(con: sqlite3.Connection, tarefas: list[dict]) -> list[dict]:
+    """Etiquetas e progresso do checklist de várias tarefas, em duas consultas."""
+    if not tarefas:
+        return tarefas
+    ids = [t["id"] for t in tarefas]
+    marcas = ",".join("?" * len(ids))
+    etiquetas: dict[int, list[dict]] = {}
+    for tid, eid, nome, cor in con.execute(
+            f"SELECT te.tarefa_id, e.id, e.nome, e.cor FROM tarefa_etiqueta te JOIN etiqueta e ON e.id=te.etiqueta_id "
+            f"WHERE te.tarefa_id IN ({marcas}) ORDER BY e.nome", ids):
+        etiquetas.setdefault(tid, []).append({"id": eid, "nome": nome, "cor": cor})
+    progresso = {tid: (feitos, total) for tid, feitos, total in con.execute(
+        f"SELECT tarefa_id, SUM(feito), COUNT(*) FROM checklist WHERE tarefa_id IN ({marcas}) GROUP BY tarefa_id", ids)}
+    for t in tarefas:
+        t["etiquetas"] = etiquetas.get(t["id"], [])
+        feitos, total = progresso.get(t["id"], (0, 0))
+        t["checklist"] = {"feitos": feitos, "total": total}
+    return tarefas
+
+
+def registrar_atividade(con: sqlite3.Connection, tid: int, de: str, campo: str, antes: object, depois: object) -> None:
+    texto = lambda v: None if v is None else (v if isinstance(v, str) else json.dumps(v, ensure_ascii=False))  # noqa: E731
+    con.execute("INSERT INTO atividade (tarefa_id, de, campo, antes, depois, quando) VALUES (?,?,?,?,?,?)",
+                (tid, de, campo, texto(antes), texto(depois), time.time()))
+
+
+def cor_padrao(nome: str) -> int:
+    """Cor estável por nome, para a mesma etiqueta ter a mesma cor em qualquer sala."""
+    return int(hashlib.sha256(nome.lower().encode()).hexdigest(), 16) % CORES_ETIQUETA
+
+
+def validar_campos_tarefa(c: dict) -> dict:
+    """Valida os campos editáveis presentes em `c` e devolve-os normalizados (prazo em epoch)."""
+    v: dict = {}
+    if "titulo" in c:
+        titulo = " ".join(str(c["titulo"] or "").split())
+        if not 1 <= len(titulo) <= 200:
+            raise ErroHttp(400, "titulo_invalido", "Título da tarefa: 1–200 caracteres.")
+        v["titulo"] = titulo
+    if "descricao" in c:
+        desc = c["descricao"]
+        if desc is not None and (not isinstance(desc, str) or len(desc) > DESCRICAO_MAX):
+            raise ErroHttp(400, "descricao_invalida", "Descrição: texto de até 20 KB (Markdown).")
+        if desc and CREDENCIAL_RE.search(desc):
+            raise ErroHttp(422, "credencial_detectada", "A descrição parece conter uma credencial. Não foi salva.")
+        v["descricao"] = desc or None
+    if "status" in c:
+        if c["status"] not in STATUS_TAREFA:
+            raise ErroHttp(400, "status_invalido", f"Status deve ser um de {', '.join(STATUS_TAREFA)}.")
+        v["status"] = c["status"]
+    if "responsavel" in c:
+        if c["responsavel"] and not NOME_RE.match(str(c["responsavel"])):
+            raise ErroHttp(400, "responsavel_invalido", "Responsável inválido.")
+        v["responsavel"] = c["responsavel"] or None
+    if "prioridade" in c:
+        if c["prioridade"] not in PRIORIDADES:
+            raise ErroHttp(400, "prioridade_invalida", f"Prioridade deve ser uma de {', '.join(PRIORIDADES)}.")
+        v["prioridade"] = c["prioridade"]
+    if "estimativa" in c:
+        if c["estimativa"] is not None and c["estimativa"] not in ESTIMATIVAS:
+            raise ErroHttp(400, "estimativa_invalida", f"Estimativa em pontos: {', '.join(map(str, ESTIMATIVAS))} ou null.")
+        v["estimativa"] = c["estimativa"]
+    if "prazo" in c:
+        prazo = c["prazo"]
+        if prazo is None:
+            v["prazo"] = None
+        else:
+            try:
+                v["prazo"] = datetime.fromisoformat(str(prazo).replace("Z", "+00:00")).timestamp()
+            except ValueError:
+                raise ErroHttp(400, "prazo_invalido", "Prazo: data ISO 8601 (ex.: 2026-11-05 ou 2026-11-05T18:00:00Z) ou null.") from None
+    if "ordem" in c:
+        if c["ordem"] is not None and (isinstance(c["ordem"], bool) or not isinstance(c["ordem"], (int, float))):
+            raise ErroHttp(400, "ordem_invalida", "ordem deve ser um número.")
+        v["ordem"] = c["ordem"]
+    if "sprint_id" in c:
+        v["sprint_id"] = c["sprint_id"]
+    return v
 
 
 def reuniao_para_json(r: tuple) -> dict:
@@ -331,7 +435,8 @@ def consulta_fts(termo: str) -> str:
     return " ".join(f'"{p}"*' for p in palavras)
 
 
-COLS_TAREFA = "id, sala, titulo, descricao, status, responsavel, sprint_id, msg_id, criada_por, criado, atualizado, prazo"
+COLS_TAREFA = ("id, sala, titulo, descricao, status, responsavel, sprint_id, msg_id, criada_por, criado, atualizado, prazo, "
+               "prioridade, estimativa, ordem")
 COLS_REUNIAO = "id, sala, titulo, formato, pauta, participantes, item, vez, rodada, estado, inicio, limite, ata, criada_por, canal"
 
 
@@ -569,6 +674,7 @@ class Handler(BaseHTTPRequestHandler):
                 ("POST", "/leituras"): self.marcar_leitura,
                 ("GET", "/tarefas"): self.tarefas,
                 ("POST", "/tarefas"): self.criar_tarefa,
+                ("GET", "/etiquetas"): self.etiquetas,
                 ("GET", "/sprints"): self.sprints,
                 ("POST", "/sprints"): self.criar_sprint,
                 ("GET", "/reunioes"): self.reunioes,
@@ -594,8 +700,18 @@ class Handler(BaseHTTPRequestHandler):
             if m and metodo == "PUT":
                 return self.definir_apelido(unquote(m.group(1)))
             m = re.fullmatch(r"/tarefas/(\d+)", caminho)
+            if m and metodo == "GET":
+                return self.ver_tarefa(int(m.group(1)))
             if m and metodo in ("PATCH", "DELETE"):
                 return (self.alterar_tarefa if metodo == "PATCH" else self.apagar_tarefa)(int(m.group(1)))
+            m = re.fullmatch(r"/tarefas/(\d+)/checklist(?:/(\d+))?", caminho)
+            if m and metodo == "POST" and m.group(2) is None:
+                return self.criar_item(int(m.group(1)))
+            if m and metodo in ("PATCH", "DELETE") and m.group(2):
+                return self.alterar_item(int(m.group(1)), int(m.group(2)), metodo)
+            m = re.fullmatch(r"/etiquetas/(\d+)", caminho)
+            if m and metodo in ("PATCH", "DELETE"):
+                return self.alterar_etiqueta(int(m.group(1)), metodo)
             m = re.fullmatch(r"/fatos/(\d+)(?:/(confirmar|rejeitar))?", caminho)
             if m and metodo == "GET" and m.group(2) is None:
                 return self.ver_fato(int(m.group(1)))
@@ -1185,72 +1301,141 @@ class Handler(BaseHTTPRequestHandler):
     # tarefas
 
     def tarefas(self, q: dict) -> None:
+        """Quadro da sala. Filtros: sprint, status, responsavel, prioridade, etiqueta (nome), q (título/descrição).
+        Ordem da fila: `ordem` manual primeiro, depois prioridade, depois a mais recente."""
         sala = validar_sala(q.get("sala"))
+        filtro, args = ["t.sala=?"], [sala]
+        if q.get("sprint"):
+            filtro.append("t.sprint_id=?")
+            args.append(int(q["sprint"]))
+        for campo, validos in (("status", STATUS_TAREFA), ("prioridade", PRIORIDADES)):
+            if q.get(campo):
+                if q[campo] not in validos:
+                    raise ErroHttp(400, f"{campo}_invalido", f"{campo} deve ser um de {', '.join(validos)}.")
+                filtro.append(f"t.{campo}=?")
+                args.append(q[campo])
+        if q.get("responsavel"):
+            filtro.append("t.responsavel=?")
+            args.append(q["responsavel"])
+        if q.get("etiqueta"):
+            filtro.append("t.id IN (SELECT te.tarefa_id FROM tarefa_etiqueta te JOIN etiqueta e ON e.id=te.etiqueta_id "
+                          "WHERE e.sala=? AND e.nome=?)")
+            args += [sala, q["etiqueta"]]
+        if q.get("q"):
+            termo = "%" + q["q"].replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+            filtro.append("(t.titulo LIKE ? ESCAPE '\\' OR t.descricao LIKE ? ESCAPE '\\')")
+            args += [termo, termo]
+        rank = "CASE t.prioridade " + " ".join(f"WHEN '{p}' THEN {i}" for i, p in enumerate(PRIORIDADES)) + " END"
+        cols = ", ".join(f"t.{c}" for c in COLS_TAREFA.split(", "))
         with conectar() as con:
             self._quem(con)
-            filtro, args = "", []
-            if q.get("sprint"):
-                filtro, args = " AND sprint_id=?", [int(q["sprint"])]
             linhas = con.execute(
-                f"SELECT {COLS_TAREFA} FROM tarefa WHERE sala=?{filtro} ORDER BY atualizado DESC", [sala, *args]
-            ).fetchall()
-        self._json(200, [tarefa_para_json(r) for r in linhas])
+                f"SELECT {cols} FROM tarefa t WHERE {' AND '.join(filtro)} "
+                f"ORDER BY t.ordem IS NULL, t.ordem, {rank}, t.atualizado DESC", args).fetchall()
+            self._json(200, com_extras(con, [tarefa_para_json(r) for r in linhas]))
+
+    def _tarefa(self, con: sqlite3.Connection, tid: int) -> dict:
+        linha = con.execute(f"SELECT {COLS_TAREFA} FROM tarefa WHERE id=?", (tid,)).fetchone()
+        if not linha:
+            raise ErroHttp(404, "tarefa_inexistente", "Tarefa não existe.")
+        return tarefa_para_json(linha)
+
+    def _tarefa_completa(self, con: sqlite3.Connection, tid: int) -> dict:
+        t = com_extras(con, [self._tarefa(con, tid)])[0]
+        t["itens"] = [{"id": i, "texto": texto, "feito": bool(feito), "ordem": ordem} for i, texto, feito, ordem in
+                      con.execute("SELECT id, texto, feito, ordem FROM checklist WHERE tarefa_id=? ORDER BY ordem, id", (tid,))]
+        t["atividade"] = [{"de": de, "campo": campo, "antes": antes, "depois": depois, "quando": iso(quando)}
+                          for de, campo, antes, depois, quando in con.execute(
+                              "SELECT de, campo, antes, depois, quando FROM atividade WHERE tarefa_id=? ORDER BY id DESC LIMIT 50", (tid,))]
+        return t
+
+    def ver_tarefa(self, tid: int) -> None:
+        """Tarefa completa: etiquetas, itens do checklist e as últimas 50 mudanças (auditoria)."""
+        with conectar() as con:
+            self._quem(con)
+            self._json(200, self._tarefa_completa(con, tid))
+
+    def _definir_etiquetas(self, con: sqlite3.Connection, sala: str, tid: int, nomes: object) -> list[str] | None:
+        """Troca as etiquetas da tarefa pelos nomes dados, criando as que faltam na sala. Devolve os nomes, ou None se igual."""
+        if not isinstance(nomes, list) or len(nomes) > MAX_ETIQUETAS:
+            raise ErroHttp(400, "etiquetas_invalidas", f"etiquetas: lista de até {MAX_ETIQUETAS} nomes.")
+        limpos: list[str] = []
+        for n in nomes:
+            nome = " ".join(str(n or "").split())
+            if not 1 <= len(nome) <= 24:
+                raise ErroHttp(400, "etiqueta_invalida", "Etiqueta: 1–24 caracteres.")
+            if nome.lower() not in (x.lower() for x in limpos):
+                limpos.append(nome)
+        antes = [n for (n,) in con.execute(
+            "SELECT e.nome FROM tarefa_etiqueta te JOIN etiqueta e ON e.id=te.etiqueta_id WHERE te.tarefa_id=? ORDER BY e.nome", (tid,))]
+        if sorted(x.lower() for x in antes) == sorted(x.lower() for x in limpos):
+            return None
+        con.execute("DELETE FROM tarefa_etiqueta WHERE tarefa_id=?", (tid,))
+        for nome in limpos:
+            con.execute("INSERT INTO etiqueta (sala, nome, cor) VALUES (?,?,?) ON CONFLICT(sala, nome) DO NOTHING",
+                        (sala, nome, cor_padrao(nome)))
+            eid = con.execute("SELECT id FROM etiqueta WHERE sala=? AND nome=?", (sala, nome)).fetchone()[0]
+            con.execute("INSERT OR IGNORE INTO tarefa_etiqueta VALUES (?,?)", (tid, eid))
+        return limpos
 
     def criar_tarefa(self, _q: dict) -> None:
         c = self._corpo()
         sala = validar_sala(c.get("sala"))
-        titulo = str(c.get("titulo") or "").strip()
-        if not 1 <= len(titulo) <= 200:
-            raise ErroHttp(400, "titulo_invalido", "Título da tarefa: 1–200 caracteres.")
-        status = c.get("status") or "a_fazer"
-        if status not in STATUS_TAREFA:
-            raise ErroHttp(400, "status_invalido", f"Status deve ser um de {', '.join(STATUS_TAREFA)}.")
-        resp = c.get("responsavel") or None
-        if resp is not None and not NOME_RE.match(str(resp)):
-            raise ErroHttp(400, "responsavel_invalido", "Responsável inválido.")
+        v = validar_campos_tarefa({"status": "a_fazer", "prioridade": "nenhuma", **c, "titulo": c.get("titulo")})
         with conectar() as con:
             por = self._nome(self._quem(con), c)
             agora = time.time()
             cur = con.execute(
-                f"INSERT INTO tarefa ({COLS_TAREFA.replace('id, ', '', 1)}) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                (sala, titulo, c.get("descricao"), status, resp, c.get("sprint_id"), c.get("msg_id"), por, agora, agora, None),
+                f"INSERT INTO tarefa ({COLS_TAREFA.replace('id, ', '', 1)}) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (sala, v["titulo"], v.get("descricao"), v["status"], v.get("responsavel"), v.get("sprint_id"), c.get("msg_id"),
+                 por, agora, agora, v.get("prazo"), v["prioridade"], v.get("estimativa"), v.get("ordem")),
             )
             tid = cur.lastrowid
-            mensagem_sistema(con, sala, f"📋 **{por}** criou a tarefa **#{tid}** {titulo}" + (f" → @{resp}" if resp else ""))
+            if c.get("etiquetas"):
+                self._definir_etiquetas(con, sala, tid, c["etiquetas"])
+            registrar_atividade(con, tid, por, "criada", None, v["titulo"])
+            resp = v.get("responsavel")
+            mensagem_sistema(con, sala, f"📋 **{por}** criou a tarefa **#{tid}** {v['titulo']}" + (f" → @{resp}" if resp else ""))
             registrar_evento(con, "tarefa", sala, tid)
-            linha = con.execute(f"SELECT {COLS_TAREFA} FROM tarefa WHERE id=?", (tid,)).fetchone()
+            t = self._tarefa_completa(con, tid)
         notificar()
-        self._json(201, tarefa_para_json(linha))
+        self._json(201, t)
 
     def alterar_tarefa(self, tid: int) -> None:
         c = self._corpo()
+        v = validar_campos_tarefa(c)
         with conectar() as con:
             quem = self._quem(con)
-            atual = con.execute(f"SELECT {COLS_TAREFA} FROM tarefa WHERE id=?", (tid,)).fetchone()
-            if not atual:
-                raise ErroHttp(404, "tarefa_inexistente", "Tarefa não existe.")
-            t = tarefa_para_json(atual)
+            t = self._tarefa(con, tid)
             quem_nome = self._nome(quem, c)
-            mudancas: dict = {}
-            for campo in ("titulo", "descricao", "status", "responsavel", "sprint_id"):
-                if campo in c:
-                    mudancas[campo] = c[campo]
-            if "status" in mudancas and mudancas["status"] not in STATUS_TAREFA:
-                raise ErroHttp(400, "status_invalido", f"Status deve ser um de {', '.join(STATUS_TAREFA)}.")
-            if mudancas.get("responsavel") and not NOME_RE.match(str(mudancas["responsavel"])):
-                raise ErroHttp(400, "responsavel_invalido", "Responsável inválido.")
-            if not mudancas:
-                return self._json(200, t)
-            sets = ", ".join(f"{k}=?" for k in mudancas)
-            con.execute(f"UPDATE tarefa SET {sets}, atualizado=? WHERE id=?", [*mudancas.values(), time.time(), tid])
-            novo = mudancas.get("status")
-            if novo and novo != t["status"]:
-                rotulo = {"a_fazer": "voltou para a fazer", "fazendo": "pegou", "revisao": "mandou para revisão", "feito": "concluiu"}[novo]
-                mensagem_sistema(con, t["sala"], f"{'✅' if novo == 'feito' else '🔁'} **{quem_nome}** {rotulo} **#{tid}** {t['titulo']}")
+            # Só grava (e registra na atividade) o que mudou de fato.
+            comparavel = {**t, "prazo": datetime.fromisoformat(t["prazo"].replace("Z", "+00:00")).timestamp() if t["prazo"] else None}
+            mudancas = {k: val for k, val in v.items() if comparavel.get(k) != val}
+            mudou_etiquetas = self._definir_etiquetas(con, t["sala"], tid, c["etiquetas"]) if "etiquetas" in c else None
+            if not mudancas and mudou_etiquetas is None:
+                return self._json(200, self._tarefa_completa(con, tid))
+            if mudancas:
+                sets = ", ".join(f"{k}=?" for k in mudancas)
+                con.execute(f"UPDATE tarefa SET {sets}, atualizado=? WHERE id=?", [*mudancas.values(), time.time(), tid])
+            else:
+                con.execute("UPDATE tarefa SET atualizado=? WHERE id=?", (time.time(), tid))
+            for campo, novo in mudancas.items():
+                antes = t.get(campo)
+                if campo == "prazo":
+                    novo = iso(novo) if novo else None
+                if campo == "descricao":  # texto longo: a atividade guarda só que mudou
+                    antes, novo = None, None
+                registrar_atividade(con, tid, quem_nome, campo, antes, novo)
+            if mudou_etiquetas is not None:
+                registrar_atividade(con, tid, quem_nome, "etiquetas", None, mudou_etiquetas)
+            novo_status = mudancas.get("status")
+            if novo_status:
+                rotulo = {"a_fazer": "voltou para a fazer", "fazendo": "pegou", "revisao": "mandou para revisão", "feito": "concluiu"}[novo_status]
+                mensagem_sistema(con, t["sala"], f"{'✅' if novo_status == 'feito' else '🔁'} **{quem_nome}** {rotulo} **#{tid}** {t['titulo']}")
             registrar_evento(con, "tarefa", t["sala"], tid)
-            linha = con.execute(f"SELECT {COLS_TAREFA} FROM tarefa WHERE id=?", (tid,)).fetchone()
+            completa = self._tarefa_completa(con, tid)
         notificar()
-        self._json(200, tarefa_para_json(linha))
+        self._json(200, completa)
 
     def apagar_tarefa(self, tid: int) -> None:
         with conectar() as con:
@@ -1261,7 +1446,99 @@ class Handler(BaseHTTPRequestHandler):
             if not (quem.admin or quem.nome == linha[1]):
                 raise ErroHttp(403, "proibido", "Só quem criou ou o admin apagam.")
             con.execute("DELETE FROM tarefa WHERE id=?", (tid,))
+            con.execute("DELETE FROM tarefa_etiqueta WHERE tarefa_id=?", (tid,))
+            con.execute("DELETE FROM checklist WHERE tarefa_id=?", (tid,))
+            con.execute("DELETE FROM atividade WHERE tarefa_id=?", (tid,))
             registrar_evento(con, "tarefa", linha[0], tid)
+        notificar()
+        self._vazio()
+
+    # checklist
+
+    def _item_texto(self, c: dict) -> str:
+        texto = " ".join(str(c.get("texto") or "").split())
+        if not 1 <= len(texto) <= 300:
+            raise ErroHttp(400, "item_invalido", "Item do checklist: 1–300 caracteres.")
+        if CREDENCIAL_RE.search(texto):
+            raise ErroHttp(422, "credencial_detectada", "O item parece conter uma credencial. Não foi salvo.")
+        return texto
+
+    def criar_item(self, tid: int) -> None:
+        c = self._corpo()
+        texto = self._item_texto(c)
+        with conectar() as con:
+            quem = self._nome(self._quem(con), c)
+            t = self._tarefa(con, tid)
+            total, ultima = con.execute("SELECT COUNT(*), MAX(ordem) FROM checklist WHERE tarefa_id=?", (tid,)).fetchone()
+            if total >= MAX_CHECKLIST:
+                raise ErroHttp(409, "checklist_cheio", f"Checklist com no máximo {MAX_CHECKLIST} itens.")
+            con.execute("INSERT INTO checklist (tarefa_id, texto, ordem) VALUES (?,?,?)", (tid, texto, (ultima or 0) + 1))
+            registrar_atividade(con, tid, quem, "checklist", None, f"+ {texto}")
+            con.execute("UPDATE tarefa SET atualizado=? WHERE id=?", (time.time(), tid))
+            registrar_evento(con, "tarefa", t["sala"], tid)
+            completa = self._tarefa_completa(con, tid)
+        notificar()
+        self._json(201, completa)
+
+    def alterar_item(self, tid: int, iid: int, metodo: str) -> None:
+        # DELETE pode vir sem corpo (sessão/token de agente); com o token de admin, o corpo diz quem é (`de`).
+        c = self._corpo() if metodo == "PATCH" or self.headers.get("Content-Length") else {}
+        with conectar() as con:
+            quem = self._nome(self._quem(con), c)
+            t = self._tarefa(con, tid)
+            item = con.execute("SELECT texto, feito FROM checklist WHERE id=? AND tarefa_id=?", (iid, tid)).fetchone()
+            if not item:
+                raise ErroHttp(404, "item_inexistente", "Item do checklist não existe nesta tarefa.")
+            if metodo == "DELETE":
+                con.execute("DELETE FROM checklist WHERE id=?", (iid,))
+                registrar_atividade(con, tid, quem, "checklist", item[0], None)
+            else:
+                texto = self._item_texto(c) if "texto" in c else item[0]
+                feito = bool(c["feito"]) if "feito" in c else bool(item[1])
+                con.execute("UPDATE checklist SET texto=?, feito=? WHERE id=?", (texto, int(feito), iid))
+                if feito != bool(item[1]):
+                    registrar_atividade(con, tid, quem, "checklist", None, f"{'☑' if feito else '☐'} {texto}")
+                if texto != item[0]:
+                    registrar_atividade(con, tid, quem, "checklist", item[0], texto)
+            con.execute("UPDATE tarefa SET atualizado=? WHERE id=?", (time.time(), tid))
+            registrar_evento(con, "tarefa", t["sala"], tid)
+            completa = self._tarefa_completa(con, tid)
+        notificar()
+        self._json(200, completa)
+
+    # etiquetas
+
+    def etiquetas(self, q: dict) -> None:
+        """Etiquetas da sala com quantas tarefas usam cada uma."""
+        sala = validar_sala(q.get("sala"))
+        with conectar() as con:
+            self._quem(con)
+            linhas = con.execute(
+                "SELECT e.id, e.nome, e.cor, COUNT(te.tarefa_id) FROM etiqueta e LEFT JOIN tarefa_etiqueta te ON te.etiqueta_id=e.id "
+                "WHERE e.sala=? GROUP BY e.id ORDER BY e.nome", (sala,)).fetchall()
+        self._json(200, [{"id": i, "nome": n, "cor": cor, "tarefas": total} for i, n, cor, total in linhas])
+
+    def alterar_etiqueta(self, eid: int, metodo: str) -> None:
+        """PATCH muda nome/cor; DELETE tira a etiqueta da sala e de todas as tarefas."""
+        c = self._corpo() if metodo == "PATCH" else {}
+        with conectar() as con:
+            self._quem(con)
+            linha = con.execute("SELECT sala, nome, cor FROM etiqueta WHERE id=?", (eid,)).fetchone()
+            if not linha:
+                raise ErroHttp(404, "etiqueta_inexistente", "Etiqueta não existe.")
+            if metodo == "DELETE":
+                con.execute("DELETE FROM tarefa_etiqueta WHERE etiqueta_id=?", (eid,))
+                con.execute("DELETE FROM etiqueta WHERE id=?", (eid,))
+            else:
+                nome = " ".join(str(c.get("nome") or linha[1]).split())
+                cor = c.get("cor", linha[2])
+                if not 1 <= len(nome) <= 24 or not isinstance(cor, int) or isinstance(cor, bool) or not 0 <= cor < CORES_ETIQUETA:
+                    raise ErroHttp(400, "etiqueta_invalida", f"Etiqueta: nome 1–24 caracteres, cor de 0 a {CORES_ETIQUETA - 1}.")
+                try:
+                    con.execute("UPDATE etiqueta SET nome=?, cor=? WHERE id=?", (nome, cor, eid))
+                except sqlite3.IntegrityError:
+                    raise ErroHttp(409, "etiqueta_em_uso", "Já existe uma etiqueta com esse nome na sala.") from None
+            registrar_evento(con, "tarefa", linha[0], 0)
         notificar()
         self._vazio()
 
@@ -1471,7 +1748,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not titulo or (resp and not NOME_RE.match(str(resp))):
                     continue
                 cur = con.execute(
-                    f"INSERT INTO tarefa ({COLS_TAREFA.replace('id, ', '', 1)}) VALUES (?,?,?,'a_fazer',?,?,?,?,?,?,NULL)",
+                    f"INSERT INTO tarefa ({COLS_TAREFA.replace('id, ', '', 1)}) VALUES (?,?,?,'a_fazer',?,?,?,?,?,?,NULL,'nenhuma',NULL,NULL)",
                     (r["sala"], titulo, f"Da reunião #{rid}", resp, sprint[0] if sprint else None, msg_id, eu, agora, agora),
                 )
                 criadas.append((cur.lastrowid, titulo, resp))
