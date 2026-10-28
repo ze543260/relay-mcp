@@ -15,6 +15,7 @@ from urllib.parse import parse_qs, urlparse
 
 TOKEN = os.environ.get("RELAY_TOKEN", "")
 NOVA = threading.Condition()
+mimetypes.add_type("font/woff2", ".woff2")
 RAIZ = os.path.dirname(os.path.abspath(__file__))
 DIST = os.path.join(RAIZ, "web", "dist")
 PAGINA_LEGADA = os.path.join(RAIZ, "dashboard.html")
@@ -52,7 +53,8 @@ class Handler(BaseHTTPRequestHandler):
         """Build do Vite (web/dist) se existir; senão o dashboard.html legado."""
         if not os.path.isdir(DIST):
             return (PAGINA_LEGADA, "no-cache") if caminho == "/" else None
-        if caminho == "/":
+        # Rotas do app (TanStack Router) caem no index.html; a API nunca.
+        if caminho == "/" or caminho == "/entrar" or caminho.startswith("/s/"):
             return os.path.join(DIST, "index.html"), "no-cache"
         alvo = os.path.realpath(os.path.join(DIST, caminho.lstrip("/")))
         if not alvo.startswith(DIST + os.sep) or not os.path.isfile(alvo):

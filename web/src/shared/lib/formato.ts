@@ -30,5 +30,7 @@ export const novoId = (): string =>
     ? crypto.randomUUID()
     : Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, "0")).join("");
 
+// "José Vitor" → "jose-vitor": tira acento antes de filtrar, senão a letra some junto.
 export const normalizarNome = (bruto: string): string =>
-  bruto.trim().toLowerCase().replace(/\s+/g, "-").replace(/[^\w.-]/g, "").slice(0, 32);
+  bruto.normalize("NFD").replace(/\p{Diacritic}/gu, "")
+    .trim().toLowerCase().replace(/\s+/g, "-").replace(/[^\w.-]/g, "").slice(0, 32);

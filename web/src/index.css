@@ -1,7 +1,57 @@
 @import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
 
-@theme {
+/* Modo escuro segue o sistema (sem classe .dark). */
+@custom-variant dark (@media (prefers-color-scheme: dark));
+
+/* Paleta do Relay: fonte única; os tokens do shadcn apontam para ela. */
+:root {
+  --fundo: #f6f6f4; --painel: #ffffff; --borda: #e6e5e1; --texto: #1d1c1a;
+  --suave: #6f6d68; --acento: #c96442; --acento-fundo: #f5e6df; --ok: #2f8f5b; --bolha: #ffffff;
+  --erro: #d0453a;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fundo: #141413; --painel: #1c1c1a; --borda: #2c2b28; --texto: #ecebe6;
+    --suave: #93918a; --acento: #d97757; --acento-fundo: #33241e; --ok: #4fbf82; --bolha: #232320;
+    --erro: #e5675d;
+  }
+}
+:root {
+  --background: var(--fundo);
+  --foreground: var(--texto);
+  --card: var(--painel);
+  --card-foreground: var(--texto);
+  --popover: var(--painel);
+  --popover-foreground: var(--texto);
+  --primary: var(--acento);
+  --primary-foreground: #ffffff;
+  --secondary: var(--acento-fundo);
+  --secondary-foreground: var(--texto);
+  --muted: var(--fundo);
+  --muted-foreground: var(--suave);
+  --accent: var(--acento-fundo);
+  --accent-foreground: var(--texto);
+  --destructive: var(--erro);
+  --border: var(--borda);
+  --input: var(--borda);
+  --ring: var(--acento);
+  --radius: 0.625rem;
+  --sidebar: var(--painel);
+  --sidebar-foreground: var(--texto);
+  --sidebar-primary: var(--acento);
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: var(--acento-fundo);
+  --sidebar-accent-foreground: var(--texto);
+  --sidebar-border: var(--borda);
+  --sidebar-ring: var(--acento);
+}
+
+@theme inline {
   --font-sans: Inter, system-ui, sans-serif;
+  --font-heading: var(--font-sans);
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
   --color-fundo: var(--fundo);
   --color-painel: var(--painel);
@@ -12,23 +62,45 @@
   --color-acento-fundo: var(--acento-fundo);
   --color-ok: var(--ok);
   --color-bolha: var(--bolha);
-  --color-erro: #d0453a;
+  --color-erro: var(--erro);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
 }
 
-:root {
-  --fundo: #f6f6f4; --painel: #ffffff; --borda: #e6e5e1; --texto: #1d1c1a;
-  --suave: #6f6d68; --acento: #c96442; --acento-fundo: #f5e6df; --ok: #2f8f5b; --bolha: #ffffff;
-  color-scheme: light dark;
+@layer base {
+  * { @apply border-border outline-ring/50; }
+  html, body { height: 100%; overflow: hidden; }
+  body { @apply bg-background font-sans text-[15px] leading-normal text-foreground md:text-sm; }
 }
-@media (prefers-color-scheme: dark) {
-  :root {
-    --fundo: #141413; --painel: #1c1c1a; --borda: #2c2b28; --texto: #ecebe6;
-    --suave: #93918a; --acento: #d97757; --acento-fundo: #33241e; --ok: #4fbf82; --bolha: #232320;
-  }
-}
-
-html, body { height: 100%; overflow: hidden; }
-body { @apply bg-fundo font-sans text-[15px] leading-normal text-texto md:text-sm; }
 
 @keyframes entra { from { opacity: 0; transform: translateY(6px); } }
 @keyframes pulso {

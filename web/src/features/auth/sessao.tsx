@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
-import { api, configurarAuth, ErroApi, type ModoAuth } from "../../shared/api/cliente";
-import { gravar, ler } from "../../shared/lib/armazenamento";
+import { api, configurarAuth, ErroApi, type ModoAuth } from "@/shared/api/cliente";
+import { gravar, ler } from "@/shared/lib/armazenamento";
 
 interface Sessao {
   nome: string;

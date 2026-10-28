@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { api, ehAbort, ErroApi, listaDe } from "../../shared/api/cliente";
-import type { Mensagem, PaginaHistorico, RespostaMensagens } from "../../shared/api/tipos";
+import { api, ehAbort, ErroApi, listaDe } from "@/shared/api/cliente";
+import type { Mensagem, PaginaHistorico, RespostaMensagens } from "@/shared/api/tipos";
 
 export type EstadoConexao =
   | { tipo: "carregando" }
@@ -10,6 +10,8 @@ export type EstadoConexao =
 
 interface Opcoes {
   sala: string;
+  /** Falso enquanto não há sessão: nada é buscado. */
+  ativo: boolean;
   aoChegar: (novas: Mensagem[]) => void;
   aoPerderAcesso: () => void;
 }
@@ -23,7 +25,7 @@ const dormir = (ms: number, sinal: AbortSignal) =>
 const ehStatus = (e: unknown, ...status: number[]) => e instanceof ErroApi && status.includes(e.status);
 
 /** Histórico + long-poll de uma sala. Troca de sala aborta tudo da anterior. */
-export function useConversa({ sala, aoChegar, aoPerderAcesso }: Opcoes) {
+export function useConversa({ sala, ativo, aoChegar, aoPerderAcesso }: Opcoes) {
   const [mensagens, setMensagens] = useState<Mensagem[]>([]);
   const [estado, setEstado] = useState<EstadoConexao>({ tipo: "carregando" });
   const [temMais, setTemMais] = useState(false);
@@ -76,6 +78,7 @@ export function useConversa({ sala, aoChegar, aoPerderAcesso }: Opcoes) {
   }, [escutar]);
 
   useEffect(() => {
+    if (!ativo) return;
     const c = new AbortController();
     controle.current = c;
     ultimoId.current = 0;
@@ -121,7 +124,7 @@ export function useConversa({ sala, aoChegar, aoPerderAcesso }: Opcoes) {
       document.removeEventListener("visibilitychange", aoVoltar);
       window.removeEventListener("online", reconectar);
     };
-  }, [sala, escutar, reconectar]);
+  }, [sala, ativo, escutar, reconectar]);
 
   const carregarAntigas = useCallback(async () => {
     const menor = mensagens[0]?.id;
