@@ -5,6 +5,7 @@ Uso: RELAY_TOKEN=segredo python3 relay_server.py [--host 0.0.0.0] [--porta 8790]
 """
 import argparse
 import json
+import mimetypes
 import os
 import sqlite3
 import threading
@@ -14,7 +15,9 @@ from urllib.parse import parse_qs, urlparse
 
 TOKEN = os.environ.get("RELAY_TOKEN", "")
 NOVA = threading.Condition()
-PAGINA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboard.html")
+RAIZ = os.path.dirname(os.path.abspath(__file__))
+DIST = os.path.join(RAIZ, "web", "dist")
+PAGINA_LEGADA = os.path.join(RAIZ, "dashboard.html")
 DB = os.environ.get("RELAY_DB", os.path.join(os.path.dirname(__file__), "relay.sqlite"))
 
 
@@ -43,6 +46,20 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(dados)))
         self.end_headers()
         self.wfile.write(dados)
+
+    @staticmethod
+    def _arquivo_estatico(caminho: str) -> tuple[str, str] | None:
+        """Build do Vite (web/dist) se existir; senão o dashboard.html legado."""
+        if not os.path.isdir(DIST):
+            return (PAGINA_LEGADA, "no-cache") if caminho == "/" else None
+        if caminho == "/":
+            return os.path.join(DIST, "index.html"), "no-cache"
+        alvo = os.path.realpath(os.path.join(DIST, caminho.lstrip("/")))
+        if not alvo.startswith(DIST + os.sep) or not os.path.isfile(alvo):
+            return None
+        # Arquivos em assets/ têm hash no nome: podem ficar em cache para sempre.
+        imutavel = alvo.startswith(os.path.join(DIST, "assets") + os.sep)
+        return alvo, "public, max-age=31536000, immutable" if imutavel else "no-cache"
 
     def _autorizado(self) -> bool:
         if TOKEN and self.headers.get("Authorization") != f"Bearer {TOKEN}":
@@ -75,13 +92,17 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         url = urlparse(self.path)
-        if url.path == "/":
-            # A página não carrega dados sozinha: pede o token e chama a API.
-            with open(PAGINA, "rb") as f:
+        estatico = self._arquivo_estatico(url.path)
+        if estatico:
+            # Front não carrega dados sozinho: pede o token e chama a API.
+            caminho, cache = estatico
+            with open(caminho, "rb") as f:
                 dados = f.read()
+            tipo = mimetypes.guess_type(caminho)[0] or "application/octet-stream"
             self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Type", tipo + ("; charset=utf-8" if tipo.startswith("text/") else ""))
             self.send_header("Content-Length", str(len(dados)))
+            self.send_header("Cache-Control", cache)
             self.end_headers()
             self.wfile.write(dados)
             return

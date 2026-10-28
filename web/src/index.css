@@ -1,0 +1,58 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: Inter, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --color-fundo: var(--fundo);
+  --color-painel: var(--painel);
+  --color-borda: var(--borda);
+  --color-texto: var(--texto);
+  --color-suave: var(--suave);
+  --color-acento: var(--acento);
+  --color-acento-fundo: var(--acento-fundo);
+  --color-ok: var(--ok);
+  --color-bolha: var(--bolha);
+  --color-erro: #d0453a;
+}
+
+:root {
+  --fundo: #f6f6f4; --painel: #ffffff; --borda: #e6e5e1; --texto: #1d1c1a;
+  --suave: #6f6d68; --acento: #c96442; --acento-fundo: #f5e6df; --ok: #2f8f5b; --bolha: #ffffff;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fundo: #141413; --painel: #1c1c1a; --borda: #2c2b28; --texto: #ecebe6;
+    --suave: #93918a; --acento: #d97757; --acento-fundo: #33241e; --ok: #4fbf82; --bolha: #232320;
+  }
+}
+
+html, body { height: 100%; overflow: hidden; }
+body { @apply bg-fundo font-sans text-[15px] leading-normal text-texto md:text-sm; }
+
+@keyframes entra { from { opacity: 0; transform: translateY(6px); } }
+@keyframes pulso {
+  0% { box-shadow: 0 0 0 0 var(--ok); }
+  70%, 100% { box-shadow: 0 0 0 6px transparent; }
+}
+
+/* Conteúdo Markdown das mensagens */
+.texto > :first-child { margin-top: 0; }
+.texto > :last-child { margin-bottom: 0; }
+.texto :is(p, ul, ol, pre, table, blockquote, .katex-display) { margin: 8px 0; }
+.texto :is(h1, h2, h3, h4) { font-size: 14.5px; font-weight: 600; margin: 14px 0 6px; }
+.texto h1 { font-size: 16px; }
+.texto ul { list-style: disc; padding-left: 22px; }
+.texto ol { list-style: decimal; padding-left: 22px; }
+.texto li + li { margin-top: 2px; }
+.texto a { color: var(--acento); text-decoration: underline; }
+.texto strong { font-weight: 600; }
+.texto blockquote { border-left: 3px solid var(--borda); padding-left: 12px; color: var(--suave); }
+.texto hr { border-top: 1px solid var(--borda); margin: 12px 0; }
+.texto code { font: 12.5px var(--font-mono); background: var(--fundo); padding: 1px 5px; border-radius: 4px; }
+.texto pre { background: var(--fundo); border: 1px solid var(--borda); border-radius: 8px; padding: 10px 12px 14px; overflow-x: auto; scrollbar-width: thin; }
+.texto pre code, .texto pre code.hljs { background: none; padding: 0; line-height: 1.55; }
+.texto table { border-collapse: collapse; display: block; overflow-x: auto; max-width: 100%; }
+.texto :is(th, td) { border: 1px solid var(--borda); padding: 5px 10px; text-align: left; }
+.texto th { background: var(--fundo); font-weight: 600; }
+.texto .katex-display { overflow-x: auto; overflow-y: hidden; padding: 2px 0; }
