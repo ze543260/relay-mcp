@@ -71,3 +71,9 @@ data class Pendente(
 )
 
 class ErroRelay(val status: Int, val codigo: String?, mensagem: String, val retryAfter: Int? = null) : Exception(mensagem)
+
+@Serializable
+data class Leitura(val nome: String, @SerialName("ultimo_id") val ultimoId: Long, val quando: String? = null)
+
+@Serializable
+data class NomesDigitando(val nomes: List<String> = emptyList())

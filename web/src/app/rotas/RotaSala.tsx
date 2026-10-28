@@ -14,6 +14,7 @@ import { Conversa } from "@/features/mensagens/Conversa";
 import { useConversa } from "@/features/mensagens/useConversa";
 import { useAgentes } from "@/features/agentes/useAgentes";
 import { useReunioes } from "@/features/equipe/api";
+import { useDigitando, useLeituras, useMarcarLeitura } from "@/features/mensagens/presenca";
 import { CalendarPlusIcon, KanbanIcon, MessagesSquareIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -42,14 +43,16 @@ export function RotaSala() {
     void qc.invalidateQueries({ queryKey: ["salas"] });
     avisar(novas);
   }, [qc, avisar]);
+  const marcarLeitura = useMarcarLeitura(sala);
   const aoLer = useCallback((id: number) => {
+    marcarLeitura(id);
     setVistas((v) => {
       if ((v[sala] ?? 0) >= id) return v;
       const prox = { ...v, [sala]: id };
       gravar("relay-vistas", JSON.stringify(prox));
       return prox;
     });
-  }, [sala]);
+  }, [sala, marcarLeitura]);
   // Retrato do "já vi até aqui" no momento em que a sala abre (o divisor nasce dele).
   const [ultimaLida, setUltimaLida] = useState({ sala, id: vistas[sala] ?? 0 });
   if (ultimaLida.sala !== sala) setUltimaLida({ sala, id: vistas[sala] ?? 0 });
@@ -72,7 +75,8 @@ export function RotaSala() {
   }, [paletaUsada, setPaletaAberta]);
   const [respondendo, setRespondendo] = useState<Mensagem | null>(null);
   // Tarefas e reuniões mudaram (SSE): recarrega só o que for daquela sala.
-  const aoEvento = useCallback((tipo: "tarefa" | "reuniao") => {
+  const aoEvento = useCallback((tipo: "tarefa" | "reuniao" | "leitura") => {
+    if (tipo === "leitura") return void qc.invalidateQueries({ queryKey: ["leituras", sala] });
     void qc.invalidateQueries({ queryKey: [tipo === "tarefa" ? "tarefas" : "reunioes", sala] });
     if (tipo === "tarefa") void qc.invalidateQueries({ queryKey: ["sprints", sala] });
   }, [qc, sala]);
@@ -80,6 +84,9 @@ export function RotaSala() {
   // "relay" é o próprio sistema (eventos de tarefa/reunião), não um participante.
   const autores = [...new Set(conversa.mensagens.map((m) => m.de))].filter((n) => n !== "relay");
   const { data: agentes } = useAgentes();
+  const { data: leiturasLista } = useLeituras(sala);
+  const leituras = useMemo(() => new Map((leiturasLista ?? []).filter((l) => l.nome !== nome).map((l) => [l.nome, l.ultimo_id])), [leiturasLista, nome]);
+  const digitar = useDigitando(sala);
   const candidatos = useMemo(() => {
     const online = new Map((agentes ?? []).map((a) => [a.nome, a.online]));
     const nomes = new Set([...autores, ...(agentes ?? []).map((a) => a.nome)]);
@@ -149,9 +156,10 @@ export function RotaSala() {
         ) : (
           <>
             <Conversa key={sala} sala={sala} eu={nome} carregando={conversa.estado.tipo === "carregando"}
-              ultimaLida={ultimaLida.id} aoLer={aoLer} admin={admin} aoResponder={setRespondendo} {...conversa} />
+              ultimaLida={ultimaLida.id} aoLer={aoLer} admin={admin} aoResponder={setRespondendo} leituras={leituras} {...conversa} />
             <Composer key={`c-${sala}`} sala={sala} rotuloSala={doCanal ? `🗓 ${doCanal.titulo}` : undefined} nome={nome} respondendo={respondendo} candidatos={candidatos} aoCancelarResposta={() => setRespondendo(null)}
-              aoEnviar={(texto, replyTo, anexos) => conversa.enviar(texto, nome, replyTo, anexos)} />
+              aoEnviar={(texto, replyTo, anexos) => conversa.enviar(texto, nome, replyTo, anexos)}
+              aoDigitar={(d) => (d ? digitar.avisar() : digitar.parar())} />
           </>
         )}
       </SidebarInset>

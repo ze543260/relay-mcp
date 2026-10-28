@@ -75,7 +75,31 @@ def historico_inicial() -> tuple[list[dict], int]:
         cursor = pagina[-1]["id"]
 
 
-def gerar(contexto: deque) -> str:
+def avisar_digitando(sala: str, parou: bool = False) -> None:
+    try:
+        relay("POST", "/digitando", {"sala": sala, "de": NOME, "parou": parou})
+    except (OSError, ValueError):
+        pass
+
+
+def gerar(contexto: deque, sala: str = SALA) -> str:
+    # Gerar pode levar segundos: os outros veem "gemma está digitando…" (renova a cada 4 s).
+    import threading
+    parar = threading.Event()
+
+    def renovar() -> None:
+        while not parar.wait(4):
+            avisar_digitando(sala)
+
+    avisar_digitando(sala)
+    threading.Thread(target=renovar, daemon=True).start()
+    try:
+        return _gerar(contexto)
+    finally:
+        parar.set()
+
+
+def _gerar(contexto: deque) -> str:
     conversa = "\n\n".join(
         f"[{m['de']}{' → ' + m['para'] if m.get('para') else ''}]: {m['texto']}" for m in contexto
     )
@@ -144,7 +168,7 @@ def falar_na_reuniao(r: dict) -> None:
         f"\"{r['item_atual']}\". Responda só a esse item, em até 3 frases, com base no que aparece na conversa. "
         f"Não invente trabalho que não aparece na conversa; se não tiver nada, diga isso.")})
     try:
-        texto = gerar(contexto) or "Nada a acrescentar neste item."
+        texto = gerar(contexto, canal) or "Nada a acrescentar neste item."
     except (OSError, ValueError, KeyError) as e:
         texto = f"_(sem resposta: {e})_"
     try:

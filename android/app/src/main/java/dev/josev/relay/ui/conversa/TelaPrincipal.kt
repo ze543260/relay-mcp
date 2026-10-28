@@ -218,6 +218,13 @@ private fun Conversa(vm: RelayViewModel, estado: Estado, aoMenu: (() -> Unit)?) 
         lista.asReversed()
     }
     val porId = remember(estado.mensagens) { estado.mensagens.associateBy { it.id } }
+    // Avatares de "visto" na última mensagem que cada um leu; ✓✓ nas minhas que todos leram.
+    val vistoEm = remember(estado.mensagens, estado.leituras) {
+        val mapa = mutableMapOf<Long, MutableList<String>>()
+        estado.leituras.forEach { (nome, ate) -> estado.mensagens.lastOrNull { it.id <= ate }?.let { mapa.getOrPut(it.id) { mutableListOf() } += nome } }
+        mapa
+    }
+    fun vistaPorTodos(id: Long) = estado.leituras.isNotEmpty() && estado.leituras.values.all { it >= id }
     val noFim by remember { derivedStateOf { lista.firstVisibleItemIndex <= 1 } }
     val novasAbaixo = if (noFim) 0 else estado.mensagens.count { it.id > (estado.vistas[estado.sala] ?: 0) && it.de != eu }
 
@@ -273,6 +280,7 @@ private fun Conversa(vm: RelayViewModel, estado: Estado, aoMenu: (() -> Unit)?) 
                             is Item.Msg -> Bolha(
                                 m = it.m, minha = it.m.de == eu, eu = eu, citada = it.m.replyTo?.let(porId::get),
                                 aoSegurar = { acoesDe = it.m }, modifier = Modifier.animateItem(),
+                                vistoPor = vistoEm[it.m.id].orEmpty(), vistaPorTodos = if (it.m.de == eu) vistaPorTodos(it.m.id) else null,
                             )
                             is Item.Pend -> Bolha(
                                 m = Mensagem(-1, it.p.de, texto = it.p.texto, criado = it.p.criadoMs / 1000.0, replyTo = it.p.replyTo, anexos = it.p.anexos),
@@ -299,8 +307,9 @@ private fun Conversa(vm: RelayViewModel, estado: Estado, aoMenu: (() -> Unit)?) 
                 val online = estado.agentes.associate { it.nome to it.online }
                 (estado.mensagens.map { it.de } + estado.agentes.map { it.nome }).distinct().map { it to (online[it] ?: false) }
             }
+            Digitando(estado.digitando)
             Composer(estado.sala, eu, estado.respondendo, candidatos, aoCancelarResposta = { vm.responder(null) }, aoEnviar = vm::enviar,
-                anexando = estado.anexando, aoAnexar = vm::anexar, aoRemoverAnexo = vm::removerAnexo)
+                anexando = estado.anexando, aoAnexar = vm::anexar, aoRemoverAnexo = vm::removerAnexo, aoDigitar = vm::digitando)
         }
     }
 
@@ -321,6 +330,20 @@ private fun BotaoFim(visivel: Boolean, novas: Int, modifier: Modifier, aoClicar:
             contentColor = if (novas > 0) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
             modifier = Modifier.height(40.dp),
         )
+    }
+}
+
+@Composable
+private fun Digitando(nomes: List<String>) {
+    val texto = when (nomes.size) {
+        0 -> ""
+        1 -> "${nomes[0]} está digitando…"
+        2 -> "${nomes[0]} e ${nomes[1]} estão digitando…"
+        else -> "${nomes.size} pessoas estão digitando…"
+    }
+    androidx.compose.animation.AnimatedVisibility(texto.isNotEmpty()) {
+        Text(texto, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp))
     }
 }
 

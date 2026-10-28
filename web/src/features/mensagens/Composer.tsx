@@ -25,6 +25,8 @@ interface Props {
   candidatos: Candidato[];
   aoCancelarResposta: () => void;
   aoEnviar: (texto: string, replyTo?: number, anexos?: Anexo[]) => void;
+  /** Chamado ao digitar (com texto) e ao esvaziar/enviar (para o "digitando…" dos outros). */
+  aoDigitar?: (digitando: boolean) => void;
 }
 
 /** Arquivo escolhido: sobe na hora; o envio espera todos terminarem. */
@@ -50,7 +52,7 @@ function mencaoNoCursor(texto: string, cursor: number): { inicio: number; termo:
 }
 
 /** Envio é otimista (useConversa): limpa na hora e a mensagem aparece como "enviando…". */
-export function Composer({ sala, rotuloSala, nome, respondendo, candidatos, aoCancelarResposta, aoEnviar }: Props) {
+export function Composer({ sala, rotuloSala, nome, respondendo, candidatos, aoCancelarResposta, aoEnviar, aoDigitar }: Props) {
   const [texto, setTexto] = useState("");
   const [cursor, setCursor] = useState(0);
   const [indice, setIndice] = useState(0);
@@ -144,6 +146,7 @@ export function Composer({ sala, rotuloSala, nome, respondendo, candidatos, aoCa
     const conteudo = texto.trim();
     if ((!conteudo && !prontos.length) || subindo) return;
     aoEnviar(conteudo, respondendo?.id, prontos.length ? prontos : undefined);
+    aoDigitar?.(false);
     setTexto("");
     itens.forEach((i) => i.previa && URL.revokeObjectURL(i.previa));
     setItens([]);
@@ -174,6 +177,7 @@ export function Composer({ sala, rotuloSala, nome, respondendo, candidatos, aoCa
   }
 
   function atualizar(valor: string, pos: number) {
+    aoDigitar?.(valor.trim().length > 0);
     setTexto(valor);
     setCursor(pos);
     setIndice(0);

@@ -29,7 +29,7 @@ interface Opcoes {
   ativo: boolean;
   aoChegar: (novas: Mensagem[]) => void;
   aoPerderAcesso: () => void;
-  aoEvento?: (tipo: "tarefa" | "reuniao") => void;
+  aoEvento?: (tipo: "tarefa" | "reuniao" | "leitura") => void;
 }
 
 const dormir = (ms: number, sinal: AbortSignal) =>
@@ -48,6 +48,7 @@ export function useConversa({ sala, ativo, aoChegar, aoPerderAcesso, aoEvento }:
   const [estado, setEstado] = useState<EstadoConexao>({ tipo: "carregando" });
   const [temMais, setTemMais] = useState(false);
   const [carregandoAntigas, setCarregandoAntigas] = useState(false);
+  const [digitando, setDigitando] = useState<string[]>([]);
   const ultimoId = useRef(0);
   const controle = useRef<AbortController | null>(null);
   const callbacks = useRef({ aoChegar, aoPerderAcesso, aoEvento });
@@ -105,6 +106,8 @@ export function useConversa({ sala, ativo, aoChegar, aoPerderAcesso, aoEvento }:
     es.addEventListener("apagada", (e) => remover((JSON.parse((e as MessageEvent<string>).data) as { id: number }).id));
     es.addEventListener("tarefa", () => callbacks.current.aoEvento?.("tarefa"));
     es.addEventListener("reuniao", () => callbacks.current.aoEvento?.("reuniao"));
+    es.addEventListener("leitura", () => callbacks.current.aoEvento?.("leitura"));
+    es.addEventListener("digitando", (e) => setDigitando((JSON.parse((e as MessageEvent<string>).data) as { nomes: string[] }).nomes));
     es.onerror = () => {
       if (sinal.aborted) return;
       falhas++;
@@ -133,6 +136,7 @@ export function useConversa({ sala, ativo, aoChegar, aoPerderAcesso, aoEvento }:
     ultimoId.current = 0;
     setMensagens([]);
     setPendentes([]);
+    setDigitando([]);
     setTemMais(false);
     setEstado({ tipo: "carregando" });
 
@@ -225,5 +229,5 @@ export function useConversa({ sala, ativo, aoChegar, aoPerderAcesso, aoEvento }:
     }
   }, [remover]);
 
-  return { mensagens, pendentes, estado, temMais, carregandoAntigas, carregarAntigas, enviar, retentar, descartar, apagar };
+  return { mensagens, pendentes, digitando, estado, temMais, carregandoAntigas, carregarAntigas, enviar, retentar, descartar, apagar };
 }

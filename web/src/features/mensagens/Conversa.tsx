@@ -2,6 +2,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { ArrowDownIcon } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { Mensagem as TMensagem } from "@/shared/api/tipos";
 import { textos } from "@/shared/lib/textos";
@@ -25,6 +26,9 @@ interface Props {
   admin: boolean;
   aoResponder: (m: TMensagem) => void;
   apagar: (id: number) => void;
+  digitando: string[];
+  /** nome -> último id lido (sem mim). */
+  leituras: Map<string, number>;
 }
 
 type Item =
@@ -35,9 +39,35 @@ type Item =
 const PERTO_DO_FIM = 80;
 const t = textos.conversa;
 
+function Digitando({ nomes }: { nomes: string[] }) {
+  const texto = nomes.length === 0 ? "" : nomes.length === 1 ? t.digitando1(nomes[0]!)
+    : nomes.length === 2 ? t.digitando2(nomes[0]!, nomes[1]!) : t.digitandoVarios(nomes.length);
+  return (
+    <div aria-live="polite" className={cn("flex h-6 items-center gap-2 px-4 text-xs text-muted-foreground transition-opacity md:px-6", !texto && "opacity-0")}>
+      {texto && (
+        <>
+          <span className="flex gap-0.5" aria-hidden>
+            {[0, 1, 2].map((i) => <i key={i} className="size-1 rounded-full bg-muted-foreground motion-safe:animate-bounce" style={{ animationDelay: `${i * 120}ms` }} />)}
+          </span>
+          {texto}
+        </>
+      )}
+    </div>
+  );
+}
+
 /** Lista virtualizada com marcador de não lidas: só o que está visível (+ margem) fica no DOM. */
 export function Conversa(props: Props) {
-  const { sala, eu, mensagens, pendentes, carregando, temMais, carregandoAntigas, ultimaLida, carregarAntigas, aoLer, retentar, descartar, admin, aoResponder, apagar } = props;
+  const { sala, eu, mensagens, pendentes, carregando, temMais, carregandoAntigas, ultimaLida, carregarAntigas, aoLer, retentar, descartar, admin, aoResponder, apagar, digitando, leituras } = props;
+  // Avatares de "visto": cada leitor aparece na última mensagem que leu (estilo Messenger).
+  const vistoEm = new Map<number, string[]>();
+  for (const [nome, ate] of leituras) {
+    let alvo: number | undefined;
+    for (let i = mensagens.length - 1; i >= 0; i--) if (mensagens[i]!.id <= ate) { alvo = mensagens[i]!.id; break; }
+    if (alvo !== undefined) vistoEm.set(alvo, [...(vistoEm.get(alvo) ?? []), nome]);
+  }
+  const leitores = [...leituras.keys()];
+  const vistaPorTodos = (id: number) => leitores.length > 0 && leitores.every((n) => (leituras.get(n) ?? 0) >= id);
   const porId = new Map(mensagens.map((m) => [m.id, m]));
   const mencao = new RegExp(`@${eu.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
   const feed = useRef<HTMLDivElement>(null);
@@ -189,6 +219,7 @@ export function Conversa(props: Props) {
                     </div>
                   ) : it.tipo === "msg" ? (
                     <Mensagem m={it.m} minha={it.m.de === eu} mencionaMe={mencao.test(it.m.texto)}
+                      vistoPor={vistoEm.get(it.m.id)} vistaPorTodos={it.m.de === eu ? vistaPorTodos(it.m.id) : undefined}
                       citada={it.m.reply_to ? porId.get(it.m.reply_to) : undefined}
                       podeApagar={admin || it.m.de === eu} aoResponder={aoResponder} aoApagar={apagar} />
                   ) : (
@@ -210,6 +241,7 @@ export function Conversa(props: Props) {
           <ArrowDownIcon /> {novasAbaixo > 0 ? t.novasAbaixo(novasAbaixo) : t.irParaFim}
         </Button>
       )}
+      <Digitando nomes={digitando} />
       <div className="sr-only" aria-live="polite">{anuncio}</div>
     </div>
   );

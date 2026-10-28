@@ -27,6 +27,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Reply
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Done
+import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.outlined.AttachFile
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Image
@@ -104,6 +106,8 @@ fun Bolha(
     aoSegurar: () -> Unit = {},
     aoTentar: () -> Unit = {},
     aoDescartar: () -> Unit = {},
+    vistoPor: List<String> = emptyList(),
+    vistaPorTodos: Boolean? = null,
 ) {
     val cores = MaterialTheme.colorScheme
     val extras = LocalExtras.current
@@ -140,6 +144,8 @@ fun Bolha(
                 when {
                     pendente?.falhou == true -> Text("não enviada", color = cores.error, style = MaterialTheme.typography.bodyMedium)
                     pendente != null -> Text("enviando…", color = cores.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
+                    vistaPorTodos == true -> Icon(Icons.Filled.DoneAll, "Vista por todos", Modifier.size(15.dp), tint = cores.primary)
+                    vistaPorTodos == false -> Icon(Icons.Filled.Done, "Entregue", Modifier.size(15.dp), tint = cores.onSurfaceVariant)
                 }
             }
             if (m.texto.isNotBlank() || citada != null || m.replyTo != null) {
@@ -169,6 +175,12 @@ fun Bolha(
             }
             }
             if (m.anexos.isNotEmpty()) ListaAnexos(m.anexos)
+            if (vistoPor.isNotEmpty()) Row(
+                Modifier.fillMaxWidth().padding(top = 4.dp).semantics { contentDescription = "Visto por ${vistoPor.joinToString(", ")}" },
+                horizontalArrangement = Arrangement.End,
+            ) {
+                vistoPor.take(6).forEach { n -> Avatar(n, 16.dp, Modifier.padding(start = 2.dp)) }
+            }
             if (pendente?.falhou == true) Row(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(aoTentar, Modifier.height(32.dp)) { Text("Tentar de novo") }
                 TextButton(aoDescartar, Modifier.height(32.dp)) { Text("Descartar") }
@@ -217,6 +229,7 @@ fun Composer(
     sala: String, nome: String, respondendo: Mensagem?, candidatos: List<Pair<String, Boolean>>,
     aoCancelarResposta: () -> Unit, aoEnviar: (String) -> Unit,
     anexando: List<dev.josev.relay.Anexando> = emptyList(), aoAnexar: (List<android.net.Uri>) -> Unit = {}, aoRemoverAnexo: (String) -> Unit = {},
+    aoDigitar: (Boolean) -> Unit = {},
 ) {
     val seletor = androidx.activity.compose.rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.GetMultipleContents()) { if (it.isNotEmpty()) aoAnexar(it) }
@@ -292,7 +305,7 @@ fun Composer(
                 Icon(Icons.Outlined.AttachFile, "Anexar foto ou arquivo", tint = cores.onSurfaceVariant)
             }
             TextField(
-                campo, { campo = it }, modifier = Modifier.weight(1f).heightIn(min = 48.dp, max = 180.dp),
+                campo, { campo = it; aoDigitar(it.text.isNotBlank()) }, modifier = Modifier.weight(1f).heightIn(min = 48.dp, max = 180.dp),
                 placeholder = { Text("Mandar como $nome em #$sala…", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 shape = RoundedCornerShape(24.dp),
                 colors = TextFieldDefaults.colors(

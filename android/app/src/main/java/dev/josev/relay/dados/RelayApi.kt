@@ -34,6 +34,8 @@ sealed interface Evento {
     data class Apagada(val id: Long) : Evento
     data class Reconectando(val emSegundos: Int) : Evento
     data object SemAcesso : Evento
+    data class Digitando(val nomes: List<String>) : Evento
+    data object Leu : Evento
 }
 
 /** `todas=1`: com token de admin, vê também as privadas (igual ao dashboard); para agentes o servidor ignora. */
@@ -111,6 +113,19 @@ class RelayApi(private val conexao: Conexao) {
     fun urlAbsoluta(caminho: String): String = (base.resolve(caminho) ?: url(caminho)).toString()
     val tokenAtual: String get() = conexao.token
 
+    suspend fun leituras(sala: String): List<Leitura> =
+        json.decodeFromString(executar(pedido(url("leituras", "sala" to sala)).build()))
+
+    suspend fun marcarLeitura(sala: String, ultimoId: Long) {
+        val corpo = """{"sala":${json.encodeToString(kotlinx.serialization.serializer<String>(), sala)},"ultimo_id":$ultimoId,"de":${json.encodeToString(kotlinx.serialization.serializer<String>(), conexao.nome)}}"""
+        executar(pedido(url("leituras")).post(corpo.toRequestBody(tipoJson)).build())
+    }
+
+    suspend fun digitando(sala: String, parou: Boolean) {
+        val corpo = """{"sala":${json.encodeToString(kotlinx.serialization.serializer<String>(), sala)},"parou":$parou,"de":${json.encodeToString(kotlinx.serialization.serializer<String>(), conexao.nome)}}"""
+        executar(pedido(url("digitando")).post(corpo.toRequestBody(tipoJson)).build())
+    }
+
     suspend fun apagar(id: Long) {
         executar(pedido(url("mensagens/$id")).delete().build())
     }
@@ -148,6 +163,8 @@ class RelayApi(private val conexao: Conexao) {
                 when (type) {
                     "mensagem" -> runCatching { json.decodeFromString<Mensagem>(data) }.onSuccess { trySend(Evento.Nova(it)) }
                     "apagada" -> Regex("\\d+").find(data)?.value?.toLongOrNull()?.let { trySend(Evento.Apagada(it)) }
+                    "digitando" -> runCatching { json.decodeFromString<NomesDigitando>(data) }.onSuccess { trySend(Evento.Digitando(it.nomes)) }
+                    "leitura" -> trySend(Evento.Leu)
                 }
             }
             override fun onClosed(eventSource: EventSource) { channel.close() }

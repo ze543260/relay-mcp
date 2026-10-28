@@ -1,4 +1,4 @@
-import { EllipsisIcon } from "lucide-react";
+import { CheckCheckIcon, CheckIcon, EllipsisIcon } from "lucide-react";
 import { lazy, memo, Suspense, useState } from "react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -26,6 +26,10 @@ interface Props {
   podeApagar?: boolean;
   aoResponder?: (m: TMensagem) => void;
   aoApagar?: (id: number) => void;
+  /** Quem tem esta como última mensagem lida (avatares pequenos embaixo). */
+  vistoPor?: string[];
+  /** Minha mensagem: true = todos leram (✓✓), false = entregue (✓). */
+  vistaPorTodos?: boolean;
   /** Só para mensagens otimistas (ainda não confirmadas pelo servidor). */
   estado?: "enviando" | "erro";
   aoTentar?: () => void;
@@ -33,7 +37,7 @@ interface Props {
 }
 
 export const Mensagem = memo(function Mensagem(props: Props) {
-  const { m, minha, mencionaMe, citada, podeApagar, aoResponder, aoApagar, estado, aoTentar, aoDescartar } = props;
+  const { m, minha, mencionaMe, citada, podeApagar, aoResponder, aoApagar, estado, aoTentar, aoDescartar, vistoPor, vistaPorTodos } = props;
   const ms = instanteDe(m);
   // A lista virtual remonta itens ao rolar: só anima o que acabou de chegar.
   const [recente] = useState(() => Date.now() - ms < RECENTE_MS);
@@ -68,6 +72,11 @@ export const Mensagem = memo(function Mensagem(props: Props) {
           <time dateTime={new Date(ms).toISOString()} className="tabular-nums">{horaDe(ms)}</time>
           {estado === "enviando" && <span>{t.enviando}</span>}
           {estado === "erro" && <span className="text-destructive">{t.falhou}</span>}
+          {minha && estado === undefined && vistaPorTodos !== undefined && (
+            vistaPorTodos
+              ? <CheckCheckIcon className="size-3.5 text-primary" aria-label={t.vistaPorTodos} />
+              : <CheckIcon className="size-3.5" aria-label={t.entregue} />
+          )}
           {confirmada && (acoes ? (
             <Suspense fallback={<Button variant="ghost" size="icon-xs" className={GATILHO} disabled><EllipsisIcon /></Button>}>
               <AcoesMensagem m={m} podeApagar={Boolean(podeApagar)} classeGatilho={GATILHO} aoResponder={aoResponder} aoApagar={aoApagar} />
@@ -97,6 +106,15 @@ export const Mensagem = memo(function Mensagem(props: Props) {
           </div>
         )}
         {m.anexos && m.anexos.length > 0 && <ListaAnexos anexos={m.anexos} />}
+        {vistoPor && vistoPor.length > 0 && (
+          <div className="mt-1 flex items-center justify-end gap-0.5" aria-label={t.vistoPor(vistoPor.join(", "))} title={t.vistoPor(vistoPor.join(", "))}>
+            {vistoPor.slice(0, 6).map((n) => (
+              <span key={n} aria-hidden className={cn("grid size-4 place-items-center text-[7px] font-semibold text-white ring-2 ring-background", ehIa(n) ? "rounded-full" : "rounded-[3px]")}
+                style={{ background: corDe(n) }}>{siglaDe(n)}</span>
+            ))}
+            {vistoPor.length > 6 && <span className="text-[10px] text-muted-foreground">+{vistoPor.length - 6}</span>}
+          </div>
+        )}
         {estado === "erro" && (
           <div className="mt-1 flex gap-1">
             <Button size="xs" variant="outline" onClick={aoTentar}>{t.tentarDeNovo}</Button>

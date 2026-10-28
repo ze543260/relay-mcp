@@ -53,6 +53,9 @@ data class Estado(
     val respondendo: Mensagem? = null,
     /** Arquivos escolhidos no composer: sobem na hora; o envio espera todos. */
     val anexando: List<Anexando> = emptyList(),
+    val digitando: List<String> = emptyList(),
+    /** nome -> último id lido (sem mim). */
+    val leituras: Map<String, Long> = emptyMap(),
     val aviso: String? = null,
 )
 
@@ -137,7 +140,7 @@ class RelayViewModel(app: Application) : AndroidViewModel(app) {
         stream?.cancel()
         viewModelScope.launch { config.salvarSala(sala) }
         _estado.update {
-            it.copy(sala = sala, mensagens = emptyList(), pendentes = emptyList(), carregando = true,
+            it.copy(sala = sala, mensagens = emptyList(), pendentes = emptyList(), carregando = true, digitando = emptyList(), leituras = emptyMap(),
                 status = StatusConexao.CARREGANDO, respondendo = null, marcoLeitura = it.vistas[sala] ?: 0L)
         }
         viewModelScope.launch {
@@ -150,6 +153,7 @@ class RelayViewModel(app: Application) : AndroidViewModel(app) {
             }
             abrirStream()
             atualizarListas()
+            atualizarLeituras()
         }
     }
 
@@ -165,8 +169,38 @@ class RelayViewModel(app: Application) : AndroidViewModel(app) {
                     is Evento.Apagada -> _estado.update { s -> s.copy(mensagens = s.mensagens.filterNot { it.id == e.id }) }
                     is Evento.Reconectando -> _estado.update { it.copy(status = StatusConexao.RECONECTANDO, reconectaEm = e.emSegundos) }
                     Evento.SemAcesso -> { sair(); _estado.update { it.copy(aviso = "Token revogado ou inválido.") } }
+                    is Evento.Digitando -> _estado.update { it.copy(digitando = e.nomes.filter { n -> n != it.conexao?.nome }) }
+                    Evento.Leu -> atualizarLeituras()
                 }
             }
+        }
+    }
+
+    private fun atualizarLeituras() {
+        val a = api ?: return
+        val s = _estado.value
+        viewModelScope.launch {
+            runCatching { a.leituras(s.sala) }.onSuccess { ls ->
+                _estado.update { st -> st.copy(leituras = ls.filter { it.nome != st.conexao?.nome && it.nome != "relay" }.associate { it.nome to it.ultimoId }) }
+            }
+        }
+    }
+
+    private var ultimoDigitando = 0L
+    private var avisouDigitando = false
+
+    /** Avisa "digitando" no máximo a cada 3 s; sem texto, avisa que parou. */
+    fun digitando(comTexto: Boolean) {
+        val a = api ?: return
+        val sala = _estado.value.sala
+        val agora = System.currentTimeMillis()
+        if (comTexto) {
+            if (agora - ultimoDigitando < 3000) return
+            ultimoDigitando = agora; avisouDigitando = true
+            viewModelScope.launch { runCatching { a.digitando(sala, parou = false) } }
+        } else if (avisouDigitando) {
+            avisouDigitando = false; ultimoDigitando = 0
+            viewModelScope.launch { runCatching { a.digitando(sala, parou = true) } }
         }
     }
 
@@ -203,6 +237,7 @@ class RelayViewModel(app: Application) : AndroidViewModel(app) {
         if ((s.vistas[s.sala] ?: 0L) >= id) return
         _estado.update { it.copy(vistas = it.vistas + (it.sala to id)) }
         viewModelScope.launch { config.marcarVista(s.sala, id) }
+        api?.let { a -> viewModelScope.launch { runCatching { a.marcarLeitura(s.sala, id) } } }
     }
 
     fun responder(m: Mensagem?) = _estado.update { it.copy(respondendo = m) }
@@ -215,6 +250,7 @@ class RelayViewModel(app: Application) : AndroidViewModel(app) {
         if (texto.isBlank() && anexos.isEmpty()) return
         val p = Pendente(UUID.randomUUID().toString(), c.nome, texto.trim(), s.respondendo?.id, System.currentTimeMillis(), anexos = anexos)
         _estado.update { it.copy(pendentes = it.pendentes + p, respondendo = null, anexando = emptyList()) }
+        avisouDigitando = false; ultimoDigitando = 0
         postar(p)
     }
 

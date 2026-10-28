@@ -54,7 +54,26 @@ ONLINE_S = 120
 LIMITE_PAGINA = 100
 COOKIE = "relay_sessao"
 
-NOVA = threading.Condition()            # acorda long-polls e SSE a cada mudança
+NOVA = threading.Condition()
+# "Digitando": efêmero, só em memória. sala -> {nome: expira (monotonic)}
+DIGITANDO: dict[str, dict[str, float]] = {}
+TRAVA_DIGITANDO = threading.Lock()
+DIGITANDO_TTL = 6.0
+
+
+def digitando_em(sala: str) -> list[str]:
+    agora = time.monotonic()
+    with TRAVA_DIGITANDO:
+        nomes = DIGITANDO.get(sala, {})
+        for n in [n for n, t in nomes.items() if t <= agora]:
+            del nomes[n]
+        return sorted(nomes)
+
+
+def proxima_expiracao(sala: str) -> float | None:
+    with TRAVA_DIGITANDO:
+        ts = DIGITANDO.get(sala, {}).values()
+        return min(ts) - time.monotonic() if ts else None            # acorda long-polls e SSE a cada mudança
 ESPERAS = threading.BoundedSemaphore(MAX_ESPERAS)
 NOME_RE = re.compile(r"^[\w.-]{1,32}$")
 SALA_RE = re.compile(r"^[\w.-]{1,64}$")
@@ -114,6 +133,10 @@ MIGRACOES = [
          id TEXT PRIMARY KEY, nome TEXT NOT NULL, tipo TEXT NOT NULL, tamanho INTEGER NOT NULL,
          sha256 TEXT NOT NULL, de TEXT NOT NULL, criado REAL NOT NULL, msg_id INTEGER);
        CREATE INDEX IF NOT EXISTS arquivo_msg ON arquivo(msg_id);""",
+    # 7: até onde cada um leu cada sala (recibo de leitura)
+    """CREATE TABLE IF NOT EXISTS leitura (
+         nome TEXT NOT NULL, sala TEXT NOT NULL, ultimo_id INTEGER NOT NULL, quando REAL NOT NULL,
+         PRIMARY KEY (nome, sala));""",
 ]
 
 STATUS_TAREFA = ("a_fazer", "fazendo", "revisao", "feito")
@@ -191,6 +214,19 @@ def reuniao_para_json(r: tuple) -> dict:
             "vez": participantes[vez] if estado == "aberta" and participantes else None, "rodada": rodada,
             "estado": estado, "inicio_em": iso(inicio), "limite_em": iso(limite) if limite else None,
             "ata": ata, "criada_por": por, "canal": canal or sala}
+
+
+def registrar_leitura(con: sqlite3.Connection, nome: str | None, sala: str, ultimo_id: int) -> bool:
+    """Só avança (nunca volta). Devolve True se mudou (para avisar pelo SSE)."""
+    if not nome or nome == "relay" or ultimo_id <= 0:
+        return False
+    atual = con.execute("SELECT ultimo_id FROM leitura WHERE nome=? AND sala=?", (nome, sala)).fetchone()
+    if atual and atual[0] >= ultimo_id:
+        return False
+    con.execute("INSERT INTO leitura VALUES (?,?,?,?) ON CONFLICT(nome, sala) DO UPDATE SET ultimo_id=excluded.ultimo_id, quando=excluded.quando",
+                (nome, sala, ultimo_id, time.time()))
+    registrar_evento(con, "leitura", sala, ultimo_id)
+    return True
 
 
 def evento_reuniao(con: sqlite3.Connection, r: dict) -> None:
@@ -430,6 +466,9 @@ class Handler(BaseHTTPRequestHandler):
                 ("GET", "/agentes"): self.agentes,
                 ("POST", "/agentes"): self.criar_agente,
                 ("POST", "/arquivos"): self.subir_arquivo,
+                ("POST", "/digitando"): self.marcar_digitando,
+                ("GET", "/leituras"): self.leituras,
+                ("POST", "/leituras"): self.marcar_leitura,
                 ("GET", "/tarefas"): self.tarefas,
                 ("POST", "/tarefas"): self.criar_tarefa,
                 ("GET", "/sprints"): self.sprints,
@@ -686,6 +725,9 @@ class Handler(BaseHTTPRequestHandler):
             if anexos:
                 con.execute(f"UPDATE arquivo SET msg_id=? WHERE id IN ({','.join('?' * len(anexos))})", [cur.lastrowid, *anexos])
             marcar_visto(con, de)
+            registrar_leitura(con, de, sala, cur.lastrowid)  # quem escreveu leu até ali
+        with TRAVA_DIGITANDO:
+            DIGITANDO.get(sala, {}).pop(de, None)
         notificar()
         self._json(201, {"id": cur.lastrowid})
 
@@ -737,9 +779,13 @@ class Handler(BaseHTTPRequestHandler):
         else:
             depois = int(q.get("depois", 0) or 0)
         msgs = self._esperar(quem, sala, eu, todas, depois, espera)
-        if usa_cursor and msgs:
+        if msgs and eu and not quem.via_cookie:
+            # Agente que recebeu pela API leu (o dashboard marca leitura sozinho, quando a tela mostra).
             with conectar() as con:
-                con.execute("INSERT OR REPLACE INTO cursor VALUES (?,?,?)", (eu, sala, msgs[-1]["id"]))
+                if usa_cursor:
+                    con.execute("INSERT OR REPLACE INTO cursor VALUES (?,?,?)", (eu, sala, msgs[-1]["id"]))
+                if registrar_leitura(con, eu, sala, msgs[-1]["id"]):
+                    notificar()
         self._json(200, msgs)
 
     def _esperar(self, quem: Quem, sala: str, eu: str | None, todas: bool, depois: int, espera: float) -> list[dict]:
@@ -800,6 +846,7 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.flush()
             fim = time.monotonic() + 1800  # recicla a conexão a cada 30 min
             ping = time.monotonic()
+            ultimo_digitando: list[str] = []
             while time.monotonic() < fim:
                 with conectar() as con:
                     msgs = self._ler(con, quem, sala, eu, todas, depois, sem_minhas=False)
@@ -815,6 +862,11 @@ class Handler(BaseHTTPRequestHandler):
                 for seq, tipo, ref in eventos:
                     ultimo_evento = seq
                     self.wfile.write(f"event: {tipo}\ndata: {json.dumps({'id': ref})}\n\n".encode())
+                digitando = [n for n in digitando_em(sala) if n != eu]
+                if digitando != ultimo_digitando:
+                    ultimo_digitando = digitando
+                    self.wfile.write(f"event: digitando\ndata: {json.dumps({'nomes': digitando})}\n\n".encode())
+                    self.wfile.flush()
                 if msgs or eventos:
                     self.wfile.flush()
                     continue
@@ -822,11 +874,51 @@ class Handler(BaseHTTPRequestHandler):
                     self.wfile.write(b": ping\n\n")
                     self.wfile.flush()
                     ping = time.monotonic()
+                # Acorda a tempo de apagar o "digitando" que expira.
+                exp = proxima_expiracao(sala)
                 with NOVA:
-                    NOVA.wait(15)
+                    NOVA.wait(15 if exp is None else max(0.2, min(15, exp + 0.05)))
         finally:
             ESPERAS.release()
 
+
+    # presença fina: digitando e leituras
+
+    def marcar_digitando(self, _q: dict) -> None:
+        c = self._corpo()
+        sala = validar_sala(c.get("sala"))
+        with conectar() as con:
+            nome = self._nome(self._quem(con), c)
+        with TRAVA_DIGITANDO:
+            nomes = DIGITANDO.setdefault(sala, {})
+            if c.get("parou"):
+                nomes.pop(nome, None)
+            else:
+                nomes[nome] = time.monotonic() + DIGITANDO_TTL
+        notificar()
+        self._vazio()
+
+    def leituras(self, q: dict) -> None:
+        sala = validar_sala(q.get("sala"))
+        with conectar() as con:
+            self._quem(con)
+            linhas = con.execute("SELECT nome, ultimo_id, quando FROM leitura WHERE sala=? ORDER BY nome", (sala,)).fetchall()
+        self._json(200, [{"nome": n, "ultimo_id": u, "quando": iso(t)} for n, u, t in linhas])
+
+    def marcar_leitura(self, _q: dict) -> None:
+        c = self._corpo()
+        sala = validar_sala(c.get("sala"))
+        try:
+            ultimo = int(c.get("ultimo_id") or 0)
+        except (TypeError, ValueError):
+            raise ErroHttp(400, "ultimo_id_invalido", "ultimo_id deve ser inteiro.") from None
+        with conectar() as con:
+            nome = self._nome(self._quem(con), c)
+            maximo = con.execute("SELECT COALESCE(MAX(id),0) FROM msg WHERE sala=?", (sala,)).fetchone()[0]
+            mudou = registrar_leitura(con, nome, sala, min(ultimo, maximo))
+        if mudou:
+            notificar()
+        self._vazio()
 
     # arquivos
 
