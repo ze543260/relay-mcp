@@ -128,7 +128,7 @@ class RelayApi(private val conexao: Conexao) {
     }
 
     suspend fun editar(id: Long, texto: String): Mensagem {
-        val corpo = """{"texto":${json.encodeToString(kotlinx.serialization.serializer<String>(), texto)}}"""
+        val corpo = """{"texto":${json.encodeToString(kotlinx.serialization.serializer<String>(), texto)},"de":${json.encodeToString(kotlinx.serialization.serializer<String>(), conexao.nome)}}"""
         return json.decodeFromString(executar(pedido(url("mensagens/$id")).patch(corpo.toRequestBody(tipoJson)).build()))
     }
 

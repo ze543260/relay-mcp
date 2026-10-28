@@ -160,12 +160,20 @@ private fun inline(texto: String, eu: String?): AnnotatedString {
 }
 
 @Composable
-fun Markdown(texto: String, eu: String? = null, modifier: Modifier = Modifier) {
+fun Markdown(texto: String, eu: String? = null, modifier: Modifier = Modifier, selecionavel: Boolean = false) {
     val blocos = remember(texto) { analisar(texto) }
     val cores = MaterialTheme.colorScheme
     val extras = LocalExtras.current
     val estilo = MaterialTheme.typography.bodyLarge
-    SelectionContainer(modifier) {
+    // Sem seleção por padrão: segurar a mensagem abre as ações (copiar está lá).
+    if (selecionavel) SelectionContainer(modifier) { Blocos(blocos, eu, estilo) } else Box(modifier) { Blocos(blocos, eu, estilo) }
+}
+
+@Composable
+private fun Blocos(blocos: List<Bloco>, eu: String?, estilo: androidx.compose.ui.text.TextStyle) {
+    val cores = MaterialTheme.colorScheme
+    val extras = LocalExtras.current
+    run {
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             for (b in blocos) when (b) {
                 is Bloco.Titulo -> Text(inline(b.texto, eu), style = estilo.copy(fontWeight = FontWeight.SemiBold, fontSize = if (b.nivel == 1) 17.sp else 15.5.sp))

@@ -766,7 +766,8 @@ class Handler(BaseHTTPRequestHandler):
         self._vazio()
 
     def editar_mensagem(self, msg_id: int) -> None:
-        texto = self._corpo().get("texto")
+        self._corpo_cache = self._corpo()
+        texto = self._corpo_cache.get("texto")
         if not isinstance(texto, str) or not texto.strip():
             raise ErroHttp(400, "texto_vazio", "Mande o texto novo.")
         if CREDENCIAL_RE.search(texto):
@@ -778,7 +779,9 @@ class Handler(BaseHTTPRequestHandler):
             if not linha:
                 raise ErroHttp(404, "mensagem_inexistente", "Mensagem não existe.")
             sala, autor = linha
-            if quem.nome != autor:
+            # Como no envio: só o token de admin (sem cookie) diz em nome de quem fala.
+            eu = str(self._corpo_cache.get("de") or quem.nome or "") if (quem.admin and not quem.via_cookie) else quem.nome
+            if eu != autor:
                 raise ErroHttp(403, "proibido", "Só o autor edita.")
             con.execute("UPDATE msg SET texto=?, editado=? WHERE id=?", (texto, time.time(), msg_id))
             registrar_evento(con, "editada", sala, msg_id)
