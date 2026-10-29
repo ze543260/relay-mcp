@@ -9,6 +9,9 @@ Env: RELAY_URL, RELAY_TOKEN, RELAY_NOME (como este agente assina), RELAY_SALA (p
 """
 import asyncio
 import json
+import re
+import time
+import threading
 import os
 import urllib.error
 import urllib.request
@@ -66,6 +69,44 @@ def _req(metodo: str, caminho: str, corpo: dict | None = None, timeout: float = 
 mcp = FastMCP("relay", instructions=_instrucoes())
 
 
+# "Digitando" automático: o Claude não tem tecla pra avisar, então quando ele lê uma mensagem que é pra ele
+# (menção ou privada), o MCP mostra "<nome> está digitando…" naquela sala até ele responder (no máx. 2 min).
+_DIGITANDO: dict[str, float] = {}
+_TRAVA_DIGITANDO = threading.Lock()
+DIGITANDO_MAX_S = 120
+
+
+def _pulso_digitando() -> None:
+    """Thread de fundo: renova o aviso a cada 4 s (o servidor apaga depois de 6 s sem renovação)."""
+    while True:
+        agora = time.monotonic()
+        with _TRAVA_DIGITANDO:
+            salas = [s for s, ate in _DIGITANDO.items() if ate > agora]
+            for s in [s for s, ate in _DIGITANDO.items() if ate <= agora]:
+                del _DIGITANDO[s]
+        for s in salas:
+            try:
+                _req("POST", "/digitando", {"sala": s, "de": NOME}, timeout=5)
+            except Exception:  # noqa: BLE001 — aviso visual; falhar não pode atrapalhar o agente
+                pass
+        time.sleep(4)
+
+
+threading.Thread(target=_pulso_digitando, daemon=True, name="digitando").start()
+
+
+def _comecar_digitando(sala: str, msgs: list[dict]) -> None:
+    mencao = re.compile(rf"@{re.escape(NOME)}\b", re.IGNORECASE)
+    if any(m.get("de") != NOME and (m.get("para") == NOME or mencao.search(m.get("texto") or "")) for m in msgs):
+        with _TRAVA_DIGITANDO:
+            _DIGITANDO[sala] = time.monotonic() + DIGITANDO_MAX_S
+
+
+def _parar_digitando(sala: str) -> None:
+    with _TRAVA_DIGITANDO:
+        _DIGITANDO.pop(sala, None)
+
+
 def _formatar(msgs: list[dict]) -> str:
     return "\n".join(
         f"[{m['id']}] {m['de']}{' → ' + m['para'] if m.get('para') else ''}: {m['texto']}{_fmt_anexos(m)}" for m in msgs
@@ -78,6 +119,7 @@ async def enviar_mensagem(texto: str, sala: str = SALA, para: str | None = None,
     O dashboard renderiza Markdown (GFM), código com destaque e LaTeX ($...$, $$...$$).
     Nunca inclua credenciais: o servidor recusa mensagens com cara de token/chave."""
     corpo = {"sala": sala, "de": NOME, "texto": texto, "para": para, "reply_to": responde_a}
+    _parar_digitando(sala)
     r = await asyncio.to_thread(_req, "POST", "/mensagens", {k: v for k, v in corpo.items() if v is not None})
     return f"enviada (id {r['id']}) como {NOME} em #{sala}"
 
@@ -93,6 +135,7 @@ async def ler_mensagens(sala: str = SALA, ultimas: int = 0) -> str:
         msgs = r["mensagens"] if isinstance(r, dict) else r
     else:
         msgs = await asyncio.to_thread(_req, "GET", "/mensagens?" + urlencode({"sala": sala, "eu": NOME}))
+        _comecar_digitando(sala, msgs)
     return _formatar(msgs) or "nenhuma mensagem nova"
 
 
@@ -106,6 +149,7 @@ async def aguardar_mensagem(sala: str = SALA, segundos: int = 120) -> str:
         _req, "GET", "/mensagens?" + urlencode({"sala": sala, "eu": NOME, "espera": segundos}),
         None, segundos + 15,
     )
+    _comecar_digitando(sala, msgs)
     return _formatar(msgs) or f"nenhuma resposta em {segundos} s"
 
 
