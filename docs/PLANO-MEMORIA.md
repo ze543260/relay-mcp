@@ -175,12 +175,21 @@ CREATE INDEX IF NOT EXISTS fato_objeto_vigente ON fato(sala, objeto COLLATE NOCA
 Resposta do grafo:
 
 ```json
-{"centro": "relay",
- "nos": [{"nome": "relay", "nomes": ["relay", "relay-mcp"], "fatos": 7}, {"nome": "sse", "nomes": ["SSE"], "fatos": 2}],
+{"centro": "relay", "centros": ["relay"],
+ "nos": [{"nome": "relay", "rotulo": "Relay", "aliases": ["relay-mcp"], "fatos": 7},
+         {"nome": "sse", "rotulo": "SSE", "aliases": [], "fatos": 2}],
  "arestas": [{"fato": 41, "de": "relay", "predicado": "usa", "para": "sse", "folha": false,
-              "origem": {"tipo": "ata", "id": "3"}, "autor": "lume"}],
+              "origem": {"tipo": "ata", "id": "3"}, "autor": "lume"},
+             {"fato": 52, "de": "sse", "predicado": "roda sobre", "para": "HTTP", "folha": true,
+              "origem": {"tipo": "msg", "id": "140"}, "autor": "claude-joao"}],
  "cortado": false}
 ```
+
+Contrato como implementado no PR #6:
+- `nome` é a chave normalizada do nó; `rotulo` é o primeiro texto registrado como sujeito, e é o que a tela mostra.
+- `aliases` traz só os outros nomes do nó (sem repetir o `nome`).
+- `centros` lista todos os nós de partida: com `centro=agente:X`, entram o nome e o apelido de exibição.
+- Na aresta, `para` é a chave do nó quando `folha` é `false`, e o texto original quando é `true`.
 
 - Busca em largura sobre fatos vigentes, nos dois sentidos (o que o nó usa e o que usa o nó), com profundidade 1 ou 2 e no máximo 50 arestas. Acima disso devolve `cortado: true` e prioriza as arestas mais recentes.
 - As salas têm poucas centenas de fatos, então a busca em Python com os dois índices parciais (sujeito e objeto vigentes) basta. Sem tabela de nós materializada.
