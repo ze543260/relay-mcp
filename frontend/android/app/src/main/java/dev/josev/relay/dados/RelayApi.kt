@@ -66,6 +66,7 @@ class RelayApi(private val conexao: Conexao) {
     private fun pedido(u: HttpUrl) = Request.Builder().url(u)
         .header("Authorization", "Bearer ${conexao.token}")
         .header("User-Agent", AGENTE_USUARIO)
+        .header("X-Relay-Nome", conexao.nome)  // com token de admin, diz de quem é o aparelho (auditoria)
         .header("X-Relay", "1")
 
     private suspend fun executar(req: Request): String = withContext(Dispatchers.IO) {

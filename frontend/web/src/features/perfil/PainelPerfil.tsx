@@ -142,7 +142,7 @@ function Acesso({ perfil, admin }: { perfil: Perfil; admin: boolean }) {
   const a = perfil.acesso!;
   return (
     <div className="grid gap-2 text-sm">
-      <p>{a.token_ativo ? t.tokenAtivo(new Date(a.criado_em).toLocaleDateString("pt-BR")) : t.semToken}</p>
+      <p>{a.token_ativo && a.criado_em ? t.tokenAtivo(new Date(a.criado_em).toLocaleDateString("pt-BR")) : a.so_admin ? t.soAdmin : t.semToken}</p>
       {!!a.dispositivos?.length && (
         <div className="grid gap-1.5">
           <h4 className="text-xs font-medium text-muted-foreground" title={t.dispositivosDica}>{t.dispositivos}</h4>

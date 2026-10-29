@@ -30,9 +30,11 @@ export interface Perfil {
   foto?: number | null;
   pode_trocar_foto?: boolean;
   acesso?: {
-    token_ativo: boolean; criado_em: string; revogado_em: string | null;
+    token_ativo: boolean; criado_em: string | null; revogado_em: string | null;
+    /** Sem token próprio: entra com o token de admin (só os aparelhos vêm). */
+    so_admin?: boolean;
     /** Auditoria: aparelhos onde esse nome entrou, do mais recente pro mais antigo. */
-    dispositivos?: { rotulo: string; via: "token" | "sessao" | "sessao_admin"; ip: string | null; primeiro_em: string; ultimo_em: string }[];
+    dispositivos?: { rotulo: string; via: "token" | "sessao" | "sessao_admin" | "token_admin"; ip: string | null; primeiro_em: string; ultimo_em: string }[];
   };
 }
 

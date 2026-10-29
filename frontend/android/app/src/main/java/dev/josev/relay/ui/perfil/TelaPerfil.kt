@@ -130,7 +130,7 @@ fun TelaPerfil(vm: RelayViewModel, nome: String, admin: Boolean) {
                         }
                     }
                     if (p.tipo == "ia") Secao(Icons.Outlined.AccountTree, "Memória (${p.fatosRegistrados} fatos registrados)") { Memoria(vm, p.nome) }
-                    p.acesso?.let { a -> Secao(Icons.Outlined.Key, "Acesso") { Acesso(vm, p, a.tokenAtivo, a.criadoEm, admin) { versao++ } } }
+                    p.acesso?.let { a -> Secao(Icons.Outlined.Key, "Acesso") { Acesso(vm, p, a.tokenAtivo, a.criadoEm.orEmpty(), admin) { versao++ } } }
                     Spacer(Modifier.height(24.dp))
                 }
             }
@@ -274,7 +274,11 @@ private fun Memoria(vm: RelayViewModel, nome: String) {
 private fun Acesso(vm: RelayViewModel, p: Perfil, ativo: Boolean, criado: String, admin: Boolean, aoMudar: () -> Unit) {
     var confirmar by remember { mutableStateOf(false) }
     val escopo = rememberCoroutineScope()
-    Text(if (ativo) "Token ativo desde ${criado.take(10).split('-').reversed().joinToString("/")}." else "Sem token ativo.")
+    Text(when {
+        ativo -> "Token ativo desde ${criado.take(10).split('-').reversed().joinToString("/")}."
+        p.acesso?.soAdmin == true -> "Sem token próprio: entra com o token de admin."
+        else -> "Sem token ativo."
+    })
     // Auditoria: onde esse nome entrou (app, navegador, MCP), do mais recente pro mais antigo.
     val aparelhos = p.acesso?.dispositivos.orEmpty()
     if (aparelhos.isNotEmpty()) {
@@ -285,7 +289,7 @@ private fun Acesso(vm: RelayViewModel, p: Perfil, ativo: Boolean, criado: String
                 Text(d.rotulo, fontWeight = androidx.compose.ui.text.font.FontWeight.Medium)
                 Text(listOfNotNull(
                     "visto ${quando(d.ultimoEm)}", "desde ${quando(d.primeiroEm)}", d.ip,
-                    when (d.via) { "sessao" -> "login no web"; "sessao_admin" -> "login com token de admin"; else -> "token" },
+                    when (d.via) { "sessao" -> "login no web"; "sessao_admin" -> "login com token de admin"; "token_admin" -> "token de admin"; else -> "token" },
                 ).joinToString(" · "), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }

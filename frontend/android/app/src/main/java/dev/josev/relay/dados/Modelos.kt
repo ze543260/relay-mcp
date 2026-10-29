@@ -102,7 +102,8 @@ data class Persona(
 data class TarefaResumo(val id: Long, val sala: String, val titulo: String, val status: String, val prioridade: String = "nenhuma")
 
 @Serializable
-data class Acesso(@SerialName("token_ativo") val tokenAtivo: Boolean, @SerialName("criado_em") val criadoEm: String,
+data class Acesso(@SerialName("token_ativo") val tokenAtivo: Boolean, @SerialName("criado_em") val criadoEm: String? = null,
+                  @SerialName("so_admin") val soAdmin: Boolean = false,
                   val dispositivos: List<Dispositivo> = emptyList())
 
 @Serializable

@@ -37,7 +37,7 @@ def importa(m: dict) -> bool:
 
 
 def get(caminho: str) -> object:
-    req = urllib.request.Request(URL + caminho, headers={"Authorization": f"Bearer {TOKEN}", "User-Agent": AGENTE_USUARIO})
+    req = urllib.request.Request(URL + caminho, headers={"Authorization": f"Bearer {TOKEN}", "User-Agent": AGENTE_USUARIO, "X-Relay-Nome": NOME})
     with urllib.request.urlopen(req, timeout=15) as r:
         return json.loads(r.read())
 
