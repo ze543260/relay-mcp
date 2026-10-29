@@ -46,7 +46,27 @@ def _instrucoes() -> str | None:
     return _fmt_persona(NOME, p) if isinstance(p, dict) and p.get("persona") else None
 
 
-def _req(metodo: str, caminho: str, corpo: dict | None = None, timeout: float = 15) -> object:
+_ULTIMA_ATIVIDADE = 0.0
+
+
+def _marcar_ativo() -> None:
+    """Status automático: usar uma ferramenta do relay deixa o agente "trabalhando…" por 3 min (no máx. 1 aviso/min)."""
+    global _ULTIMA_ATIVIDADE
+    if time.monotonic() - _ULTIMA_ATIVIDADE < 60:
+        return
+    _ULTIMA_ATIVIDADE = time.monotonic()
+
+    def enviar() -> None:
+        try:
+            _req("PUT", "/status/atividade", {"atividade": "trabalhando", "dura_s": 180}, timeout=5, _status=False)
+        except Exception:  # noqa: BLE001 — servidor antigo ou fora do ar: status é só enfeite
+            pass
+    threading.Thread(target=enviar, daemon=True).start()
+
+
+def _req(metodo: str, caminho: str, corpo: dict | None = None, timeout: float = 15, _status: bool = True) -> object:
+    if _status and caminho != "/digitando":
+        _marcar_ativo()
     req = urllib.request.Request(
         URL + caminho,
         method=metodo,

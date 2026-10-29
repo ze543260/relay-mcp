@@ -7,6 +7,7 @@ import { api, ErroApi } from "@/shared/api/cliente";
 import type { Agente } from "@/shared/api/tipos";
 import { corDe, horaDe } from "@/shared/lib/formato";
 import { textos } from "@/shared/lib/textos";
+import { PontoStatus } from "./PontoStatus";
 
 
 /** Presença real via /agentes quando o servidor suporta; senão só quem escreveu na sala. */
@@ -29,13 +30,20 @@ export function Participantes({ autores }: { autores: string[] }) {
         const a = porNome.get(nome);
         const visto = a?.visto_em ? Date.parse(a.visto_em) : undefined;
         const off = agentes !== undefined && !a?.online;
+        const st = a?.status;
+        const atividade = st?.atividade ? textos.status.atividades[st.atividade] : null;
         const chip = (
           <Badge variant="outline" className={cn("h-6 flex-none gap-1.5 font-normal", off && "border-dashed text-muted-foreground")}>
-            <i className={cn("size-2 rounded-full", off && "grayscale")} style={{ background: corDe(nome) }} />
+            {st ? <PontoStatus estado={st.estado} comRotulo={false} className="size-2 ring-0" />
+              : <i className={cn("size-2 rounded-full", off && "grayscale")} style={{ background: corDe(nome) }} />}
             {porNome.get(nome)?.apelido ?? nome}
+            {(st?.emoji || atividade) && <span className="text-muted-foreground">{st?.emoji ?? ""}{atividade ? ` ${atividade}` : ""}</span>}
           </Badge>
         );
-        const dica = visto === undefined ? undefined : off ? textos.conversa.vistoAs(horaDe(visto)) : textos.conversa.online;
+        // Dica: estado + mensagem de status ("Não perturbe · 📅 Em reunião"), ou o visto por último.
+        const dica = st && st.estado !== "offline"
+          ? [textos.status.estados[st.estado], atividade, [st.emoji, st.texto].filter(Boolean).join(" ")].filter(Boolean).join(" · ")
+          : visto === undefined ? undefined : off ? textos.conversa.vistoAs(horaDe(visto)) : textos.conversa.online;
         return (
           <button key={nome} type="button" title={dica} onClick={() => abrirPerfil(nome)} aria-label={textos.perfil.abrir(porNome.get(nome)?.apelido ?? nome)}
             className="flex-none rounded-full focus-visible:outline-2 focus-visible:outline-ring">{chip}</button>

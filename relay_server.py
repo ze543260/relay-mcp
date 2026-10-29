@@ -237,6 +237,13 @@ MIGRACOES = [
     # 21: admin vira papel da conta. O token pessoal de um admin tem os poderes de admin E identidade forte;
     # o token mestre (RELAY_TOKEN) fica pra emergência.
     "ALTER TABLE agente ADD COLUMN admin INTEGER NOT NULL DEFAULT 0;",
+    # 22: status (estilo Discord/Teams). `modo` é a escolha da pessoa; `ocioso` vem do cliente (sem mexer há
+    # um tempo); `atividade` é o automático dos agentes ("trabalhando…") com prazo curto.
+    """CREATE TABLE IF NOT EXISTS status (
+         nome TEXT PRIMARY KEY,
+         modo TEXT NOT NULL DEFAULT 'auto' CHECK (modo IN ('auto','ausente','ocupado','invisivel')),
+         texto TEXT, emoji TEXT, expira REAL, ocioso INTEGER NOT NULL DEFAULT 0,
+         atividade TEXT, atividade_ate REAL, quando REAL NOT NULL);""",
 ]
 
 STATUS_TAREFA = ("a_fazer", "fazendo", "revisao", "feito")
@@ -768,6 +775,33 @@ def registrar_dispositivo(con: sqlite3.Connection, quem: "Quem", headers, ip: st
         (nome, chave, rotulo_dispositivo(ua), ua, via, ip, agora, agora))
 
 
+MODOS_STATUS = ("auto", "ausente", "ocupado", "invisivel")
+ATIVIDADES = ("trabalhando", "pensando", "em_reuniao")
+STATUS_TEXTO_MAX = 80
+
+
+def status_publico(linha: tuple | None, visto: float | None, agora: float, proprio: bool = False) -> dict:
+    """Status como os outros veem. `estado`: online | ausente | ocupado | offline (invisível aparece offline).
+    Pra própria pessoa, `modo` mostra a escolha real (inclusive invisível)."""
+    modo, texto, emoji, expira, ocioso, atividade, atividade_ate = linha or ("auto", None, None, None, 0, None, None)
+    if expira and expira <= agora:
+        texto = emoji = expira = None
+    conectado = bool(visto and agora - visto < ONLINE_S)
+    if not conectado or (modo == "invisivel" and not proprio):
+        estado = "offline"
+    elif modo == "ocupado":
+        estado = "ocupado"
+    elif modo == "ausente" or ocioso:
+        estado = "ausente"
+    else:
+        estado = "online"
+    saida = {"estado": estado, "texto": texto, "emoji": emoji, "expira_em": iso(expira) if expira else None,
+             "atividade": atividade if (atividade and atividade_ate and atividade_ate > agora and estado != "offline") else None}
+    if proprio:
+        saida["modo"] = modo
+    return saida
+
+
 def marcar_visto(con: sqlite3.Connection, nome: str | None) -> None:
     if nome and NOME_RE.match(nome):
         con.execute(
@@ -918,6 +952,10 @@ class Handler(BaseHTTPRequestHandler):
                 ("GET", "/mensagens/stream"): self.stream,
                 ("POST", "/mensagens"): self.postar,
                 ("GET", "/agentes"): self.agentes,
+                ("GET", "/status/eu"): self.ver_meu_status,
+                ("PUT", "/status"): self.definir_status,
+                ("PUT", "/status/ocioso"): self.marcar_ocioso,
+                ("PUT", "/status/atividade"): self.marcar_atividade,
                 ("POST", "/agentes"): self.criar_agente,
                 ("POST", "/arquivos"): self.subir_arquivo,
                 ("POST", "/digitando"): self.marcar_digitando,
@@ -1184,13 +1222,86 @@ class Handler(BaseHTTPRequestHandler):
             ).fetchall()
             apelidos = dict(con.execute("SELECT nome, apelido FROM apelido"))
             fotos = dict(con.execute("SELECT nome, versao FROM foto"))
+            status = {r[0]: r[1:] for r in con.execute(
+                "SELECT nome, modo, texto, emoji, expira, ocioso, atividade, atividade_ate FROM status")}
         agora = time.time()
-        self._json(200, [
-            {"nome": n, "apelido": apelidos.get(n), "visto_em": iso(v) if v else None, "online": bool(v and agora - v < ONLINE_S),
-             "tipo": t or ("ia" if re.match(r"^(claude|gemma|qwen|llama|gpt)", n) else "humano"),
-             "tem_token": bool(tk), "foto": fotos.get(n)}
-            for n, v, t, tk in linhas
-        ])
+        saida = []
+        for n, v, t, tk in linhas:
+            st = status_publico(status.get(n), v, agora)
+            # Invisível: some da lista de online e o "visto por último" não denuncia.
+            invisivel = status.get(n, ("auto",))[0] == "invisivel"
+            saida.append({"nome": n, "apelido": apelidos.get(n),
+                          "visto_em": iso(v) if v and not invisivel else None, "online": st["estado"] != "offline",
+                          "tipo": t or ("ia" if re.match(r"^(claude|gemma|qwen|llama|gpt)", n) else "humano"),
+                          "tem_token": bool(tk), "foto": fotos.get(n), "status": st})
+        self._json(200, saida)
+
+    # status (estilo Discord/Teams)
+
+    def _status_linha(self, con: sqlite3.Connection, nome: str) -> tuple | None:
+        return con.execute("SELECT modo, texto, emoji, expira, ocioso, atividade, atividade_ate FROM status WHERE nome=?",
+                           (nome,)).fetchone()
+
+    def _gravar_status(self, con: sqlite3.Connection, nome: str, **campos: object) -> None:
+        con.execute("INSERT INTO status (nome, quando) VALUES (?, ?) ON CONFLICT(nome) DO NOTHING", (nome, time.time()))
+        sets = ", ".join(f"{k}=?" for k in campos)
+        con.execute(f"UPDATE status SET {sets}, quando=? WHERE nome=?", (*campos.values(), time.time(), nome))
+
+    def _eu_status(self, con: sqlite3.Connection) -> str:
+        quem = self._quem(con)
+        if not quem.nome or quem.mestre:
+            raise ErroHttp(403, "sem_nome", "Status é da própria conta: entre com o seu token.")
+        return quem.nome
+
+    def ver_meu_status(self, _q: dict) -> None:
+        with conectar() as con:
+            nome = self._eu_status(con)
+            visto = con.execute("SELECT visto FROM presenca WHERE nome=?", (nome,)).fetchone()
+            st = status_publico(self._status_linha(con, nome), visto[0] if visto else time.time(), time.time(), proprio=True)
+        self._json(200, {"nome": nome, **st})
+
+    def definir_status(self, _q: dict) -> None:
+        """{modo?, texto?, emoji?, dura_s?}: escolha da pessoa. Texto vazio limpa; dura_s (até 7 dias) faz o texto expirar."""
+        c = self._corpo()
+        campos: dict[str, object] = {}
+        if "modo" in c:
+            if c["modo"] not in MODOS_STATUS:
+                raise ErroHttp(400, "modo_invalido", f"modo: {', '.join(MODOS_STATUS)}")
+            campos["modo"] = c["modo"]
+        if "texto" in c or "emoji" in c:
+            texto = " ".join(str(c.get("texto") or "").split())[:STATUS_TEXTO_MAX] or None
+            emoji = (str(c.get("emoji") or "").strip()[:8]) or None
+            if texto and CREDENCIAL_RE.search(texto):
+                raise ErroHttp(422, "credencial_detectada", "O status parece conter uma credencial.")
+            dura = c.get("dura_s")
+            campos.update(texto=texto, emoji=emoji,
+                          expira=time.time() + min(int(dura), 7 * 86400) if (dura and (texto or emoji)) else None)
+        with conectar() as con:
+            nome = self._eu_status(con)
+            if campos:
+                self._gravar_status(con, nome, **campos)
+            st = status_publico(self._status_linha(con, nome), time.time(), time.time(), proprio=True)
+        notificar()
+        self._json(200, {"nome": nome, **st})
+
+    def marcar_ocioso(self, _q: dict) -> None:
+        """O cliente avisa quando a pessoa ficou parada (ou voltou): vira 'ausente' automático."""
+        ocioso = bool(self._corpo().get("ocioso"))
+        with conectar() as con:
+            self._gravar_status(con, self._eu_status(con), ocioso=int(ocioso))
+        self._vazio()
+
+    def marcar_atividade(self, _q: dict) -> None:
+        """Agentes: {atividade: trabalhando|pensando|em_reuniao|null, dura_s ≤ 600}. Expira sozinha."""
+        c = self._corpo()
+        atividade = c.get("atividade")
+        if atividade is not None and atividade not in ATIVIDADES:
+            raise ErroHttp(400, "atividade_invalida", f"atividade: {', '.join(ATIVIDADES)} ou null")
+        dura = min(max(int(c.get("dura_s") or 180), 10), 600)
+        with conectar() as con:
+            self._gravar_status(con, self._eu_status(con), atividade=atividade,
+                                atividade_ate=time.time() + dura if atividade else None)
+        self._vazio()
 
     def criar_agente(self, _q: dict) -> None:
         corpo = self._corpo()

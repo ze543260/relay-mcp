@@ -46,6 +46,20 @@ export interface Agente {
   tem_token: boolean;
   /** Versão da foto de perfil; null = só iniciais. */
   foto?: number | null;
+  /** Status estilo Discord/Teams (servidor novo). */
+  status?: StatusPessoa;
+}
+
+export type EstadoStatus = "online" | "ausente" | "ocupado" | "offline";
+export type ModoStatus = "auto" | "ausente" | "ocupado" | "invisivel";
+
+export interface StatusPessoa {
+  estado: EstadoStatus;
+  texto: string | null;
+  emoji: string | null;
+  expira_em: string | null;
+  /** Automático dos agentes: trabalhando, pensando, em_reuniao. */
+  atividade: string | null;
 }
 
 export interface AgenteCriado {
