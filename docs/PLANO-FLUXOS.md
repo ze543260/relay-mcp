@@ -96,3 +96,138 @@ Depende do `PLANO-PAPEIS.md` (dono do agente, quem pode pedir) e do `PLANO-REPOS
 1. Docker Desktop como pré-requisito no Windows, ou WSL?
 2. Fluxos podem usar segredos (ex.: token de staging)? Proposta: não na fase 1; depois, segredo local por fluxo, nunca vindo do relay.
 3. Limite de execuções simultâneas por dono.
+
+## 11. Estudo: condicionais, laços e editor em fluxograma
+
+Pedido do João em [370]. Até a seção 10 o fluxo é uma lista reta de passos. Aqui ele vira um **fluxograma**, com desvios e repetições, montado por interface e guardado localmente por hash. A regra central (seção 2) não muda: **só roda o que o dono aprovou, byte a byte**. Condição e laço só escolhem entre caminhos que já estavam no fluxo aprovado e nunca criam passo novo.
+
+### 11.1 Modelo: um grafo de nós com limite
+
+O fluxo passa a ser um grafo dirigido. O formato canônico é JSON e o YAML continua aceito na entrada.
+
+```yaml
+nome: testar-pr
+versao: 4
+parametros:
+  repo: { tipo: escolha, de: repos_aprovados }
+  pr:   { tipo: inteiro, min: 1 }
+  navegadores: { tipo: lista, de: [chromium, firefox], max: 2 }
+limites: { passos_max: 40, tempo_max: 20m }
+nos:
+  - id: clonar
+    clonar: "{repo}"
+    ref: "pull/{pr}/head"
+    proximo: instalar
+  - id: instalar
+    rodar: [npm, ci]
+    saidas: { codigo: inteiro }
+    proximo: ok_instalar
+  - id: ok_instalar
+    se: "instalar.codigo == 0"
+    entao: por_navegador
+    senao: falhou
+  - id: por_navegador
+    para_cada: { item: nav, em: "params.navegadores", max: 2 }
+    corpo: e2e
+    depois: resumo
+  - id: e2e
+    rodar: [npx, playwright, test, --project, "{nav}"]
+    tentar_de_novo: { vezes: 2, se: "e2e.codigo != 0" }
+    saidas: { codigo: inteiro }
+  - id: resumo
+    agente: "Resuma os resultados dos testes em até 10 linhas."
+    saidas: { veredito: { tipo: escolha, de: [aprovado, ajustes, bloqueado] } }
+    proximo: fim
+  - id: falhou
+    falhar: "npm ci falhou"
+  - id: fim
+    terminar: true
+layout: { clonar: [0, 0], instalar: [0, 120] }   # posições do editor, fora do hash
+```
+
+**Tipos de nó**
+
+| Nó | Faz | Limite |
+|---|---|---|
+| `clonar`, `rodar`, `servir`, `agente` | os passos da seção 3 | os de lá |
+| `se` | desvia por uma condição (`entao` / `senao`) | os dois ramos são obrigatórios |
+| `escolher` | desvia por um valor `escolha` (um ramo por opção + `padrao`) | opções fechadas |
+| `para_cada` | repete um subgrafo para cada item de uma lista | `max` obrigatório, ≤ 20 |
+| `repetir_ate` | repete até a condição ser verdadeira | `max` obrigatório, ≤ 10 |
+| `tentar_de_novo` | atributo de um passo, não um nó | `vezes` ≤ 3 |
+| `aprovar` | pausa até o dono confirmar (Clawd ou app) | expira em 30 min |
+| `falhar`, `terminar` | encerram | — |
+
+**Não existe `enquanto` sem limite nem `ir_para` livre.** Todo ciclo do grafo sai de um nó de laço com `max`, então o pior caso é calculável antes de rodar.
+
+### 11.2 Condições: uma linguagem pequena, sem `eval`
+
+- Gramática fechada: comparações (`== != < <= > >=`), `e`, `ou`, `nao`, `em`, parênteses, literais (número, texto, booleano) e referências `params.x`, `<no>.<saida>` e `<laco>.indice`.
+- Interpretada por um parser próprio de umas 150 linhas, com testes. Nunca passa por `eval`, Python ou shell. Na aprovação, uma referência a nó ou saída que não existe é recusada.
+- **Só as saídas declaradas e tipadas** entram em condição (`saidas:`). O texto livre de um passo `agente` não entra: o agente devolve uma `escolha` fechada (`veredito`), validada pelo executor. Assim, uma injeção de prompt no código do PR pode no máximo puxar um ramo que o dono já aprovou, nunca criar um caminho.
+- Condição não lê variável de ambiente, arquivo nem segredo.
+
+### 11.3 Validação estática (antes de aprovar e de novo antes de rodar)
+
+1. Todo nó é alcançável a partir do primeiro, e todo caminho termina em `terminar` ou `falhar`.
+2. Todo ciclo passa por um nó de laço com `max`. Por enquanto não há laço aninhado mais de 2 níveis.
+3. **Pior caso calculado**: o maior número de passos possível, multiplicando os `max`. Se passar de `limites.passos_max` (teto absoluto de 200), o fluxo é recusado. A tela de aprovação mostra esse número ("no pior caso: 14 passos, 20 min").
+4. Parâmetros, saídas e `{interpolacoes}` referenciam coisas declaradas. A interpolação só vale dentro de argumentos de lista (seção 3), nunca para montar comando.
+5. No máximo 100 nós e 64 KB por fluxo.
+
+### 11.4 Hash e armazenamento local
+
+- **O hash sai da forma canônica, não do texto**: JSON canônico (RFC 8785, JCS) do fluxo **sem** `layout`. Assim, reindentar o YAML ou arrastar caixinhas no editor não pede nova aprovação, mas mudar um argumento, uma condição ou uma seta pede.
+- Pasta endereçada por conteúdo, no PC do dono:
+  ```
+  ~/.relay/fluxos/
+    objetos/sha256/ab/abcd….json   # forma canônica, somente leitura
+    aprovados.json                  # {nome, versao, sha256, quem_pode_pedir, modo, aprovado_em}
+    layout/<sha256>.json            # posições do editor (não confiável, só visual)
+    auditoria/<data>-<id>.json
+  ```
+  O nome do arquivo é o próprio hash: o executor recalcula ao abrir, e se não bater, o arquivo é apagado e baixado de novo. O `aprovados.json` guarda também o próprio hash num arquivo vizinho, para detectar edição fora do executor.
+- **Baixar uma vez, rodar offline**: o executor roda o objeto local aprovado. O relay só manda o pedido (nome, versão, parâmetros), e o executor nem consulta o catálogo para executar. Se o relay for comprometido, o fluxo continua o mesmo.
+- **Depois (fase 6)**: assinatura Ed25519 de quem publicou (`minisign`), para o dono saber que a versão nova veio da mesma pessoa. O hash garante que o conteúdo não mudou; a assinatura diz quem o escreveu.
+
+### 11.5 Editor em fluxograma (web; app só visualiza)
+
+- Biblioteca: **React Flow (`@xyflow/react`)**. É MIT, feita para editor de nós, tem setas, zoom, minimapa e layout salvo, e fica leve no bundle do Vite. Layout automático com `elkjs` no botão "organizar".
+- **Paleta** com os tipos de nó; arrastar para o quadro; ligar saindo das portas (`entao`/`senao` são portas diferentes, coloridas).
+- **Painel do nó** com formulário tipado em vez de texto livre: `rodar` monta a lista de argumentos em chips; `se` tem um **construtor de condição** com listas suspensas (saída › operador › valor) e um modo texto opcional, validado ao digitar.
+- **Validação ao vivo** (11.3) com o erro marcado no nó, mais o contador de pior caso no rodapé.
+- **Simular**: roda o grafo com saídas falsas escolhidas na mão (ex.: `instalar.codigo = 1`) e acende o caminho. Não executa nada.
+- **Ver como YAML**, nos dois sentidos, e **Publicar** (`POST /fluxos`). Publicar não aprova (seção 4).
+- **Tela de aprovação (executor/Clawd)**: o fluxograma com **diff visual** contra a versão aprovada (nó novo em verde, alterado em amarelo, seta removida tracejada), o diff textual da forma canônica e o pior caso. Aprovar continua sendo **no PC do dono**: o web só mostra.
+
+### 11.6 Execução: máquina de estados
+
+- O executor percorre o grafo nó a nó. Cada transição vai para a auditoria (`no`, `entrada`, `saida`, `ramo_escolhido`, `duracao`), e a tela de "revisar depois" redesenha o fluxograma com o caminho que rodou.
+- Contadores globais de passos e tempo são checados a cada nó, além dos `max` de cada laço. Se estourar, o executor mata o container e registra.
+- Na fase 1 não há retomada: se o executor cair no meio, a execução é marcada como `interrompida` e precisa de um novo pedido.
+
+### 11.7 Testes novos
+
+- Ciclo sem nó de laço → recusado; `para_cada` sem `max` → recusado; pior caso acima do limite → recusado com o número.
+- Condição com `__import__`, `;`, crase ou referência inexistente → recusada no parser.
+- Agente devolvendo um `veredito` fora das opções → o passo falha, e nenhum ramo é escolhido.
+- Mudar só o `layout` mantém o hash; mudar uma condição muda o hash e pede aprovação.
+- Objeto local adulterado → detectado ao abrir, rebaixado ou recusado.
+- Simular não cria container nem processo.
+
+### 11.8 Fases (encaixam no plano da seção 8)
+
+| Fase | Entrega |
+|---|---|
+| 1b | Modelo de grafo + parser de condição + validação estática + hash canônico (só back e executor, sem tela) |
+| 2b | Editor React Flow no web: montar, validar, simular, publicar |
+| 3b | Tela de aprovação com diff visual; auditoria com caminho percorrido |
+| 6 | Assinatura do publicador |
+
+Divisão: back, executor e parser comigo; editor e telas com o Lume.
+
+### 11.9 Em aberto
+
+1. Paralelismo (dois ramos ao mesmo tempo): fica de fora até a fase 3b, porque complica a auditoria e os limites.
+2. Subfluxos (um fluxo chamar outro aprovado pelo hash): úteis, mas cada um somaria o pior caso do outro. Proposta: depois da fase 3b.
+3. Saídas de arquivo (`relatorio.md`) entram em condição só por existência/tamanho, nunca pelo conteúdo?
