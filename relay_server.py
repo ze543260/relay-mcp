@@ -598,8 +598,9 @@ def conteudo_artefato(c: dict) -> tuple[str, str | None]:
 
 
 def consulta_fts(termo: str) -> str:
-    """Termo livre -> expressão FTS5 segura: cada palavra entre aspas, com prefixo (`reun` acha `reunião`)."""
-    palavras = re.findall(r"\w+", termo)[:8]
+    """Termo livre -> expressão FTS5 segura: cada palavra entre aspas, com prefixo (`reun` acha `reunião`).
+    Palavras de 1 caractere ficam de fora: como prefixo, casariam quase tudo."""
+    palavras = [p for p in re.findall(r"\w+", termo) if len(p) >= 2][:8]
     return " ".join(f'"{p}"*' for p in palavras)
 
 
@@ -1055,13 +1056,21 @@ class Handler(BaseHTTPRequestHandler):
         delas me mencionam (@nome, @apelido) ou são privadas para mim."""
         filtro, args = filtro_visiveis(quem, eu, False, "m.")
         apelido = con.execute("SELECT apelido FROM apelido WHERE nome=?", (eu,)).fetchone()
-        marcas = [f"%@{eu}%"] + ([f"%@{apelido[0]}%"] if apelido else [])
-        mencao = " OR ".join(["m.para=?"] + ["m.texto LIKE ?"] * len(marcas))
-        return {s: (n, men or 0) for s, n, men in con.execute(
-            f"SELECT m.sala, COUNT(*), SUM(CASE WHEN {mencao} THEN 1 ELSE 0 END) FROM msg m "
-            "LEFT JOIN leitura l ON l.nome=? AND l.sala=m.sala "
-            f"WHERE m.id>COALESCE(l.ultimo_id, 0) AND m.de IS NOT ? AND {filtro} GROUP BY m.sala",
-            [eu, *marcas, eu, eu, *args])}
+        nomes = [eu] + ([apelido[0]] if apelido else [])
+        # O LIKE só pré-filtra; a fronteira do nome (`@ana` não é `@ana2`) é conferida aqui no Python.
+        exato = re.compile(r"@(?:" + "|".join(map(re.escape, nomes)) + r")(?![\w.-])", re.IGNORECASE)
+        marcas = [f"%@{n}%" for n in nomes]
+        talvez = " OR ".join(["m.texto LIKE ?"] * len(marcas))
+        contagem: dict[str, list[int]] = {}
+        for sala, privada, texto in con.execute(
+                f"SELECT m.sala, m.para=?, CASE WHEN {talvez} THEN m.texto END FROM msg m "
+                "LEFT JOIN leitura l ON l.nome=? AND l.sala=m.sala "
+                f"WHERE m.id>COALESCE(l.ultimo_id, 0) AND m.de IS NOT ? AND {filtro}",
+                [eu, *marcas, eu, eu, *args]):
+            c = contagem.setdefault(sala, [0, 0])
+            c[0] += 1
+            c[1] += bool(privada or (texto and exato.search(texto)))
+        return {s: (n, m) for s, (n, m) in contagem.items()}
 
     def agentes(self, _q: dict) -> None:
         with conectar() as con:
