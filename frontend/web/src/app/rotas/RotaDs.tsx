@@ -1,5 +1,6 @@
 import { Link } from "@tanstack/react-router";
-import { ArrowLeftIcon, SendHorizontalIcon } from "lucide-react";
+import { useState } from "react";
+import { ArrowLeftIcon, CheckCheckIcon, CheckIcon, SendHorizontalIcon } from "lucide-react";
 import tokens from "../../../../design/tokens.json";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -15,6 +16,32 @@ type Cores = Record<string, string>;
 const agora = Date.now() / 1000 - 3600;
 const exemplo = (id: number, de: string, texto: string, extra: Partial<TMensagem> = {}): TMensagem =>
   ({ id, de, para: null, texto, criado: agora, ...extra });
+
+/** Demonstração das animações do produto (as mesmas classes); "reduzir movimento" desliga todas. */
+function Movimento() {
+  const [n, setN] = useState(1);
+  const [lida, setLida] = useState(false);
+  const linha = (rotulo: string, filho: React.ReactNode) => (
+    <div className="flex min-h-10 items-center gap-4 text-sm"><span className="w-40 flex-none text-muted-foreground">{rotulo}</span>{filho}</div>
+  );
+  return (
+    <div className="grid gap-2">
+      <div className="flex flex-wrap gap-2">
+        <Button size="sm" onClick={() => { setN((x) => x + 1); setLida(false); }}>Chegou mensagem</Button>
+        <Button size="sm" variant="outline" onClick={() => setLida(true)}>Marcar lida</Button>
+      </div>
+      {linha("Mensagem nova", <span key={n} className="rounded-lg border bg-bolha px-3 py-1.5 motion-safe:animate-[entra_var(--mov-padrao)_var(--mov-curva)]">Mensagem {n}</span>)}
+      {linha("Enviada → lida", lida
+        ? <CheckCheckIcon key="l" aria-label="Vista por todos" className="size-4 text-primary motion-safe:animate-[pop_150ms_var(--mov-curva)]" />
+        : <CheckIcon key="e" aria-label="Entregue" className="size-4 text-muted-foreground motion-safe:animate-[pop_150ms_var(--mov-curva)]" />)}
+      {linha("Selo de menção", <span key={n} className="rounded-full bg-primary px-1.5 text-xs font-bold text-primary-foreground motion-safe:animate-[pop_150ms_var(--mov-curva)]">@{n}</span>)}
+      {linha("Menção chegando", <span key={n} className="rounded-lg border border-primary/60 bg-primary/8 px-3 py-1.5 motion-safe:animate-[acende_600ms_var(--mov-curva)]">@jose olha isso</span>)}
+      {linha("Digitando", <span className="flex gap-0.5" aria-hidden>{[0, 1, 2].map((i) => <i key={i} className="size-1.5 rounded-full bg-muted-foreground motion-safe:animate-[ponto_1.2s_infinite]" style={{ animationDelay: `${i * 150}ms` }} />)}</span>)}
+      {linha("Carregando", <Skeleton className="h-4 w-48" />)}
+      <p className="text-sm text-muted-foreground">Tema: o botão de sol/lua da sala revela o tema novo em círculo a partir do clique (View Transitions, 450 ms); sem suporte, cross-fade de 220 ms.</p>
+    </div>
+  );
+}
 
 function Secao({ titulo, descricao, children }: { titulo: string; descricao?: string; children: React.ReactNode }) {
   return (
@@ -162,6 +189,10 @@ export function RotaDs() {
             <Vitrine tema="light" />
             <Vitrine tema="dark" />
           </div>
+        </Secao>
+
+        <Secao titulo="Movimento" descricao="Curtas, com propósito e só transform/opacity; com “reduzir movimento” viram troca instantânea.">
+          <Movimento />
         </Secao>
 
         <Secao titulo="Regras">

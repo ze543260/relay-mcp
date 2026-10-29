@@ -68,7 +68,7 @@ function Digitando({ nomes }: { nomes: string[] }) {
       {texto && (
         <>
           <span className="flex gap-0.5" aria-hidden>
-            {[0, 1, 2].map((i) => <i key={i} className="size-1 rounded-full bg-muted-foreground motion-safe:animate-bounce" style={{ animationDelay: `${i * 120}ms` }} />)}
+            {[0, 1, 2].map((i) => <i key={i} className="size-1 rounded-full bg-muted-foreground motion-safe:animate-[ponto_1.2s_infinite]" style={{ animationDelay: `${i * 150}ms` }} />)}
           </span>
           {texto}
         </>
@@ -268,14 +268,14 @@ export function Conversa(props: Props) {
               return (
                 <div key={v.key} data-index={v.index} ref={virtual.measureElement}
                   className={cn("absolute top-0 left-0 w-full rounded-xl transition-shadow duration-500",
-                    it.tipo === "msg" && it.m.id === destaque && "ring-2 ring-primary ring-offset-4 ring-offset-background")}
+                    it.tipo === "msg" && it.m.id === destaque && "ring-2 ring-primary ring-offset-4 ring-offset-background motion-safe:animate-[destaque_1s_var(--mov-curva)]")}
                   style={{ transform: `translateY(${v.start}px)` }}>
                   {it.tipo === "data" ? (
                     <div role="separator" aria-label={it.rotulo} className="flex items-center gap-3 py-1 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
                       <span className="h-px flex-1 bg-border" />{it.rotulo}<span className="h-px flex-1 bg-border" />
                     </div>
                   ) : it.tipo === "divisor" ? (
-                    <div role="separator" aria-label={t.novas} className="flex items-center gap-3 text-xs font-medium text-primary">
+                    <div role="separator" aria-label={t.novas} className="flex items-center gap-3 text-xs font-medium text-primary motion-safe:animate-[surge_var(--mov-padrao)_var(--mov-curva)]">
                       <span className="h-px flex-1 bg-primary/40" />{t.novas}<span className="h-px flex-1 bg-primary/40" />
                     </div>
                   ) : it.tipo === "msg" ? (
@@ -298,8 +298,8 @@ export function Conversa(props: Props) {
       </div>
       {!noFim && (
         <Button size="sm" variant={novasAbaixo > 0 ? "default" : "secondary"} onClick={() => { presoNoFim.current = true; irParaFim(); }}
-          className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full shadow-lg">
-          <ArrowDownIcon /> {novasAbaixo > 0 ? t.novasAbaixo(novasAbaixo) : t.irParaFim}
+          className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full shadow-lg motion-safe:animate-[surgeBotao_150ms_var(--mov-curva)]">
+          <ArrowDownIcon /> <span key={novasAbaixo} className="motion-safe:animate-[sobe_150ms_var(--mov-curva)]">{novasAbaixo > 0 ? t.novasAbaixo(novasAbaixo) : t.irParaFim}</span>
         </Button>
       )}
       <Digitando nomes={digitando.map(mostrar)} />
