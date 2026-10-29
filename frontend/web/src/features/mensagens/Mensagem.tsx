@@ -121,8 +121,8 @@ export const Mensagem = memo(function Mensagem(props: Props) {
           {estado === "erro" && <span className="text-destructive">{t.falhou}</span>}
           {minha && estado === undefined && vistaPorTodos !== undefined && (
             vistaPorTodos
-              ? <CheckCheckIcon className="size-3.5 text-primary" aria-label={t.vistaPorTodos} />
-              : <CheckIcon className="size-3.5" aria-label={t.entregue} />
+              ? <CheckCheckIcon key="lida" className="size-3.5 text-primary motion-safe:animate-[pop_150ms_var(--mov-curva)]" aria-label={t.vistaPorTodos} />
+              : <CheckIcon key="entregue" className="size-3.5 motion-safe:animate-[pop_150ms_var(--mov-curva)]" aria-label={t.entregue} />
           )}
           {confirmada && (acoes ? (
             <Suspense fallback={<Button variant="ghost" size="icon-xs" className={GATILHO} disabled aria-label={t.acoes}><EllipsisIcon /></Button>}>
@@ -156,6 +156,8 @@ export const Mensagem = memo(function Mensagem(props: Props) {
             " px-3 py-2.5 text-[15px] [overflow-wrap:anywhere] md:px-3.5 md:text-sm",
             minha ? "border-primary/35" : "border-border",
             mencionaMe && !minha && "border-primary/60 bg-primary/8 ring-1 ring-primary/30",
+            // Menção que acabou de chegar: a borda acende uma vez.
+            mencionaMe && !minha && recente && "motion-safe:animate-[acende_600ms_var(--mov-curva)]",
             estado === "enviando" && "opacity-60",
             estado === "erro" && "border-destructive/60",
           )}>

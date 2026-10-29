@@ -101,6 +101,20 @@
 }
 
 @keyframes entra { from { opacity: 0; transform: translateY(6px); } }
+/* Troca de tema (View Transitions): círculo vem do JS; o resto é cross-fade de 220 ms. */
+:root[data-transicao="circulo"]::view-transition-old(root),
+:root[data-transicao="circulo"]::view-transition-new(root) { animation: none; mix-blend-mode: normal; }
+:root[data-transicao="circulo"]::view-transition-new(root) { z-index: 1; }
+:root[data-transicao="fade"]::view-transition-group(root) { animation-duration: 220ms; }
+@keyframes gira { from { transform: rotate(-90deg) scale(.6); opacity: 0; } }
+@keyframes acende { 40% { box-shadow: 0 0 0 4px color-mix(in oklab, var(--primary) 35%, transparent); } }
+@keyframes destaque { 0%, 60% { box-shadow: 0 0 0 6px color-mix(in oklab, var(--primary) 30%, transparent); } }
+@keyframes surge { from { opacity: 0; } }
+@keyframes surgeBotao { from { opacity: 0; transform: scale(.9); } }
+@keyframes sobe { from { opacity: 0; transform: translateY(6px); } }
+@keyframes ponto { 0%, 60%, 100% { opacity: .5; transform: none; } 30% { opacity: 1; transform: translateY(-3px); } }
+@keyframes brilho { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+@keyframes aba { from { opacity: 0; transform: translateY(4px); } }
 @keyframes paleta { from { opacity: 0; transform: scale(.98); } }
 @keyframes pop { 50% { transform: scale(1.2); } }
 @keyframes pulso {

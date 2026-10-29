@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { Navigate, useNavigate } from "@tanstack/react-router";
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 // cmdk + Dialog só quando a paleta abre pela primeira vez.
 const Quadro = lazy(() => import("@/features/equipe/Quadro"));
@@ -123,6 +123,18 @@ export function RotaSala() {
   }, [agentes, autores.join("|")]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [aba, setAba] = useState<"conversa" | "quadro" | "memoria" | "artefatos">("conversa");
+  const abasRef = useRef<HTMLDivElement>(null);
+  const [indicador, setIndicador] = useState({ x: 0, w: 0 });
+  useLayoutEffect(() => {
+    const medir = () => {
+      const b = abasRef.current?.querySelector<HTMLElement>(`[data-aba="${aba}"]`);
+      if (b) setIndicador({ x: b.offsetLeft, w: b.offsetWidth });
+    };
+    medir();
+    const ro = new ResizeObserver(medir);
+    if (abasRef.current) ro.observe(abasRef.current);
+    return () => ro.disconnect();
+  }, [aba]);
   const [artefatoAberto, setArtefatoAberto] = useState<number | null>(null);
   const abrirArtefato = useCallback((id: number) => setArtefatoAberto(id), []);
   const [perfilAberto, setPerfilAberto] = useState<string | null>(null);
@@ -195,11 +207,14 @@ export function RotaSala() {
           ) : (
             <h1 className="min-w-0 flex-1 truncate text-base font-semibold md:flex-none">#{sala}</h1>
           )}
-          <div role="tablist" aria-label={te.abas} className="hidden rounded-lg bg-superficie p-0.5 md:flex">
+          <div role="tablist" aria-label={te.abas} ref={abasRef} className="relative hidden rounded-lg bg-superficie p-0.5 md:flex">
+            {/* Indicador desliza até a aba escolhida. */}
+            <span aria-hidden className="absolute inset-y-0.5 left-0 rounded-md bg-card shadow-xs transition-[translate,width] duration-[var(--mov-rapido)] ease-[var(--mov-curva)]"
+              style={{ translate: `${indicador.x}px`, width: indicador.w, opacity: indicador.w ? 1 : 0 }} />
             {ABAS.map(([id, Icone, rotulo]) => (
-              <button key={id} role="tab" aria-selected={aba === id} onClick={() => setAba(id)}
-                className={cn("flex min-h-7 items-center gap-1.5 rounded-md px-3 text-sm transition-colors",
-                  aba === id ? "bg-card font-medium text-foreground shadow-xs" : "text-muted-foreground hover:text-foreground")}>
+              <button key={id} role="tab" aria-selected={aba === id} data-aba={id} onClick={() => setAba(id)}
+                className={cn("relative flex min-h-7 items-center gap-1.5 rounded-md px-3 text-sm transition-colors",
+                  aba === id ? "font-medium text-foreground" : "text-muted-foreground hover:text-foreground")}>
                 <Icone className="size-3.5" aria-hidden />{rotulo}
               </button>
             ))}
@@ -213,8 +228,14 @@ export function RotaSala() {
           <Button variant="ghost" size="icon" className="size-11 md:size-8"
             aria-label={temaResolvido === "escuro" ? textos.tema.paraClaro : textos.tema.paraEscuro}
             title={temaResolvido === "escuro" ? textos.tema.paraClaro : textos.tema.paraEscuro}
-            onClick={() => escolherTema(temaResolvido === "escuro" ? "claro" : "escuro")}>
-            {temaResolvido === "escuro" ? <SunIcon /> : <MoonIcon />}
+            onClick={(e) => {
+              const r = e.currentTarget.getBoundingClientRect();
+              escolherTema(temaResolvido === "escuro" ? "claro" : "escuro", { x: r.left + r.width / 2, y: r.top + r.height / 2 });
+            }}>
+            {/* key: o ícone novo entra girando 90°. */}
+            {temaResolvido === "escuro"
+              ? <SunIcon key="sol" className="motion-safe:animate-[gira_300ms_cubic-bezier(.2,0,0,1)]" />
+              : <MoonIcon key="lua" className="motion-safe:animate-[gira_300ms_cubic-bezier(.2,0,0,1)]" />}
           </Button>
           {!reuniaoAtiva && !doCanal && (
             <Button variant="outline" size="sm" className="hidden md:inline-flex" onClick={() => setNovaReuniao(true)}>
@@ -247,6 +268,8 @@ export function RotaSala() {
             <NovaReuniao sala={sala} eu={nome} candidatos={candidatos} aberto={novaReuniao} setAberto={setNovaReuniao} />
           </Suspense>
         )}
+        {/* Troca de aba: o conteúdo entra com fade + 4 px. */}
+        <div key={aba} className="flex min-h-0 flex-1 flex-col motion-safe:animate-[aba_var(--mov-padrao)_var(--mov-curva)]">
         {aba === "artefatos" ? (
           <Suspense fallback={<div className="flex-1" />}><Artefatos sala={doCanal?.sala ?? sala} /></Suspense>
         ) : aba === "memoria" ? (
@@ -268,6 +291,7 @@ export function RotaSala() {
               aoDigitar={(d) => (d ? digitar.avisar() : digitar.parar())} />
           </>
         )}
+        </div>
         {/* Celular: abas embaixo, como no app; somem enquanto se digita (o teclado já ocupa a tela). */}
         <nav aria-label={te.abas} className="flex border-t bg-card pb-[env(safe-area-inset-bottom)] group-has-[textarea:focus]/sala:hidden md:hidden">
           {ABAS.map(([id, Icone, rotulo]) => (
