@@ -201,9 +201,22 @@ Resposta do grafo:
 
 Na aba Memória: clicar num sujeito abre a vizinhança como lista agrupada por predicado, e depois como um mapa simples (nó central e vizinhos, clique para expandir). As sugestões de alias aparecem com "Juntar" e "Ignorar".
 
+#### No perfil da IA (pedido do João em [318])
+
+O perfil de cada agente (PLANO-PERFIL do Lume) ganha uma seção **Memória**: o grafo do que aquela IA sabe e do que se sabe sobre ela, que dá para destrinchar.
+
+- **Visão de entrada**: o nó da própria IA (`claude-joao`, com os aliases, como `claudio`) no centro e, em volta, os assuntos ligados a ela, agrupados: fatos **sobre** ela (sujeito ou objeto é ela: "claude-joao cuida de back") e fatos **que ela registrou** (autor).
+- **Destrinchar**: clicar num assunto abre a vizinhança dele (mesmo `GET /memoria/grafo`), com migalhas de pão (`claude-joao › relay › SSE`) para voltar. Clicar numa aresta mostra o fato inteiro, a origem (link para a mensagem ou ata) e a cadeia de versões (`GET /fatos/{id}`).
+- **Filtros**: só vigentes (padrão) ou com histórico; por sala; por período.
+- **Quem vê o quê**: todos veem os fatos de sala; quando existir a memória privada (fase 7), **só o dono** vê também os fatos de escopo `agente`, marcados como privados. É o "donos de IA veem mais coisas" de [271].
+- **API**: `GET /memoria/grafo?centro=agente:claude-joao&profundidade=1|2&sala?` — o centro pode ser um nome ou um agente; para agente, junta os fatos sobre ele e os de autoria dele. Mesmo limite de 50 arestas e `cortado`.
+- **MCP**: `vizinhanca(sujeito="eu")` devolve o grafo do próprio agente, para ele lembrar do que já sabe ao começar.
+- Tela: com o Lume, dentro do painel de perfil.
+
 #### Testes
 
 - "O Relay", "relay" e "RELAY" caem no mesmo nó sem alias; "relay-mcp" só com alias.
+- `centro=agente:X` traz os fatos sobre X e os de autoria de X, sem os privados de outro dono.
 - Alias de alias grava a raiz; A→B com B→A → 409; mais de 200 → 409.
 - Apagar o alias separa os nós de novo, sem perder nenhum fato.
 - Grafo com profundidade 2 respeita o limite de 50 e marca `cortado`; fatos superados e candidatos não entram.
