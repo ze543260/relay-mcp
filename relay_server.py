@@ -739,20 +739,26 @@ _dispositivos_vistos: dict[tuple[str, str], float] = {}
 
 
 def registrar_dispositivo(con: sqlite3.Connection, quem: "Quem", headers, ip: str | None) -> None:
-    """Auditoria: anota o aparelho de quem tem nome (token de agente ou sessão). No máximo 1 escrita a cada 2 min."""
-    if not quem.nome or (quem.admin and not quem.via_cookie):
+    """Auditoria: anota o aparelho de quem tem nome (token de agente ou sessão). No máximo 1 escrita a cada 2 min.
+    Token de admin direto (app/MCP antigos) entra pelo nome que o cliente declara em X-Relay-Nome."""
+    nome = quem.nome
+    if quem.admin and not quem.via_cookie:
+        nome = (headers.get("X-Relay-Nome") or "").strip()
+        if not NOME_RE.match(nome):
+            return
+    if not nome:
         return
     ua = (headers.get("User-Agent") or "")[:300]
     chave = hashlib.sha256(ua.encode()).hexdigest()[:16]
     agora = time.time()
-    if agora - _dispositivos_vistos.get((quem.nome, chave), 0) < 120:
+    if agora - _dispositivos_vistos.get((nome, chave), 0) < 120:
         return
-    _dispositivos_vistos[(quem.nome, chave)] = agora
-    via = "sessao_admin" if quem.admin else ("sessao" if quem.via_cookie else "token")
+    _dispositivos_vistos[(nome, chave)] = agora
+    via = ("sessao_admin" if quem.via_cookie else "token_admin") if quem.admin else ("sessao" if quem.via_cookie else "token")
     con.execute(
         """INSERT INTO dispositivo (nome, chave, rotulo, ua, via, ip, primeiro, ultimo) VALUES (?,?,?,?,?,?,?,?)
            ON CONFLICT(nome, chave) DO UPDATE SET ultimo=excluded.ultimo, ip=excluded.ip, via=excluded.via""",
-        (quem.nome, chave, rotulo_dispositivo(ua), ua, via, ip, agora, agora))
+        (nome, chave, rotulo_dispositivo(ua), ua, via, ip, agora, agora))
 
 
 def marcar_visto(con: sqlite3.Connection, nome: str | None) -> None:
@@ -2518,6 +2524,10 @@ class Handler(BaseHTTPRequestHandler):
             "fatos_registrados": fatos, "pode_editar": pode, "foto": foto[0] if foto else None,
             "pode_trocar_foto": troca,
         }
+        if pode and not ag and aparelhos:  # sem token próprio (entra com o de admin): mostra só os aparelhos
+            perfil["acesso"] = {"token_ativo": False, "criado_em": None, "revogado_em": None, "so_admin": True,
+                                "dispositivos": [{"rotulo": r, "via": v_, "ip": ip, "primeiro_em": iso(p), "ultimo_em": iso(u)}
+                                                 for r, v_, ip, p, u in aparelhos]}
         if pode and ag:  # acesso: só dono/admin
             perfil["acesso"] = {"token_ativo": bool(ag[4] and not ag[3]), "criado_em": iso(ag[2]),
                                 "revogado_em": iso(ag[3]) if ag[3] else None,

@@ -48,7 +48,7 @@ def _req(metodo: str, caminho: str, corpo: dict | None = None, timeout: float = 
         URL + caminho,
         method=metodo,
         data=json.dumps(corpo).encode() if corpo else None,
-        headers={"Content-Type": "application/json", "Authorization": f"Bearer {TOKEN}", "User-Agent": AGENTE_USUARIO},
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {TOKEN}", "User-Agent": AGENTE_USUARIO, "X-Relay-Nome": NOME},
     )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
@@ -126,7 +126,7 @@ async def enviar_arquivo(caminho: str, sala: str = SALA, texto: str = "") -> str
     def subir() -> dict:
         req = urllib.request.Request(
             URL + "/arquivos?" + urlencode({"de": NOME}), method="POST", data=p.read_bytes(),
-            headers={"Authorization": f"Bearer {TOKEN}", "User-Agent": AGENTE_USUARIO, "Content-Type": tipo, "X-Nome": quote(p.name)},
+            headers={"Authorization": f"Bearer {TOKEN}", "User-Agent": AGENTE_USUARIO, "X-Relay-Nome": NOME, "Content-Type": tipo, "X-Nome": quote(p.name)},
         )
         try:
             with urllib.request.urlopen(req, timeout=120) as r:
