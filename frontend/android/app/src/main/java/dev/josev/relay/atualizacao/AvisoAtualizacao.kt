@@ -49,7 +49,8 @@ fun AvisoAtualizacao() {
         Atualizador.agendar(ctx)
         val nova = runCatching { Atualizador.verificar() }.getOrNull() ?: return@LaunchedEffect
         // Dá pra instalar sem toque: nada de diálogo, instala quando o app sair da tela.
-        if (Atualizador.podeSilencioso(ctx)) pendenteSilenciosa = true else versao = nova
+        // Se a tentativa sem toque já travou nessa versão (HyperOS/MIUI), pergunta normalmente.
+        if (Atualizador.podeSilencioso(ctx) && !Atualizador.silenciosoFalhou(ctx, nova.codigo)) pendenteSilenciosa = true else versao = nova
     }
 
     novidades?.let { n ->
