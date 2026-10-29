@@ -106,7 +106,12 @@ private fun Raiz(vm: RelayViewModel) {
                 0 -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
                 1 -> TelaEntrar(vm, estado.aviso)
                 else -> {
-                    TelaPrincipal(vm, estado)
+                    val fotos = androidx.compose.runtime.remember(estado.agentes) {
+                        dev.josev.relay.ui.comum.Fotos(estado.agentes.mapNotNull { a -> a.foto?.let { a.nome to it } }.toMap(), vm::foto)
+                    }
+                    androidx.compose.runtime.CompositionLocalProvider(dev.josev.relay.ui.comum.LocalFotos provides fotos) {
+                        TelaPrincipal(vm, estado)
+                    }
                     estado.tarefa?.let { id ->
                         androidx.activity.compose.BackHandler { vm.fecharTarefa() }
                         dev.josev.relay.ui.quadro.TelaTarefa(vm, id, estado.versaoTarefas)

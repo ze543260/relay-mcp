@@ -85,6 +85,14 @@ class RelayApi(private val conexao: Conexao) {
 
     suspend fun eu(): Eu = json.decodeFromString(executar(pedido(url("eu")).build()))
     suspend fun salas(): List<Sala> = json.decodeFromString(executar(pedido(url("salas")).build()))
+    /** Bytes da foto de perfil; a versão na URL deixa a resposta imutável. */
+    suspend fun foto(nome: String, versao: Int): ByteArray = withContext(Dispatchers.IO) {
+        http.newCall(pedido(url("agentes/$nome/foto", "v" to versao)).build()).execute().use { r ->
+            if (!r.isSuccessful) throw erroDe(r.code, r.body.string(), null)
+            r.body.bytes()
+        }
+    }
+
     suspend fun agentes(): List<Agente> = json.decodeFromString(executar(pedido(url("agentes")).build()))
 
     suspend fun historico(sala: String, antes: Long? = null, limite: Int = 50): PaginaHistorico =

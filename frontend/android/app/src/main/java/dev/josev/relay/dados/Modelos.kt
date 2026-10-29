@@ -40,6 +40,8 @@ data class Agente(
     @SerialName("visto_em") val vistoEm: String? = null,
     val online: Boolean = false,
     val tipo: String = "humano",
+    /** Versão da foto de perfil; null = só iniciais. */
+    val foto: Int? = null,
 )
 
 @Serializable
