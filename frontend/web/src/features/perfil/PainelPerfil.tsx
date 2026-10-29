@@ -100,12 +100,14 @@ function MemoriaDoAgente({ nome, sala }: { nome: string; sala: string }) {
         ))}
       </nav>
       {g.arestas.length === 0 ? <p className="text-sm text-muted-foreground">{t.semFatos}</p> : (
-        <ul className="grid gap-2">
+        <ul key={trilha.join("/")} className="grid gap-2">
           {[...porPredicado].map(([pred, arestas]) => (
             <li key={pred} className="grid gap-1">
               <span className="text-xs text-muted-foreground">{pred}</span>
               <div className="flex flex-wrap gap-1.5">
-                {arestas.map((a) => {
+                {arestas.map((a, i) => {
+                  // Cascata: cada chip do nível entra 20 ms depois do anterior.
+                  const cascata = { animationDelay: `${Math.min(i, 15) * 20}ms` };
                   // Sobre o centro: mostra o outro lado. Só registrado por ele: mostra a relação inteira.
                   const r = (n: string) => rotulo.get(n) ?? n;
                   const sai = g.centros.includes(a.de), entra = g.centros.includes(a.para);
@@ -113,11 +115,11 @@ function MemoriaDoAgente({ nome, sala }: { nome: string; sala: string }) {
                   const navegavel = rotulo.has(outro) && (entra || !a.folha || !sai);
                   const texto = sai ? r(a.para) : entra ? `← ${r(a.de)}` : `${r(a.de)} → ${r(a.para)}`;
                   return navegavel ? (
-                    <button key={a.fato} type="button" onClick={() => setTrilha([...trilha, outro])} title={t.origemDe(a.origem.tipo, a.origem.id, a.autor)}
-                      className="rounded-full border border-primary/40 bg-primary/5 px-2 py-0.5 text-xs text-primary hover:bg-primary/10">{texto}</button>
+                    <button key={a.fato} type="button" onClick={() => setTrilha([...trilha, outro])} title={t.origemDe(a.origem.tipo, a.origem.id, a.autor)} style={cascata}
+                      className="motion-safe:animate-[entra_var(--mov-padrao)_var(--mov-curva)_both] rounded-full border border-primary/40 bg-primary/5 px-2 py-0.5 text-xs text-primary hover:bg-primary/10">{texto}</button>
                   ) : (
-                    <span key={a.fato} title={t.origemDe(a.origem.tipo, a.origem.id, a.autor)}
-                      className="rounded-full border px-2 py-0.5 text-xs [overflow-wrap:anywhere]">{texto}</span>
+                    <span key={a.fato} title={t.origemDe(a.origem.tipo, a.origem.id, a.autor)} style={cascata}
+                      className="motion-safe:animate-[entra_var(--mov-padrao)_var(--mov-curva)_both] rounded-full border px-2 py-0.5 text-xs [overflow-wrap:anywhere]">{texto}</span>
                   );
                 })}
               </div>

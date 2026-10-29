@@ -31,12 +31,18 @@ object Notificacoes {
     const val EXTRA_SALA = "sala"
     private const val CANAL_MENCOES = "mencoes"
     private const val CANAL_SALAS = "salas"
+    const val CANAL_CONEXAO = "conexao"
+    const val EXTRA_RESPONDE_A = "responde_a"
+    const val EXTRA_PARA = "para"
+    const val CHAVE_RESPOSTA = "resposta"
     private const val TRABALHO = "verificar-mensagens"
 
     fun criarCanais(ctx: Context) {
         val nm = ctx.getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(NotificationChannel(CANAL_MENCOES, "Menções e privadas", NotificationManager.IMPORTANCE_HIGH))
         nm.createNotificationChannel(NotificationChannel(CANAL_SALAS, "Mensagens das salas", NotificationManager.IMPORTANCE_DEFAULT))
+        // Notificação fixa do tempo real: mínima (sem som, recolhida).
+        nm.createNotificationChannel(NotificationChannel(CANAL_CONEXAO, "Conexão em tempo real", NotificationManager.IMPORTANCE_MIN))
     }
 
     /** Verifica a cada 15 min (mínimo do Android) com rede; sobrevive a reinício e app fechado. */
@@ -50,6 +56,30 @@ object Notificacoes {
     fun cancelarAgenda(ctx: Context) = WorkManager.getInstance(ctx).cancelUniqueWork(TRABALHO)
 
     fun limpar(ctx: Context, sala: String) = NotificationManagerCompat.from(ctx).cancel(sala, 0)
+
+    /** Depois de responder pela notificação o Android exige atualizá-la: mostra a resposta e some em 4 s. */
+    fun respondido(ctx: Context, sala: String, texto: String) {
+        if (ContextCompat.checkSelfPermission(ctx, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
+        val n = NotificationCompat.Builder(ctx, CANAL_SALAS)
+            .setSmallIcon(R.drawable.ic_notificacao)
+            .setContentTitle("#$sala")
+            .setContentText("Você: $texto ✓")
+            .setSilent(true).setOnlyAlertOnce(true)
+            .setTimeoutAfter(4000)
+            .build()
+        NotificationManagerCompat.from(ctx).notify(sala, 0, n)
+    }
+
+    /** "Responder" direto da notificação: responde à última mensagem; se ela era privada, a resposta também é. */
+    private fun acaoResponder(ctx: Context, sala: String, m: Mensagem): NotificationCompat.Action {
+        val intent = Intent(ctx, Responder::class.java).putExtra(EXTRA_SALA, sala).putExtra(EXTRA_RESPONDE_A, m.id)
+            .apply { if (m.para != null) putExtra(EXTRA_PARA, m.de) }
+        val pi = PendingIntent.getBroadcast(ctx, sala.hashCode(), intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
+        val entrada = androidx.core.app.RemoteInput.Builder(CHAVE_RESPOSTA).setLabel("Responder em #$sala").build()
+        return NotificationCompat.Action.Builder(R.drawable.ic_notificacao, "Responder", pi)
+            .addRemoteInput(entrada).setAllowGeneratedReplies(true)
+            .setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_REPLY).build()
+    }
 
     fun mostrar(ctx: Context, sala: String, eu: String, novas: List<Mensagem>) {
         if (novas.isEmpty()) return
@@ -71,6 +101,7 @@ object Notificacoes {
             .setContentIntent(abrir)
             .setAutoCancel(true)
             .setOnlyAlertOnce(!pessoal)
+            .addAction(acaoResponder(ctx, sala, ultima))
             .build()
         NotificationManagerCompat.from(ctx).notify(sala, 0, n)
     }
@@ -78,8 +109,9 @@ object Notificacoes {
 
 class VerificarMensagens(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, params) {
     override suspend fun doWork(): Result {
-        // App aberto na tela: o stream ao vivo já mostra tudo.
+        // App aberto na tela: o stream ao vivo já mostra tudo. Tempo real ligado: o serviço já notifica.
         if (ProcessLifecycleOwner.get().lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) return Result.success()
+        if (ServicoTempoReal.rodando) return Result.success()
         val config = Config(applicationContext)
         val c = config.conexao.first() ?: return Result.success()
         val api = RelayApi(c)

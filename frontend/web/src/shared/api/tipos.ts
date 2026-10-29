@@ -28,6 +28,9 @@ export interface Sala {
   ultima?: number;
   ultimo_id?: number;
   agentes: string[];
+  /** Do ponto de vista de quem pede (servidor novo): não lidas e quantas delas me mencionam. */
+  nao_lidas?: number;
+  mencoes?: number;
   /** Canal de reunião: sala de origem e dados da reunião. */
   pai?: string;
   reuniao?: { id: number; titulo: string; estado: "aberta" | "ata" | "encerrada" };

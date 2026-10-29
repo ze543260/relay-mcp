@@ -18,6 +18,8 @@ data class Mensagem(
     @SerialName("reply_to") val replyTo: Long? = null,
     val anexos: List<Anexo> = emptyList(),
     val editado: Double? = null,
+    /** Só vem no stream de todas as salas (serviço em segundo plano). */
+    val sala: String? = null,
 )
 
 @Serializable
@@ -58,6 +60,7 @@ data class NovaMensagem(
     @SerialName("client_id") val clientId: String,
     @SerialName("reply_to") val replyTo: Long? = null,
     val anexos: List<String>? = null,
+    val para: String? = null,
 )
 
 /** Mensagem minha ainda não confirmada pelo servidor (envio otimista). */
@@ -126,3 +129,37 @@ data class ArestaGrafo(val fato: Long, val de: String, val predicado: String, va
 @Serializable
 data class Grafo(val centros: List<String> = emptyList(), val nos: List<NoGrafo> = emptyList(),
                  val arestas: List<ArestaGrafo> = emptyList(), val cortado: Boolean = false)
+
+// --- Quadro (kanban fase 1 do servidor) -----------------------------------
+
+@Serializable
+data class Etiqueta(val id: Long, val nome: String, val cor: Int = 0)
+
+@Serializable
+data class ResumoChecklist(val feitos: Int = 0, val total: Int = 0)
+
+@Serializable
+data class ItemChecklist(val id: Long, val texto: String, val feito: Boolean = false)
+
+@Serializable
+data class Atividade(val de: String, val campo: String, val antes: String? = null, val depois: String? = null, val quando: String)
+
+/** `GET /tarefas` traz a lista; `GET /tarefas/{id}` vem com `itens` e `atividade`. */
+@Serializable
+data class Tarefa(
+    val id: Long,
+    val sala: String,
+    val titulo: String,
+    val descricao: String? = null,
+    val status: String = "a_fazer",
+    val responsavel: String? = null,
+    @SerialName("criada_por") val criadaPor: String = "",
+    @SerialName("criado_em") val criadoEm: String = "",
+    val prazo: String? = null,
+    val prioridade: String = "nenhuma",
+    val estimativa: Int? = null,
+    val etiquetas: List<Etiqueta> = emptyList(),
+    val checklist: ResumoChecklist = ResumoChecklist(),
+    val itens: List<ItemChecklist> = emptyList(),
+    val atividade: List<Atividade> = emptyList(),
+)

@@ -146,7 +146,11 @@ function Checklist({ tarefa }: { tarefa: TarefaCompleta }) {
           <li key={i.id} className="group/item flex items-center gap-2 rounded-[var(--raio-md)] px-1 py-1 hover:bg-muted/50">
             <Checkbox checked={i.feito} aria-label={i.texto}
               onCheckedChange={(v) => eq.alterarItem.mutate({ id: tarefa.id, item: i.id, feito: Boolean(v) })} />
-            <span className={cn("min-w-0 flex-1 text-sm [overflow-wrap:anywhere]", i.feito && "text-muted-foreground line-through")}>{i.texto}</span>
+            <span className={cn("min-w-0 flex-1 text-sm [overflow-wrap:anywhere] transition-colors duration-[var(--mov-padrao)]", i.feito && "text-muted-foreground")}>
+              {/* Risco desenhado da esquerda pra direita ao marcar. */}
+              <span className={cn("box-decoration-clone bg-[linear-gradient(currentColor,currentColor)] bg-[position:0_58%] bg-no-repeat transition-[background-size] duration-[var(--mov-padrao)] ease-[var(--mov-curva)]",
+                i.feito ? "bg-[length:100%_1px]" : "bg-[length:0%_1px]")}>{i.texto}</span>
+            </span>
             <Button variant="ghost" size="icon-xs" aria-label={p.apagarItem(i.texto)}
               className="opacity-100 md:opacity-0 md:group-hover/item:opacity-100 md:focus-visible:opacity-100"
               onClick={() => eq.apagarItem.mutate({ id: tarefa.id, item: i.id })}><Trash2Icon /></Button>

@@ -207,7 +207,12 @@ MIGRACOES = [
        CREATE TABLE IF NOT EXISTS persona (
          nome TEXT PRIMARY KEY, equipe TEXT, papel TEXT, foco TEXT, tom TEXT, limites TEXT,
          editado_por TEXT NOT NULL, quando REAL NOT NULL);""",
-    # 17: workflows (docs/PLANO-FLUXOS.md): catálogo imutável por nome@versão (com hash) e pedidos entre agentes.
+    # 17: busca nas mensagens (docs/PLANO-WEB-UX.md, fase 2). FTS external content mantido pelo código, como o
+    # fato_busca: inserir, editar e apagar mensagem atualizam o índice; a retenção faz 'rebuild' depois de apagar.
+    """CREATE VIRTUAL TABLE IF NOT EXISTS msg_busca USING fts5(
+         texto, content='msg', content_rowid='id', tokenize='unicode61 remove_diacritics 2');
+       INSERT INTO msg_busca(msg_busca) VALUES('rebuild');""",
+    # 18: workflows (docs/PLANO-FLUXOS.md): catálogo imutável por nome@versão (com hash) e pedidos entre agentes.
     # O relay só guarda e repassa: quem aprova e executa é o executor local de cada dono.
     """CREATE TABLE IF NOT EXISTS fluxo (
          sala TEXT NOT NULL, nome TEXT NOT NULL, versao INTEGER NOT NULL, sha256 TEXT NOT NULL,
@@ -288,7 +293,16 @@ def registrar_evento(con: sqlite3.Connection, tipo: str, sala: str, ref: int) ->
 def mensagem_sistema(con: sqlite3.Connection, sala: str, texto: str) -> int:
     """Mensagem do próprio relay (de='relay') para marcar eventos na conversa."""
     cur = con.execute("INSERT INTO msg (sala, de, texto, criado) VALUES (?, 'relay', ?, ?)", (sala, texto, time.time()))
+    indexar_msg(con, cur.lastrowid, texto)
     return cur.lastrowid
+
+
+def indexar_msg(con: sqlite3.Connection, mid: int, texto: str, antigo: str | None = None) -> None:
+    """Mantém msg_busca. `antigo` = texto que estava indexado (edição ou apagamento), removido antes."""
+    if antigo is not None:
+        con.execute("INSERT INTO msg_busca(msg_busca, rowid, texto) VALUES('delete', ?, ?)", (mid, antigo))
+    if texto:
+        con.execute("INSERT INTO msg_busca(rowid, texto) VALUES (?, ?)", (mid, texto))
 
 
 def tarefa_para_json(r: tuple) -> dict:
@@ -598,8 +612,9 @@ def conteudo_artefato(c: dict) -> tuple[str, str | None]:
 
 
 def consulta_fts(termo: str) -> str:
-    """Termo livre -> expressão FTS5 segura: cada palavra entre aspas, com prefixo (`reun` acha `reunião`)."""
-    palavras = re.findall(r"\w+", termo)[:8]
+    """Termo livre -> expressão FTS5 segura: cada palavra entre aspas, com prefixo (`reun` acha `reunião`).
+    Palavras de 1 caractere ficam de fora: como prefixo, casariam quase tudo."""
+    palavras = [p for p in re.findall(r"\w+", termo) if len(p) >= 2][:8]
     return " ".join(f'"{p}"*' for p in palavras)
 
 
@@ -738,11 +753,11 @@ def apagar_arquivos(con: sqlite3.Connection, condicao: str, args: list) -> None:
     con.execute(f"DELETE FROM arquivo WHERE {condicao}", args)
 
 
-def filtro_visiveis(quem: Quem, eu: str | None, todas: bool) -> tuple[str, list]:
-    """Admin com todas=1 vê tudo; os outros veem públicas, as suas e as endereçadas a si."""
+def filtro_visiveis(quem: Quem, eu: str | None, todas: bool, t: str = "") -> tuple[str, list]:
+    """Admin com todas=1 vê tudo; os outros veem públicas, as suas e as endereçadas a si. `t`: alias ("m.")."""
     if quem.admin and todas:
         return "1", []
-    return "(para IS NULL OR para=? OR de=?)", [eu, eu]
+    return f"({t}para IS NULL OR {t}para=? OR {t}de=?)", [eu, eu]
 
 
 def validar_sala(sala: str | None) -> str:
@@ -832,6 +847,8 @@ class Handler(BaseHTTPRequestHandler):
                 ("GET", "/salas"): self.salas,
                 ("GET", "/mensagens"): self.mensagens,
                 ("GET", "/mensagens/historico"): self.historico,
+                ("GET", "/mensagens/busca"): self.buscar_mensagens,
+                ("GET", "/busca"): self.busca,
                 ("GET", "/mensagens/stream"): self.stream,
                 ("POST", "/mensagens"): self.postar,
                 ("GET", "/agentes"): self.agentes,
@@ -865,6 +882,9 @@ class Handler(BaseHTTPRequestHandler):
             }
             if (metodo, caminho) in rotas:
                 return rotas[(metodo, caminho)](q)
+            m = re.fullmatch(r"/mensagens/(\d+)/contexto", caminho)
+            if m and metodo == "GET":
+                return self.contexto_mensagem(int(m.group(1)), q)
             m = re.fullmatch(r"/mensagens/(\d+)", caminho)
             if m and metodo == "DELETE":
                 return self.apagar_mensagem(int(m.group(1)))
@@ -1035,23 +1055,48 @@ class Handler(BaseHTTPRequestHandler):
 
     # salas e agentes
 
-    def salas(self, _q: dict) -> None:
+    def salas(self, q: dict) -> None:
         with conectar() as con:
-            self._quem(con)
+            quem = self._quem(con)
             linhas = con.execute(
                 """SELECT sala, COUNT(*), MAX(criado), MAX(id), GROUP_CONCAT(DISTINCT CASE WHEN de != 'relay' THEN de END)
                    FROM msg GROUP BY sala ORDER BY MAX(id) DESC"""
             ).fetchall()
             canais = {c: (i, t, e, p) for i, t, e, p, c in con.execute(
                 "SELECT id, titulo, estado, sala, canal FROM reuniao WHERE canal IS NOT NULL")}
+            eu = quem.nome if (quem.nome and not quem.admin) else (q.get("eu") or quem.nome)
+            contagem = self._nao_lidas(con, quem, eu) if eu else {}
         saida = []
         for s_, n, u, ult, a in linhas:
             item = {"sala": s_, "total": n, "ultima": u, "ultimo_id": ult, "agentes": [x for x in (a or "").split(",") if x]}
+            if eu:
+                item["nao_lidas"], item["mencoes"] = contagem.get(s_, (0, 0))
             if s_ in canais:
                 i, t, e, p = canais[s_]
                 item.update({"pai": p, "reuniao": {"id": i, "titulo": t, "estado": e}})
             saida.append(item)
         self._json(200, saida)
+
+    def _nao_lidas(self, con: sqlite3.Connection, quem: Quem, eu: str) -> dict[str, tuple[int, int]]:
+        """Por sala, do ponto de vista de `eu`: mensagens depois da última leitura que não são minhas, e quantas
+        delas me mencionam (@nome, @apelido) ou são privadas para mim."""
+        filtro, args = filtro_visiveis(quem, eu, False, "m.")
+        apelido = con.execute("SELECT apelido FROM apelido WHERE nome=?", (eu,)).fetchone()
+        nomes = [eu] + ([apelido[0]] if apelido else [])
+        # O LIKE só pré-filtra; a fronteira do nome (`@ana` não é `@ana2`) é conferida aqui no Python.
+        exato = re.compile(r"@(?:" + "|".join(map(re.escape, nomes)) + r")(?![\w.-])", re.IGNORECASE)
+        marcas = [f"%@{n}%" for n in nomes]
+        talvez = " OR ".join(["m.texto LIKE ?"] * len(marcas))
+        contagem: dict[str, list[int]] = {}
+        for sala, privada, texto in con.execute(
+                f"SELECT m.sala, m.para=?, CASE WHEN {talvez} THEN m.texto END FROM msg m "
+                "LEFT JOIN leitura l ON l.nome=? AND l.sala=m.sala "
+                f"WHERE m.id>COALESCE(l.ultimo_id, 0) AND m.de IS NOT ? AND {filtro}",
+                [eu, *marcas, eu, eu, *args]):
+            c = contagem.setdefault(sala, [0, 0])
+            c[0] += 1
+            c[1] += bool(privada or (texto and exato.search(texto)))
+        return {s: (n, m) for s, (n, m) in contagem.items()}
 
     def agentes(self, _q: dict) -> None:
         with conectar() as con:
@@ -1157,6 +1202,7 @@ class Handler(BaseHTTPRequestHandler):
                 "INSERT INTO msg (sala, de, para, texto, criado, client_id, reply_to) VALUES (?,?,?,?,?,?,?)",
                 (sala, de, para, texto, time.time(), client_id, reply_to),
             )
+            indexar_msg(con, cur.lastrowid, texto)
             if anexos:
                 con.execute(f"UPDATE arquivo SET msg_id=? WHERE id IN ({','.join('?' * len(anexos))})", [cur.lastrowid, *anexos])
             marcar_visto(con, de)
@@ -1169,13 +1215,14 @@ class Handler(BaseHTTPRequestHandler):
     def apagar_mensagem(self, msg_id: int) -> None:
         with conectar() as con:
             quem = self._quem(con)
-            linha = con.execute("SELECT sala, de FROM msg WHERE id=?", (msg_id,)).fetchone()
+            linha = con.execute("SELECT sala, de, texto FROM msg WHERE id=?", (msg_id,)).fetchone()
             if not linha:
                 raise ErroHttp(404, "mensagem_inexistente", "Mensagem não existe.")
-            sala, autor = linha
+            sala, autor, texto_antigo = linha
             if not (quem.admin or quem.nome == autor):
                 raise ErroHttp(403, "proibido", "Só o autor ou o admin apagam.")
             # Apagamento real; o evento guarda só o id (auditoria sem conteúdo).
+            indexar_msg(con, msg_id, "", texto_antigo)
             con.execute("DELETE FROM msg WHERE id=?", (msg_id,))
             apagar_arquivos(con, "msg_id=?", [msg_id])
             con.execute("INSERT INTO evento (tipo, sala, msg_id, quando) VALUES ('apagada',?,?,?)",
@@ -1193,15 +1240,16 @@ class Handler(BaseHTTPRequestHandler):
                            "A mensagem parece conter uma credencial (token, chave, senha). Não foi editada.")
         with conectar() as con:
             quem = self._quem(con)
-            linha = con.execute("SELECT sala, de FROM msg WHERE id=?", (msg_id,)).fetchone()
+            linha = con.execute("SELECT sala, de, texto FROM msg WHERE id=?", (msg_id,)).fetchone()
             if not linha:
                 raise ErroHttp(404, "mensagem_inexistente", "Mensagem não existe.")
-            sala, autor = linha
+            sala, autor, texto_antigo = linha
             # Como no envio: só o token de admin (sem cookie) diz em nome de quem fala.
             eu = str(self._corpo_cache.get("de") or quem.nome or "") if (quem.admin and not quem.via_cookie) else quem.nome
             if eu != autor:
                 raise ErroHttp(403, "proibido", "Só o autor edita.")
             con.execute("UPDATE msg SET texto=?, editado=? WHERE id=?", (texto, time.time(), msg_id))
+            indexar_msg(con, msg_id, texto, texto_antigo)
             registrar_evento(con, "editada", sala, msg_id)
             m = linha_para_msg(con.execute(f"SELECT {COLUNAS} FROM msg WHERE id=?", (msg_id,)).fetchone())
         notificar()
@@ -1211,6 +1259,12 @@ class Handler(BaseHTTPRequestHandler):
              depois: int, sem_minhas: bool) -> list[dict]:
         filtro, args = filtro_visiveis(quem, eu, todas)
         extra = " AND de IS NOT ?" if sem_minhas else ""
+        if sala == "*":  # todas as salas (serviço em segundo plano do app): cada mensagem leva a sala
+            linhas = con.execute(
+                f"SELECT {COLUNAS}, sala FROM msg WHERE id>? AND {filtro}{extra} ORDER BY id LIMIT 200",
+                [depois, *args, *([eu] if sem_minhas else [])],
+            ).fetchall()
+            return com_anexos(con, [{**linha_para_msg(r[:-1]), "sala": r[-1]} for r in linhas])
         linhas = con.execute(
             f"SELECT {COLUNAS} FROM msg WHERE sala=? AND id>? AND {filtro}{extra} ORDER BY id LIMIT 200",
             [sala, depois, *args, *([eu] if sem_minhas else [])],
@@ -1282,15 +1336,107 @@ class Handler(BaseHTTPRequestHandler):
             msgs = com_anexos(con, [linha_para_msg(r) for r in reversed(linhas[:limite])])
         self._json(200, {"mensagens": msgs, "tem_mais": tem_mais})
 
+    # busca e navegação (docs/PLANO-WEB-UX.md, fase 2)
+
+    def buscar_mensagens(self, q: dict) -> None:
+        """FTS nas mensagens que a pessoa vê, da mais recente. `sala` opcional; `antes` pagina pelo id."""
+        sala = validar_sala(q["sala"]) if q.get("sala") else None
+        termo = consulta_fts(q.get("q") or "")
+        if not termo:
+            raise ErroHttp(400, "busca_vazia", "Mande `q` com pelo menos uma palavra.")
+        limite = min(max(int(q.get("limite", 30) or 30), 1), LIMITE_PAGINA)
+        antes = int(q["antes"]) if q.get("antes") else None
+        with conectar() as con:
+            quem = self._quem(con)
+            eu = quem.nome if (quem.nome and not quem.admin) else (q.get("eu") or quem.nome)
+            filtro, args = filtro_visiveis(quem, eu, q.get("todas") == "1", "m.")
+            conds, extra = [filtro], list(args)
+            if sala:
+                conds.append("m.sala=?")
+                extra.append(sala)
+            if antes:
+                conds.append("m.id<?")
+                extra.append(antes)
+            cols = ", ".join(f"m.{c}" for c in COLUNAS.split(", "))
+            linhas = con.execute(
+                f"SELECT {cols}, m.sala FROM msg_busca JOIN msg m ON m.id=msg_busca.rowid WHERE msg_busca MATCH ? "
+                f"AND {' AND '.join(conds)} "
+                "ORDER BY m.id DESC LIMIT ?", [termo, *extra, limite + 1]).fetchall()
+            msgs = com_anexos(con, [{**linha_para_msg(r[:-1]), "sala": r[-1]} for r in linhas[:limite]])
+        self._json(200, {"mensagens": msgs, "tem_mais": len(linhas) > limite})
+
+    def contexto_mensagem(self, mid: int, q: dict) -> None:
+        """Para "ir para a respondida": a mensagem e até `n` antes e `n` depois, na mesma sala."""
+        n = min(max(int(q.get("n", 20) or 20), 1), 50)
+        with conectar() as con:
+            quem = self._quem(con)
+            eu = quem.nome if (quem.nome and not quem.admin) else (q.get("eu") or quem.nome)
+            filtro, args = filtro_visiveis(quem, eu, q.get("todas") == "1")
+            alvo = con.execute(f"SELECT sala FROM msg WHERE id=? AND {filtro}", [mid, *args]).fetchone()
+            if not alvo:
+                raise ErroHttp(404, "mensagem_inexistente", "Mensagem não existe (ou não é visível para você).")
+            antes = con.execute(f"SELECT {COLUNAS} FROM msg WHERE sala=? AND id<? AND {filtro} ORDER BY id DESC LIMIT ?",
+                                [alvo[0], mid, *args, n]).fetchall()
+            depois = con.execute(f"SELECT {COLUNAS} FROM msg WHERE sala=? AND id>=? AND {filtro} ORDER BY id LIMIT ?",
+                                 [alvo[0], mid, *args, n + 1]).fetchall()
+            msgs = com_anexos(con, [linha_para_msg(r) for r in [*reversed(antes), *depois]])
+        self._json(200, {"sala": alvo[0], "alvo": mid, "mensagens": msgs,
+                         "tem_antes": len(antes) == n, "tem_depois": len(depois) == n + 1})
+
+    def busca(self, q: dict) -> None:
+        """Ctrl+K: até `limite` resultados de cada tipo. `sala` opcional restringe tarefas, artefatos, fatos e mensagens."""
+        texto = " ".join(str(q.get("q") or "").split())[:100]
+        if not texto:
+            raise ErroHttp(400, "busca_vazia", "Mande `q`.")
+        limite = min(max(int(q.get("limite", 5) or 5), 1), 20)
+        sala = validar_sala(q["sala"]) if q.get("sala") else None
+        like = "%" + texto.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        termo = consulta_fts(texto)
+        so_sala, args_sala = (" AND sala=?", [sala]) if sala else ("", [])
+        with conectar() as con:
+            quem = self._quem(con)
+            eu = quem.nome if (quem.nome and not quem.admin) else (q.get("eu") or quem.nome)
+            filtro_m, args = filtro_visiveis(quem, eu, False, "m.")
+            salas = [s for (s,) in con.execute(
+                "SELECT sala FROM msg WHERE sala LIKE ? ESCAPE '\\' GROUP BY sala ORDER BY MAX(id) DESC LIMIT ?",
+                (like, limite))]
+            pessoas = [{"nome": n, "apelido": a} for n, a in con.execute(
+                "SELECT n.nome, ap.apelido FROM (SELECT nome FROM agente UNION SELECT nome FROM presenca) n "
+                "LEFT JOIN apelido ap ON ap.nome=n.nome WHERE n.nome LIKE ? ESCAPE '\\' OR ap.apelido LIKE ? ESCAPE '\\' "
+                "ORDER BY n.nome LIMIT ?", (like, like, limite))]
+            tarefas = [{"id": i, "sala": s, "titulo": t, "status": st} for i, s, t, st in con.execute(
+                f"SELECT id, sala, titulo, status FROM tarefa WHERE titulo LIKE ? ESCAPE '\\'{so_sala} "
+                "ORDER BY atualizado DESC LIMIT ?", [like, *args_sala, limite])]
+            artefatos = [{"id": i, "sala": s, "titulo": t, "tipo": tp} for i, s, t, tp in con.execute(
+                f"SELECT id, sala, titulo, tipo FROM artefato WHERE titulo LIKE ? ESCAPE '\\'{so_sala} "
+                "ORDER BY atualizado DESC LIMIT ?", [like, *args_sala, limite])]
+            fatos, mensagens = [], []
+            if termo:
+                fatos = [{"id": i, "sala": s, "sujeito": su, "predicado": p, "objeto": o} for i, s, su, p, o in con.execute(
+                    "SELECT f.id, f.sala, f.sujeito, f.predicado, f.objeto FROM fato_busca JOIN fato f "
+                    f"ON f.id=fato_busca.rowid WHERE fato_busca MATCH ? AND f.estado='vigente'"
+                    f"{so_sala.replace('sala', 'f.sala')} ORDER BY bm25(fato_busca) LIMIT ?",
+                    [termo, *args_sala, limite])]
+                mensagens = [{"id": i, "sala": s, "de": d, "texto": t[:200], "criado_em": iso(c)}
+                             for i, s, d, t, c in con.execute(
+                    "SELECT m.id, m.sala, m.de, m.texto, m.criado FROM msg_busca JOIN msg m ON m.id=msg_busca.rowid "
+                    f"WHERE msg_busca MATCH ? AND {filtro_m}{so_sala.replace('sala', 'm.sala')} ORDER BY m.id DESC LIMIT ?",
+                    [termo, *args, *args_sala, limite])]
+        self._json(200, {"salas": salas, "pessoas": pessoas, "tarefas": tarefas, "artefatos": artefatos,
+                         "fatos": fatos, "mensagens": mensagens})
+
     def stream(self, q: dict) -> None:
-        """SSE: `id` do evento = id da mensagem; reconecta com Last-Event-ID."""
-        sala = validar_sala(q.get("sala"))
+        """SSE: `id` do evento = id da mensagem; reconecta com Last-Event-ID.
+        `sala=*`: todas as salas que a pessoa vê (só mensagens; começa do agora e não marca presença)."""
+        geral = q.get("sala") == "*"
+        sala = "*" if geral else validar_sala(q.get("sala"))
         with conectar() as con:
             quem = self._quem(con)
             ultimo_evento = con.execute("SELECT COALESCE(MAX(seq),0) FROM evento").fetchone()[0]
+            maior = con.execute("SELECT COALESCE(MAX(id),0) FROM msg").fetchone()[0]
         eu = quem.nome if (quem.nome and not quem.admin) else (q.get("eu") or quem.nome)
         todas = q.get("todas") == "1"
-        depois = int(self.headers.get("Last-Event-ID") or q.get("depois") or 0)
+        depois = int(self.headers.get("Last-Event-ID") or q.get("depois") or 0) or (maior if geral else 0)
         if not ESPERAS.acquire(blocking=False):
             raise ErroHttp(503, "ocupado", "Muitas conexões abertas; tente de novo.", 2)
         try:
@@ -1309,10 +1455,10 @@ class Handler(BaseHTTPRequestHandler):
             while time.monotonic() < fim:
                 with conectar() as con:
                     msgs = self._ler(con, quem, sala, eu, todas, depois, sem_minhas=False)
-                    eventos = con.execute(
+                    eventos = [] if geral else con.execute(
                         "SELECT seq, tipo, msg_id FROM evento WHERE seq>? AND sala=? ORDER BY seq", (ultimo_evento, sala)
                     ).fetchall()
-                    if eu:
+                    if eu and not geral:  # o serviço em segundo plano não conta como "online"
                         marcar_visto(con, eu)
                 for m in msgs:
                     depois = m["id"]
@@ -1329,7 +1475,7 @@ class Handler(BaseHTTPRequestHandler):
                                 self.wfile.write(f"event: editada\ndata: {dados}\n\n".encode())
                         continue
                     self.wfile.write(f"event: {tipo}\ndata: {json.dumps({'id': ref})}\n\n".encode())
-                digitando = [n for n in digitando_em(sala) if n != eu]
+                digitando = [] if geral else [n for n in digitando_em(sala) if n != eu]
                 if digitando != ultimo_digitando:
                     ultimo_digitando = digitando
                     self.wfile.write(f"event: digitando\ndata: {json.dumps({'nomes': digitando})}\n\n".encode())
@@ -2731,7 +2877,8 @@ def faxina() -> None:
                 if RETENCAO_DIAS > 0:
                     limite = time.time() - RETENCAO_DIAS * 86400
                     apagar_arquivos(con, "msg_id IN (SELECT id FROM msg WHERE criado<?)", [limite])
-                    con.execute("DELETE FROM msg WHERE criado<?", (limite,))
+                    if con.execute("DELETE FROM msg WHERE criado<?", (limite,)).rowcount:
+                        con.execute("INSERT INTO msg_busca(msg_busca) VALUES('rebuild')")
         except sqlite3.Error as e:
             print(f"faxina falhou: {e}", flush=True)
         time.sleep(3600)

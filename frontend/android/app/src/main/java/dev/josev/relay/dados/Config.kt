@@ -21,6 +21,12 @@ class Config(private val contexto: Context) {
     private val kSala = stringPreferencesKey("sala")
     private val kTema = stringPreferencesKey("tema")
 
+    private val kTempoReal = androidx.datastore.preferences.core.booleanPreferencesKey("tempo_real")
+
+    /** Notificações em tempo real (serviço com SSE) ou economia (WorkManager a cada 15 min). Padrão: tempo real. */
+    val tempoReal: Flow<Boolean> = contexto.dados.data.map { it[kTempoReal] ?: true }
+    suspend fun salvarTempoReal(v: Boolean) = contexto.dados.edit { it[kTempoReal] = v }
+
     /** "sistema" | "claro" | "escuro". */
     val tema: Flow<String> = contexto.dados.data.map { it[kTema] ?: "sistema" }
     suspend fun salvarTema(t: String) = contexto.dados.edit { it[kTema] = t }

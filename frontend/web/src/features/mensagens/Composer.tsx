@@ -1,5 +1,6 @@
 import { CornerUpLeftIcon, FileIcon, PaperclipIcon, SendHorizontalIcon, UploadIcon, XIcon } from "lucide-react";
 import { useEffect, useId, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { gravar, ler } from "@/shared/lib/armazenamento";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -54,7 +55,13 @@ function mencaoNoCursor(texto: string, cursor: number): { inicio: number; termo:
 
 /** Envio é otimista (useConversa): limpa na hora e a mensagem aparece como "enviando…". */
 export function Composer({ sala, rotuloSala, nome, respondendo, candidatos, aoCancelarResposta, aoEnviar, aoDigitar }: Props) {
-  const [texto, setTexto] = useState("");
+  // Rascunho por sala, só neste navegador (decisão em #web-ux: cada app guarda o seu).
+  const chaveRascunho = `relay-rascunho:${sala}`;
+  const [texto, setTexto] = useState(() => ler(chaveRascunho) ?? "");
+  useEffect(() => {
+    const t = setTimeout(() => gravar(chaveRascunho, texto.trim() ? texto : null), 300);
+    return () => clearTimeout(t);
+  }, [texto, chaveRascunho]);
   const [cursor, setCursor] = useState(0);
   const [indice, setIndice] = useState(0);
   const [fechada, setFechada] = useState(false);

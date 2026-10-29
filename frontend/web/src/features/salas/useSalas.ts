@@ -6,6 +6,7 @@ export function useSalas() {
   return useQuery({
     queryKey: ["salas"],
     queryFn: ({ signal }) => api<Sala[]>("/salas", { sinal: signal }),
-    refetchInterval: 60_000,
+    // As outras salas não chegam pelo SSE da sala aberta: os selos se atualizam por aqui.
+    refetchInterval: 20_000,
   });
 }

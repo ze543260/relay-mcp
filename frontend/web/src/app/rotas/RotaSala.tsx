@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { Navigate, useNavigate } from "@tanstack/react-router";
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 // cmdk + Dialog só quando a paleta abre pela primeira vez.
 const Quadro = lazy(() => import("@/features/equipe/Quadro"));
@@ -11,6 +11,8 @@ const PainelPerfil = lazy(() => import("@/features/perfil/PainelPerfil"));
 const FaixaReuniao = lazy(() => import("@/features/equipe/FaixaReuniao").then((m) => ({ default: m.FaixaReuniao })));
 const NovaReuniao = lazy(() => import("@/features/equipe/FaixaReuniao").then((m) => ({ default: m.NovaReuniao })));
 const PaletaSalas = lazy(() => import("@/features/salas/PaletaSalas").then((m) => ({ default: m.PaletaSalas })));
+const BuscaSala = lazy(() => import("@/features/busca/BuscaSala"));
+import type { Destino } from "@/features/salas/PaletaSalas";
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { useSessao } from "@/features/auth/sessao";
 import { Composer } from "@/features/mensagens/Composer";
@@ -19,7 +21,8 @@ import { useConversa } from "@/features/mensagens/useConversa";
 import { useAgentes } from "@/features/agentes/useAgentes";
 import { useReunioes } from "@/features/equipe/api";
 import { useDigitando, useLeituras, useMarcarLeitura } from "@/features/mensagens/presenca";
-import { BrainIcon, CalendarPlusIcon, FileCodeIcon, KanbanIcon, MessagesSquareIcon } from "lucide-react";
+import { BrainIcon, CalendarPlusIcon, EllipsisVerticalIcon, FileCodeIcon, KanbanIcon, MessagesSquareIcon, MoonIcon, SearchIcon, SunIcon } from "lucide-react";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { Participantes } from "@/features/presenca/Participantes";
@@ -27,6 +30,7 @@ import { BarraLateral } from "@/features/salas/BarraLateral";
 import type { Mensagem } from "@/shared/api/tipos";
 import { useAvisos } from "@/shared/lib/avisos";
 import { useTema } from "@/shared/lib/tema";
+import { corDe } from "@/shared/lib/formato";
 import { textos } from "@/shared/lib/textos";
 import { gravar, lerJson } from "@/shared/lib/armazenamento";
 import { rotaSala } from "../router";
@@ -64,10 +68,15 @@ export function RotaSala() {
   if (ultimaLida.sala !== sala) setUltimaLida({ sala, id: vistas[sala] ?? 0 });
 
   const perderAcesso = useCallback(() => sair(textos.sessao.expirada), [sair]);
-  const { tema, escolher: escolherTema } = useTema();
+  const { tema, resolvido: temaResolvido, escolher: escolherTema } = useTema();
   const [paletaAberta, setPaletaAbertaEstado] = useState(false);
   const [paletaUsada, setPaletaUsada] = useState(false);
   const setPaletaAberta = useCallback((a: boolean) => { if (a) setPaletaUsada(true); setPaletaAbertaEstado(a); }, []);
+  // Monta paleta e busca (fechadas) com a página já parada: o 1º Ctrl+K abre na hora e não perde o que se digita.
+  useEffect(() => {
+    const t = setTimeout(() => { setPaletaUsada(true); setBuscaSalaUsada(true); }, 4000);
+    return () => clearTimeout(t);
+  }, []);
   // O atalho precisa existir antes da paleta carregar.
   useEffect(() => {
     const aoTeclar = (e: KeyboardEvent) => {
@@ -114,21 +123,57 @@ export function RotaSala() {
   }, [agentes, autores.join("|")]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [aba, setAba] = useState<"conversa" | "quadro" | "memoria" | "artefatos">("conversa");
+  const abasRef = useRef<HTMLDivElement>(null);
+  const [indicador, setIndicador] = useState({ x: 0, w: 0 });
+  useLayoutEffect(() => {
+    const medir = () => {
+      const b = abasRef.current?.querySelector<HTMLElement>(`[data-aba="${aba}"]`);
+      if (b) setIndicador({ x: b.offsetLeft, w: b.offsetWidth });
+    };
+    medir();
+    const ro = new ResizeObserver(medir);
+    if (abasRef.current) ro.observe(abasRef.current);
+    return () => ro.disconnect();
+  }, [aba]);
   const [artefatoAberto, setArtefatoAberto] = useState<number | null>(null);
   const abrirArtefato = useCallback((id: number) => setArtefatoAberto(id), []);
   const [perfilAberto, setPerfilAberto] = useState<string | null>(null);
   const abrirPerfil = useCallback((n: string) => { if (n !== "relay") setPerfilAberto(n); }, []);
   const [irPara, setIrPara] = useState<number | null>(null);
+  const [tarefaPedida, setTarefaPedida] = useState<number | null>(null);
+  const [buscaSala, setBuscaSala] = useState(false);
+  const [buscaSalaUsada, setBuscaSalaUsada] = useState(false);
+  const abrirBuscaSala = useCallback(() => { setBuscaSalaUsada(true); setBuscaSala(true); }, []);
+  // Ctrl+Shift+F: busca na sala (Ctrl+F continua sendo o do navegador).
+  useEffect(() => {
+    const aoTeclar = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() === "f" && (e.ctrlKey || e.metaKey) && e.shiftKey) { e.preventDefault(); abrirBuscaSala(); }
+    };
+    document.addEventListener("keydown", aoTeclar);
+    return () => document.removeEventListener("keydown", aoTeclar);
+  }, [abrirBuscaSala]);
   const [novaReuniao, setNovaReuniao] = useState(false);
   const { data: reunioes } = useReunioes(sala);
   const reuniaoAtiva = reunioes?.some((r) => r.estado !== "encerrada") ?? false;
   // Canal de reunião ("<sala>.reuniao-<id>"): cabeçalho com o título e volta para a sala de origem.
   const doCanal = reunioes?.find((r) => r.canal === sala);
   const te = textos.equipe;
+  const ABAS = [["conversa", MessagesSquareIcon, te.conversa], ["quadro", KanbanIcon, te.quadro],
+    ["memoria", BrainIcon, textos.memoria.aba], ["artefatos", FileCodeIcon, textos.artefatos.aba]] as const;
 
   if (estadoSessao === "fora") return <Navigate to="/entrar" search={{ volta: sala }} replace />;
 
   const escolher = (s: string) => void navegar({ to: "/s/$sala", params: { sala: s } });
+  // Resultado do Ctrl+K: vai pra sala certa e abre a aba/painel do item.
+  const aoIr = (d: Destino) => {
+    if (d.tipo === "pessoa") return abrirPerfil(d.nome);
+    if (d.sala !== sala) escolher(d.sala);
+    if (d.tipo === "sala") return setAba("conversa");
+    if (d.tipo === "mensagem") { setIrPara(d.id); setAba("conversa"); }
+    else if (d.tipo === "tarefa") { setTarefaPedida(d.id); setAba("quadro"); }
+    else if (d.tipo === "artefato") { setAba("artefatos"); abrirArtefato(d.id); }
+    else setAba("memoria");
+  };
 
   return (
     <AbrirArtefatoContexto.Provider value={abrirArtefato}>
@@ -139,11 +184,17 @@ export function RotaSala() {
         notificacoes={avisos.suportado ? { ativas: avisos.ativas, negadas: avisos.negadas, alternar: () => void avisos.alternar() } : null} aoSair={() => sair()} />
       {paletaUsada && (
         <Suspense fallback={null}>
-          <PaletaSalas aberta={paletaAberta} setAberta={setPaletaAberta} salaAtual={sala} aoEscolher={escolher} />
+          <PaletaSalas aberta={paletaAberta} setAberta={setPaletaAberta} salaAtual={sala} aoIr={aoIr} />
         </Suspense>
       )}
-      <SidebarInset className="min-h-0 min-w-0">
-        <header className="flex flex-wrap items-center gap-2 border-b px-4 pt-[calc(.5rem+env(safe-area-inset-top))] pb-2 md:flex-nowrap md:gap-3 md:py-3">
+      {buscaSalaUsada && (
+        <Suspense fallback={null}>
+          <BuscaSala sala={sala} aberta={buscaSala} setAberta={setBuscaSala} aoIrPara={(id) => { setIrPara(id); setAba("conversa"); }} />
+        </Suspense>
+      )}
+      <SidebarInset className="group/sala min-h-0 min-w-0">
+        {/* Celular: uma linha só (menu, sala, tema, ⋯); abas vão pra barra de baixo. */}
+        <header className="flex items-center gap-2 border-b px-4 pt-[calc(.5rem+env(safe-area-inset-top))] pb-2 md:gap-3 md:py-3">
           <SidebarTrigger className="-ml-2 size-11 md:-ml-1 md:size-8" aria-label={textos.salas.alternarLateral} />
           <span aria-hidden className="hidden h-4 w-px bg-border md:block" />
           {doCanal ? (
@@ -156,21 +207,60 @@ export function RotaSala() {
           ) : (
             <h1 className="min-w-0 flex-1 truncate text-base font-semibold md:flex-none">#{sala}</h1>
           )}
-          <div role="tablist" aria-label={te.conversa} className="order-2 flex rounded-lg bg-superficie p-0.5 md:order-none">
-            {([["conversa", MessagesSquareIcon, te.conversa], ["quadro", KanbanIcon, te.quadro], ["memoria", BrainIcon, textos.memoria.aba], ["artefatos", FileCodeIcon, textos.artefatos.aba]] as const).map(([id, Icone, rotulo]) => (
-              <button key={id} role="tab" aria-selected={aba === id} aria-label={rotulo} onClick={() => setAba(id)}
-                className={cn("flex min-h-9 items-center gap-1.5 rounded-md px-3 text-sm transition-colors md:min-h-7",
-                  aba === id ? "bg-card font-medium text-foreground shadow-xs" : "text-muted-foreground hover:text-foreground")}>
-                <Icone className="size-3.5" aria-hidden /><span className="hidden sm:inline">{rotulo}</span>
+          <div role="tablist" aria-label={te.abas} ref={abasRef} className="relative hidden rounded-lg bg-superficie p-0.5 md:flex">
+            {/* Indicador desliza até a aba escolhida. */}
+            <span aria-hidden className="absolute inset-y-0.5 left-0 rounded-md bg-card shadow-xs transition-[translate,width] duration-[var(--mov-rapido)] ease-[var(--mov-curva)]"
+              style={{ translate: `${indicador.x}px`, width: indicador.w, opacity: indicador.w ? 1 : 0 }} />
+            {ABAS.map(([id, Icone, rotulo]) => (
+              <button key={id} role="tab" aria-selected={aba === id} data-aba={id} onClick={() => setAba(id)}
+                className={cn("relative flex min-h-7 items-center gap-1.5 rounded-md px-3 text-sm transition-colors",
+                  aba === id ? "font-medium text-foreground" : "text-muted-foreground hover:text-foreground")}>
+                <Icone className="size-3.5" aria-hidden />{rotulo}
               </button>
             ))}
           </div>
-          <Participantes autores={autores} />
+          <div className="hidden xl:contents"><Participantes autores={autores} /></div>
+          <Button variant="ghost" size="icon" className="ml-auto size-11 md:size-8 xl:ml-0" aria-label={textos.buscaSala.abrir(sala)}
+            title={`${textos.buscaSala.abrir(sala)} (Ctrl Shift F)`} onClick={abrirBuscaSala}>
+            <SearchIcon />
+          </Button>
+          {/* Tema à vista: um clique alterna claro/escuro ("Sistema" fica no menu do usuário). */}
+          <Button variant="ghost" size="icon" className="size-11 md:size-8"
+            aria-label={temaResolvido === "escuro" ? textos.tema.paraClaro : textos.tema.paraEscuro}
+            title={temaResolvido === "escuro" ? textos.tema.paraClaro : textos.tema.paraEscuro}
+            onClick={(e) => {
+              const r = e.currentTarget.getBoundingClientRect();
+              escolherTema(temaResolvido === "escuro" ? "claro" : "escuro", { x: r.left + r.width / 2, y: r.top + r.height / 2 });
+            }}>
+            {/* key: o ícone novo entra girando 90°. */}
+            {temaResolvido === "escuro"
+              ? <SunIcon key="sol" className="motion-safe:animate-[gira_300ms_cubic-bezier(.2,0,0,1)]" />
+              : <MoonIcon key="lua" className="motion-safe:animate-[gira_300ms_cubic-bezier(.2,0,0,1)]" />}
+          </Button>
           {!reuniaoAtiva && !doCanal && (
-            <Button variant="outline" size="sm" className="order-2 md:order-none" onClick={() => setNovaReuniao(true)}>
+            <Button variant="outline" size="sm" className="hidden md:inline-flex" onClick={() => setNovaReuniao(true)}>
               <CalendarPlusIcon /> {textos.reuniao.nova}
             </Button>
           )}
+          {/* Celular e telas médias: participantes (e, no celular, reunião) no ⋯ */}
+          <DropdownMenu>
+            <DropdownMenuTrigger render={<Button variant="ghost" size="icon" className="-mr-2 size-11 md:mr-0 md:size-8 xl:hidden" aria-label={te.maisOpcoes} />}>
+              <EllipsisVerticalIcon />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="min-w-56">
+              <DropdownMenuGroup>
+                <DropdownMenuLabel className="text-xs text-muted-foreground">{te.online((agentes ?? []).filter((a) => a.online && a.nome !== "relay").length)}</DropdownMenuLabel>
+                {(agentes ?? []).filter((a) => a.online && a.nome !== "relay").map((a) => (
+                  <DropdownMenuItem key={a.nome} onClick={() => abrirPerfil(a.nome)}>
+                    <i aria-hidden className="size-2 rounded-full" style={{ background: corDe(a.nome) }} />{a.apelido ?? a.nome}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuGroup>
+              {!reuniaoAtiva && !doCanal && (
+                <><DropdownMenuSeparator className="md:hidden" /><DropdownMenuItem className="md:hidden" onClick={() => setNovaReuniao(true)}><CalendarPlusIcon />{textos.reuniao.nova}</DropdownMenuItem></>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
         </header>
         {reuniaoAtiva && <Suspense fallback={null}><FaixaReuniao sala={sala} eu={nome} admin={admin} /></Suspense>}
         {novaReuniao && (
@@ -178,6 +268,8 @@ export function RotaSala() {
             <NovaReuniao sala={sala} eu={nome} candidatos={candidatos} aberto={novaReuniao} setAberto={setNovaReuniao} />
           </Suspense>
         )}
+        {/* Troca de aba: o conteúdo entra com fade + 4 px. */}
+        <div key={aba} className="flex min-h-0 flex-1 flex-col motion-safe:animate-[aba_var(--mov-padrao)_var(--mov-curva)]">
         {aba === "artefatos" ? (
           <Suspense fallback={<div className="flex-1" />}><Artefatos sala={doCanal?.sala ?? sala} /></Suspense>
         ) : aba === "memoria" ? (
@@ -188,17 +280,31 @@ export function RotaSala() {
             }} />
           </Suspense>
         ) : aba === "quadro" ? (
-          <Suspense fallback={<div className="flex-1" />}><Quadro sala={doCanal?.sala ?? sala} eu={nome} admin={admin} /></Suspense>
+          <Suspense fallback={<div className="flex-1" />}><Quadro sala={doCanal?.sala ?? sala} eu={nome} admin={admin} abrir={tarefaPedida} /></Suspense>
         ) : (
           <>
             <Conversa key={sala} sala={sala} eu={nome} carregando={conversa.estado.tipo === "carregando"}
               ultimaLida={ultimaLida.id} aoLer={aoLer} admin={admin} aoResponder={setRespondendo} leituras={leituras} apelidos={apelidos} {...conversa}
-              irPara={irPara} aoChegarEm={() => setIrPara(null)} />
+              irPara={irPara} aoChegarEm={() => setIrPara(null)} aoIrPara={setIrPara} />
             <Composer key={`c-${sala}`} sala={sala} rotuloSala={doCanal ? `🗓 ${doCanal.titulo}` : undefined} nome={nome} respondendo={respondendo} candidatos={candidatos} aoCancelarResposta={() => setRespondendo(null)}
               aoEnviar={(texto, replyTo, anexos) => conversa.enviar(texto, nome, replyTo, anexos)}
               aoDigitar={(d) => (d ? digitar.avisar() : digitar.parar())} />
           </>
         )}
+        </div>
+        {/* Celular: abas embaixo, como no app; somem enquanto se digita (o teclado já ocupa a tela). */}
+        <nav aria-label={te.abas} className="flex border-t bg-card pb-[env(safe-area-inset-bottom)] group-has-[textarea:focus]/sala:hidden md:hidden">
+          {ABAS.map(([id, Icone, rotulo]) => (
+            <button key={id} type="button" aria-current={aba === id ? "page" : undefined} onClick={() => setAba(id)}
+              className={cn("flex min-h-14 flex-1 flex-col items-center justify-center gap-0.5 text-[11px] transition-colors",
+                aba === id ? "font-semibold text-primary" : "text-muted-foreground")}>
+              <span className={cn("grid h-7 w-14 place-items-center rounded-full transition-colors", aba === id && "bg-acento-fundo")}>
+                <Icone className="size-5" aria-hidden />
+              </span>
+              {rotulo}
+            </button>
+          ))}
+        </nav>
       </SidebarInset>
       {/* Sempre montado (só alterna `open`): montar o Sheet no próprio clique fazia ele fechar na hora. */}
       <Suspense fallback={null}>

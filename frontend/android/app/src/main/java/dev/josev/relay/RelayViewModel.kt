@@ -60,6 +60,10 @@ data class Estado(
     val aviso: String? = null,
     /** Perfil aberto em tela cheia (nome técnico), ou null. */
     val perfil: String? = null,
+    /** Tarefa aberta em tela cheia, ou null. */
+    val tarefa: Long? = null,
+    /** Sobe a cada evento "tarefa" do SSE: quadro e tela da tarefa recarregam. */
+    val versaoTarefas: Int = 0,
 )
 
 class RelayViewModel(app: Application) : AndroidViewModel(app) {
@@ -116,7 +120,8 @@ class RelayViewModel(app: Application) : AndroidViewModel(app) {
         }
         api = nova
         dev.josev.relay.notificacoes.Notificacoes.criarCanais(getApplication())
-        dev.josev.relay.notificacoes.Notificacoes.agendar(getApplication())
+        dev.josev.relay.notificacoes.Notificacoes.agendar(getApplication())  // economia, e reserva do tempo real
+        viewModelScope.launch { if (config.tempoReal.first()) dev.josev.relay.notificacoes.ServicoTempoReal.iniciar(getApplication()) }
         _estado.update {
             it.copy(verificando = false, conexao = c, admin = isAdmin, sala = config.sala(), vistas = config.vistas(), aviso = null)
         }
@@ -130,6 +135,7 @@ class RelayViewModel(app: Application) : AndroidViewModel(app) {
 
     fun sair() {
         dev.josev.relay.notificacoes.Notificacoes.cancelarAgenda(getApplication())
+        dev.josev.relay.notificacoes.ServicoTempoReal.parar(getApplication())
         stream?.cancel(); periodico?.cancel(); api = null
         viewModelScope.launch { config.sair() }
         _estado.value = Estado(verificando = false)
@@ -190,6 +196,7 @@ class RelayViewModel(app: Application) : AndroidViewModel(app) {
                     Evento.SemAcesso -> { sair(); _estado.update { it.copy(aviso = "Token revogado ou inválido.") } }
                     is Evento.Digitando -> _estado.update { it.copy(digitando = e.nomes.filter { n -> n != it.conexao?.nome }) }
                     Evento.Leu -> atualizarLeituras()
+                    Evento.TarefaMudou -> _estado.update { it.copy(versaoTarefas = it.versaoTarefas + 1) }
                 }
             }
         }
@@ -393,6 +400,26 @@ class RelayViewModel(app: Application) : AndroidViewModel(app) {
     val tema = config.tema.stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, "sistema")
     /** Botão à vista: alterna entre claro e escuro a partir do que está na tela agora. */
     fun alternarTema(escuroAgora: Boolean) = viewModelScope.launch { config.salvarTema(if (escuroAgora) "claro" else "escuro") }
+
+    // --- tempo real ----------------------------------------------------------
+    val tempoReal = config.tempoReal.stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, true)
+    fun alternarTempoReal(ligado: Boolean) = viewModelScope.launch {
+        config.salvarTempoReal(ligado)
+        if (ligado) dev.josev.relay.notificacoes.ServicoTempoReal.iniciar(getApplication())
+        else dev.josev.relay.notificacoes.ServicoTempoReal.parar(getApplication())
+    }
+
+    // --- quadro --------------------------------------------------------------
+    fun abrirTarefa(id: Long) = _estado.update { it.copy(tarefa = id) }
+    fun fecharTarefa() = _estado.update { it.copy(tarefa = null) }
+    suspend fun tarefas(): List<dev.josev.relay.dados.Tarefa> = api!!.tarefas(_estado.value.sala)
+    suspend fun tarefa(id: Long): dev.josev.relay.dados.Tarefa = api!!.tarefa(id)
+    suspend fun criarTarefa(campos: Map<String, Any?>) = api!!.criarTarefa(_estado.value.sala, campos)
+    suspend fun alterarTarefa(id: Long, campos: Map<String, Any?>) = api!!.alterarTarefa(id, campos)
+    suspend fun novoItem(id: Long, texto: String) = api!!.novoItem(id, texto)
+    suspend fun marcarItem(id: Long, item: Long, feito: Boolean) = api!!.marcarItem(id, item, feito)
+    suspend fun apagarItem(id: Long, item: Long) = api!!.apagarItem(id, item)
+    val eu: String get() = _estado.value.conexao?.nome.orEmpty()
 
     // --- perfil --------------------------------------------------------------
     fun abrirPerfil(nome: String) { if (nome != "relay") _estado.update { it.copy(perfil = nome) } }

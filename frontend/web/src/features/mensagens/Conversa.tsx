@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { Mensagem as TMensagem } from "@/shared/api/tipos";
 import { avisar } from "@/shared/lib/avisar";
+import { instanteDe } from "@/shared/lib/formato";
 import { textos } from "@/shared/lib/textos";
 import { Mensagem } from "./Mensagem";
 import type { Pendente } from "./useConversa";
@@ -35,13 +36,26 @@ interface Props {
   apelidos: Map<string, string>;
   /** Pular até esta mensagem (ex.: origem de um fato da Memória); carrega as antigas se precisar. */
   irPara?: number | null;
+  /** Tocar numa citação: pede pra pular até a original. */
+  aoIrPara?: (id: number) => void;
   aoChegarEm?: () => void;
 }
 
 type Item =
-  | { tipo: "msg"; m: TMensagem }
+  | { tipo: "msg"; m: TMensagem; seguida: boolean }
   | { tipo: "pendente"; p: Pendente }
-  | { tipo: "divisor" };
+  | { tipo: "divisor" }
+  | { tipo: "data"; rotulo: string; dia: string };
+
+/** Mesmo autor, até 5 min depois e sem nada no meio: a mensagem "gruda" na anterior (sem avatar/nome). */
+const AGRUPA_MS = 5 * 60_000;
+const diaDe = (ms: number) => new Date(ms).toLocaleDateString("sv-SE");
+function rotuloDia(ms: number): string {
+  const d = new Date(ms), hoje = new Date(), ontem = new Date(Date.now() - 86_400_000);
+  if (d.toDateString() === hoje.toDateString()) return t.hoje;
+  if (d.toDateString() === ontem.toDateString()) return t.ontem;
+  return d.toLocaleDateString("pt-BR", { day: "numeric", month: "short", ...(d.getFullYear() !== hoje.getFullYear() ? { year: "numeric" } : {}) });
+}
 
 const PERTO_DO_FIM = 80;
 const t = textos.conversa;
@@ -54,7 +68,7 @@ function Digitando({ nomes }: { nomes: string[] }) {
       {texto && (
         <>
           <span className="flex gap-0.5" aria-hidden>
-            {[0, 1, 2].map((i) => <i key={i} className="size-1 rounded-full bg-muted-foreground motion-safe:animate-bounce" style={{ animationDelay: `${i * 120}ms` }} />)}
+            {[0, 1, 2].map((i) => <i key={i} className="size-1 rounded-full bg-muted-foreground motion-safe:animate-[ponto_1.2s_infinite]" style={{ animationDelay: `${i * 150}ms` }} />)}
           </span>
           {texto}
         </>
@@ -65,7 +79,7 @@ function Digitando({ nomes }: { nomes: string[] }) {
 
 /** Lista virtualizada com marcador de não lidas: só o que está visível (+ margem) fica no DOM. */
 export function Conversa(props: Props) {
-  const { sala, eu, mensagens, pendentes, carregando, temMais, carregandoAntigas, ultimaLida, carregarAntigas, aoLer, retentar, descartar, admin, aoResponder, apagar, editar, digitando, leituras, apelidos, irPara, aoChegarEm } = props;
+  const { sala, eu, mensagens, pendentes, carregando, temMais, carregandoAntigas, ultimaLida, carregarAntigas, aoLer, retentar, descartar, admin, aoResponder, apagar, editar, digitando, leituras, apelidos, irPara, aoChegarEm, aoIrPara } = props;
   const mostrar = (n: string) => apelidos.get(n) ?? n;
   // Avatares de "visto": cada leitor aparece na última mensagem que leu (estilo Messenger).
   const vistoEm = new Map<number, string[]>();
@@ -92,9 +106,16 @@ export function Conversa(props: Props) {
   const ultimoId = mensagens.at(-1)?.id ?? 0;
   const indiceNova = marco > 0 ? mensagens.findIndex((m) => m.id > marco && m.de !== eu) : -1;
   const itens: Item[] = [];
+  let anterior: TMensagem | undefined;
   mensagens.forEach((m, i) => {
+    const ms = instanteDe(m);
+    const novoDia = !anterior || diaDe(instanteDe(anterior)) !== diaDe(ms);
+    if (novoDia) itens.push({ tipo: "data", rotulo: rotuloDia(ms), dia: diaDe(ms) });
     if (i === indiceNova) itens.push({ tipo: "divisor" });
-    itens.push({ tipo: "msg", m });
+    const seguida = !novoDia && i !== indiceNova && !!anterior && anterior.de === m.de && m.de !== "relay"
+      && anterior.para === m.para && ms - instanteDe(anterior) < AGRUPA_MS;
+    itens.push({ tipo: "msg", m, seguida });
+    anterior = m;
   });
   for (const p of pendentes) itens.push({ tipo: "pendente", p });
   const novasAbaixo = noFim ? 0 : mensagens.filter((m) => m.id > marco && m.de !== eu).length;
@@ -108,7 +129,7 @@ export function Conversa(props: Props) {
     getItemKey: (i) => {
       const it = itens[i];
       if (!it) return i;
-      return it.tipo === "msg" ? it.m.id : it.tipo === "pendente" ? `p-${it.p.client_id}` : "divisor";
+      return it.tipo === "msg" ? it.m.id : it.tipo === "pendente" ? `p-${it.p.client_id}` : it.tipo === "data" ? `d-${it.dia}` : "divisor";
     },
   });
 
@@ -205,9 +226,10 @@ export function Conversa(props: Props) {
     if (fim) lerSeVisivel();
   }
 
-  // Leitor de tela anuncia só a última mensagem de outra pessoa.
+  // Leitor de tela anuncia só o que é pra mim: menção ou privada (sala movimentada não vira ruído).
   const ultima = mensagens.at(-1);
-  const anuncio = ultima && ultima.de !== eu ? `${ultima.de}: ${ultima.texto.slice(0, 200)}` : "";
+  const praMim = ultima && ultima.de !== eu && (ultima.para === eu || mencao.test(ultima.texto));
+  const anuncio = praMim ? t.anuncio(mostrar(ultima.de), ultima.para === eu, ultima.texto.slice(0, 200)) : "";
 
   return (
     <ApelidosContexto.Provider value={apelidos}>
@@ -246,14 +268,18 @@ export function Conversa(props: Props) {
               return (
                 <div key={v.key} data-index={v.index} ref={virtual.measureElement}
                   className={cn("absolute top-0 left-0 w-full rounded-xl transition-shadow duration-500",
-                    it.tipo === "msg" && it.m.id === destaque && "ring-2 ring-primary ring-offset-4 ring-offset-background")}
+                    it.tipo === "msg" && it.m.id === destaque && "ring-2 ring-primary ring-offset-4 ring-offset-background motion-safe:animate-[destaque_1s_var(--mov-curva)]")}
                   style={{ transform: `translateY(${v.start}px)` }}>
-                  {it.tipo === "divisor" ? (
-                    <div role="separator" aria-label={t.novas} className="flex items-center gap-3 text-xs font-medium text-primary">
+                  {it.tipo === "data" ? (
+                    <div role="separator" aria-label={it.rotulo} className="flex items-center gap-3 py-1 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+                      <span className="h-px flex-1 bg-border" />{it.rotulo}<span className="h-px flex-1 bg-border" />
+                    </div>
+                  ) : it.tipo === "divisor" ? (
+                    <div role="separator" aria-label={t.novas} className="flex items-center gap-3 text-xs font-medium text-primary motion-safe:animate-[surge_var(--mov-padrao)_var(--mov-curva)]">
                       <span className="h-px flex-1 bg-primary/40" />{t.novas}<span className="h-px flex-1 bg-primary/40" />
                     </div>
                   ) : it.tipo === "msg" ? (
-                    <Mensagem m={it.m} minha={it.m.de === eu} apelido={apelidos.get(it.m.de)} mencionaMe={mencao.test(it.m.texto)}
+                    <Mensagem m={it.m} minha={it.m.de === eu} seguida={it.seguida} aoIrPara={aoIrPara} apelido={apelidos.get(it.m.de)} mencionaMe={mencao.test(it.m.texto)}
                       vistoPor={vistoEm.get(it.m.id)} vistaPorTodos={it.m.de === eu ? vistaPorTodos(it.m.id) : undefined}
                       citada={it.m.reply_to ? porId.get(it.m.reply_to) : undefined}
                       podeApagar={admin || it.m.de === eu} aoResponder={aoResponder} aoApagar={apagar} aoEditar={it.m.de === eu ? editar : undefined} />
@@ -272,8 +298,8 @@ export function Conversa(props: Props) {
       </div>
       {!noFim && (
         <Button size="sm" variant={novasAbaixo > 0 ? "default" : "secondary"} onClick={() => { presoNoFim.current = true; irParaFim(); }}
-          className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full shadow-lg">
-          <ArrowDownIcon /> {novasAbaixo > 0 ? t.novasAbaixo(novasAbaixo) : t.irParaFim}
+          className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full shadow-lg motion-safe:animate-[surgeBotao_150ms_var(--mov-curva)]">
+          <ArrowDownIcon /> <span key={novasAbaixo} className="motion-safe:animate-[sobe_150ms_var(--mov-curva)]">{novasAbaixo > 0 ? t.novasAbaixo(novasAbaixo) : t.irParaFim}</span>
         </Button>
       )}
       <Digitando nomes={digitando.map(mostrar)} />

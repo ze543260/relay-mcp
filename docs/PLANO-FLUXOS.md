@@ -300,7 +300,7 @@ Aprovado pelo João em [391]. Back e executor estão neste PR; editor e telas fi
 | Peça | Arquivo | O que já faz |
 |---|---|---|
 | Esquema, condições, validação, hash | `relay_fluxos.py` | esquema fechado em inglês (chave em português dá erro com a sugestão), `steps` linear vira `nodes`, parser de condição próprio, DAG + laços com `max`, pior caso, moldes só com o que foi declarado, forma canônica sem `layout` |
-| Catálogo e pedidos | `relay_server.py` (migração 17) | `GET/POST /fluxos`, `GET /fluxos/<nome>?versao=`, `POST/GET /fluxos/pedidos`, `GET /fluxos/pedidos/<id>`, `POST /fluxos/pedidos/<id>/estado` (aceito, recusado, concluido, falhou, cancelado; pendente expira) |
+| Catálogo e pedidos | `relay_server.py` (migração 18) | `GET/POST /fluxos`, `GET /fluxos/<nome>?versao=`, `POST/GET /fluxos/pedidos`, `GET /fluxos/pedidos/<id>`, `POST /fluxos/pedidos/<id>/estado` (aceito, recusado, concluido, falhou, cancelado; pendente expira) |
 | Executor | `relay_executor.py` | loja endereçada por hash, `approved.json` com hash vizinho, aprovação só em terminal (digitando o início do hash), diff contra a versão aprovada, Docker sem rede e sem segredo, clone no host sem hooks, máquina de estados com auditoria, modo `confirm`, `agent` pela API com saída tipada forçada, `agent_step` pelo relay |
 | MCP | `relay_mcp.py` | `listar_fluxos`, `ver_fluxo`, `publicar_fluxo`, `pedir_fluxo` (com `aguardar`), `ver_pedido` |
 | Testes | `tests/test_fluxos.py` | os casos das seções 9, 11.7 e 12.5, com sandbox e agente falsos |

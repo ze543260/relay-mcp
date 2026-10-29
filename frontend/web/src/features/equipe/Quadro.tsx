@@ -102,7 +102,7 @@ function Cartao({ tarefa, eu, admin, mover, pegar, apagar, abrir }: {
 }
 
 /** Quadro kanban da sala, com a sprint ativa no topo. */
-export default function Quadro({ sala, eu, admin }: { sala: string; eu: string; admin: boolean }) {
+export default function Quadro({ sala, eu, admin, abrir }: { sala: string; eu: string; admin: boolean; abrir?: number | null }) {
   const { data: tarefas, isPending } = useTarefas(sala);
   const { data: sprints } = useSprints(sala);
   const { data: etiquetas } = useEtiquetas(sala);
@@ -110,7 +110,10 @@ export default function Quadro({ sala, eu, admin }: { sala: string; eu: string; 
   const [titulo, setTitulo] = useState("");
   const [nomeSprint, setNomeSprint] = useState("");
   const [criandoSprint, setCriandoSprint] = useState(false);
-  const [aberta, setAberta] = useState<number | null>(null);
+  const [aberta, setAberta] = useState<number | null>(abrir ?? null);
+  // Vindo da busca (Ctrl+K): abre a tarefa pedida.
+  const [pedida, setPedida] = useState(abrir);
+  if (abrir !== pedida) { setPedida(abrir); if (abrir) setAberta(abrir); }
   // O painel (com Markdown/KaTeX) só baixa quando a pessoa chega perto do quadro, e daí fica montado.
   const [painelPronto, setPainelPronto] = useState(false);
   const prepararPainel = () => setPainelPronto(true);
