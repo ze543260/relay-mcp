@@ -79,7 +79,7 @@ export const Mensagem = memo(function Mensagem(props: Props) {
   // Mensagens do próprio relay (tarefas, reuniões): linha de evento, não bolha.
   if (m.de === "relay") {
     const artefato = /\[\[artefato:(\d+)\]\]/.exec(m.texto);
-    if (artefato) return <CartaoArtefato id={Number(artefato[1])} texto={m.texto.replace(artefato[0], "").replace(/\s{2,}/g, " ")} ms={ms} />;
+    if (artefato) return <CartaoArtefato id={Number(artefato[1])} texto={m.texto.replace(/\[\[artefato:\d+\]\]/g, "").replace(/\s{2,}/g, " ")} ms={ms} />;
     return (
       <div role="note" className="texto texto-sistema mx-auto max-w-[min(100%,640px)] rounded-lg border border-dashed bg-superficie/60 px-3 py-2 text-[13px] text-muted-foreground">
         <Suspense fallback={<p className="whitespace-pre-wrap">{m.texto}</p>}>

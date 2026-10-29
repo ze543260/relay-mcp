@@ -23,6 +23,7 @@ const PORCODIGO: Record<string, Traducao> = {
   requer_humano: { mensagem: "Só quem entra com um token humano próprio confirma fatos (o token de admin não vale).", campo: "raiz" },
   conflito: { mensagem: "Alguém salvou uma versão nova enquanto você editava. Abra de novo e reaplique a sua mudança.", campo: "raiz" },
   artefato_grande: { mensagem: "Artefato grande demais (máx. 200 KB por versão).", campo: "raiz" },
+  artefato_cheio: { mensagem: "Esse artefato chegou ao limite de versões. Crie um novo a partir dele.", campo: "raiz" },
   artefato_decidido: { mensagem: "O artefato já está nesse estado.", campo: "raiz" },
   fato_decidido: { mensagem: "Esse fato já foi decidido por outra pessoa.", campo: "raiz" },
   fato_nao_vigente: { mensagem: "O fato que este substituiria já mudou. Atualize e tente de novo.", campo: "raiz" },
