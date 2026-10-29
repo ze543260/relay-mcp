@@ -171,7 +171,13 @@ function FotoEditavel({ perfil: p, ia }: { perfil: Perfil; ia: boolean }) {
       </AvatarFallback>
     </Avatar>
   );
-  if (!p.pode_editar) return avatar;
+  // Trocar: só a própria pessoa ou o dono do agente. Remover: também o admin (moderação).
+  if (!p.pode_trocar_foto) return p.pode_editar && p.foto ? (
+    <div className="grid justify-items-center gap-0.5">{avatar}
+      <button type="button" onClick={() => foto.mutate(null)} disabled={foto.isPending}
+        className="text-[10px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline">{t.removerFoto}</button>
+    </div>
+  ) : avatar;
   return (
     <div className="grid justify-items-center gap-0.5">
       <button type="button" onClick={() => entrada.current?.click()} disabled={foto.isPending} aria-label={t.trocarFoto}
