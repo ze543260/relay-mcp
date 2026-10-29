@@ -38,8 +38,8 @@ interface Props {
   aoIrPara?: (id: number) => void;
   /** Apelido do autor, se houver (mostrado no lugar do nome, com o nome ao lado). */
   apelido?: string | null;
-  /** Quem tem esta como última mensagem lida (avatares pequenos embaixo). */
-  vistoPor?: string[];
+  /** Abre "Dados da mensagem" (quem leu). */
+  aoInfo?: (m: TMensagem) => void;
   /** Minha mensagem: true = todos leram (✓✓), false = entregue (✓). */
   vistaPorTodos?: boolean;
   /** Só para mensagens otimistas (ainda não confirmadas pelo servidor). */
@@ -65,7 +65,7 @@ function CartaoArtefato({ id, texto, ms }: { id: number; texto: string; ms: numb
 }
 
 export const Mensagem = memo(function Mensagem(props: Props) {
-  const { m, minha, mencionaMe, citada, podeApagar, aoResponder, aoApagar, estado, aoTentar, aoDescartar, vistoPor, vistaPorTodos, apelido, aoEditar, seguida, aoIrPara } = props;
+  const { m, minha, mencionaMe, citada, podeApagar, aoResponder, aoApagar, estado, aoTentar, aoDescartar, aoInfo, vistaPorTodos, apelido, aoEditar, seguida, aoIrPara } = props;
   const ms = instanteDe(m);
   // A lista virtual remonta itens ao rolar: só anima o que acabou de chegar.
   const [recente] = useState(() => Date.now() - ms < RECENTE_MS);
@@ -122,13 +122,16 @@ export const Mensagem = memo(function Mensagem(props: Props) {
           {estado === "enviando" && <span>{t.enviando}</span>}
           {estado === "erro" && <span className="text-destructive">{t.falhou}</span>}
           {minha && estado === undefined && vistaPorTodos !== undefined && (
-            vistaPorTodos
-              ? <CheckCheckIcon key="lida" className="size-3.5 text-primary motion-safe:animate-[pop_150ms_var(--mov-curva)]" aria-label={t.vistaPorTodos} />
-              : <CheckIcon key="entregue" className="size-3.5 motion-safe:animate-[pop_150ms_var(--mov-curva)]" aria-label={t.entregue} />
+            <button type="button" onClick={() => aoInfo?.(m)} aria-label={`${vistaPorTodos ? t.vistaPorTodos : t.entregue}. ${t.infoTitulo}`}
+              title={t.infoTitulo} className="-m-1 rounded-sm p-1 hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring">
+              {vistaPorTodos
+                ? <CheckCheckIcon key="lida" aria-hidden className="size-3.5 text-primary motion-safe:animate-[pop_150ms_var(--mov-curva)]" />
+                : <CheckIcon key="entregue" aria-hidden className="size-3.5 motion-safe:animate-[pop_150ms_var(--mov-curva)]" />}
+            </button>
           )}
           {confirmada && (acoes ? (
             <Suspense fallback={<Button variant="ghost" size="icon-xs" className={GATILHO} disabled aria-label={t.acoes}><EllipsisIcon /></Button>}>
-              <AcoesMensagem m={m} podeApagar={Boolean(podeApagar)} classeGatilho={minha ? GATILHO.replace("ml-auto", "mr-auto") : GATILHO} aoResponder={aoResponder} aoApagar={aoApagar}
+              <AcoesMensagem m={m} podeApagar={Boolean(podeApagar)} classeGatilho={minha ? GATILHO.replace("ml-auto", "mr-auto") : GATILHO} aoResponder={aoResponder} aoApagar={aoApagar} aoInfo={aoInfo && (() => aoInfo(m))}
                 aoEditar={aoEditar && m.texto.trim() ? () => setEditando(m.texto) : undefined} />
             </Suspense>
           ) : (
@@ -179,15 +182,6 @@ export const Mensagem = memo(function Mensagem(props: Props) {
           </div>
         )}
         {m.anexos && m.anexos.length > 0 && <ListaAnexos anexos={m.anexos} />}
-        {vistoPor && vistoPor.length > 0 && (
-          <div role="group" className="mt-1 flex items-center justify-end gap-0.5" aria-label={t.vistoPor(vistoPor.join(", "))} title={t.vistoPor(vistoPor.join(", "))}>
-            {vistoPor.slice(0, 6).map((n) => (
-              <span key={n} aria-hidden className={cn("grid size-4 place-items-center text-[7px] font-semibold text-white ring-2 ring-background", ehIa(n) ? "rounded-full" : "rounded-[3px]")}
-                style={{ background: corDe(n) }}>{siglaDe(n)}</span>
-            ))}
-            {vistoPor.length > 6 && <span className="text-[10px] text-muted-foreground">+{vistoPor.length - 6}</span>}
-          </div>
-        )}
         {estado === "erro" && (
           <div className="mt-1 flex gap-1">
             <Button size="xs" variant="outline" onClick={aoTentar}>{t.tentarDeNovo}</Button>

@@ -9,6 +9,7 @@ import type { Mensagem as TMensagem } from "@/shared/api/tipos";
 import { avisar } from "@/shared/lib/avisar";
 import { instanteDe } from "@/shared/lib/formato";
 import { textos } from "@/shared/lib/textos";
+import { InfoMensagem } from "./InfoMensagem";
 import { Mensagem } from "./Mensagem";
 import type { Pendente } from "./useConversa";
 
@@ -81,13 +82,8 @@ function Digitando({ nomes }: { nomes: string[] }) {
 export function Conversa(props: Props) {
   const { sala, eu, mensagens, pendentes, carregando, temMais, carregandoAntigas, ultimaLida, carregarAntigas, aoLer, retentar, descartar, admin, aoResponder, apagar, editar, digitando, leituras, apelidos, irPara, aoChegarEm, aoIrPara } = props;
   const mostrar = (n: string) => apelidos.get(n) ?? n;
-  // Avatares de "visto": cada leitor aparece na última mensagem que leu (estilo Messenger).
-  const vistoEm = new Map<number, string[]>();
-  for (const [nome, ate] of leituras) {
-    let alvo: number | undefined;
-    for (let i = mensagens.length - 1; i >= 0; i--) if (mensagens[i]!.id <= ate) { alvo = mensagens[i]!.id; break; }
-    if (alvo !== undefined) vistoEm.set(alvo, [...(vistoEm.get(alvo) ?? []), nome]);
-  }
+  // Quem leu cada mensagem fica em "Dados da mensagem" (tela à parte, estilo WhatsApp), não embaixo dela.
+  const [info, setInfo] = useState<TMensagem | null>(null);
   const leitores = [...leituras.keys()];
   const vistaPorTodos = (id: number) => leitores.length > 0 && leitores.every((n) => (leituras.get(n) ?? 0) >= id);
   const porId = new Map(mensagens.map((m) => [m.id, m]));
@@ -280,7 +276,7 @@ export function Conversa(props: Props) {
                     </div>
                   ) : it.tipo === "msg" ? (
                     <Mensagem m={it.m} minha={it.m.de === eu} seguida={it.seguida} aoIrPara={aoIrPara} apelido={apelidos.get(it.m.de)} mencionaMe={mencao.test(it.m.texto)}
-                      vistoPor={vistoEm.get(it.m.id)} vistaPorTodos={it.m.de === eu ? vistaPorTodos(it.m.id) : undefined}
+                      aoInfo={setInfo} vistaPorTodos={it.m.de === eu ? vistaPorTodos(it.m.id) : undefined}
                       citada={it.m.reply_to ? porId.get(it.m.reply_to) : undefined}
                       podeApagar={admin || it.m.de === eu} aoResponder={aoResponder} aoApagar={apagar} aoEditar={it.m.de === eu ? editar : undefined} />
                   ) : (
@@ -304,6 +300,7 @@ export function Conversa(props: Props) {
       )}
       <Digitando nomes={digitando.map(mostrar)} />
       <div className="sr-only" aria-live="polite">{anuncio}</div>
+      <InfoMensagem m={info} leituras={leituras} apelidos={apelidos} fechar={() => setInfo(null)} />
     </div>
     </ApelidosContexto.Provider>
   );
