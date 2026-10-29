@@ -10,6 +10,7 @@ import { traduzirErro } from "@/shared/api/erros";
 import type { Anexo, Mensagem } from "@/shared/api/tipos";
 import { corDe, ehIa, resumo, siglaDe } from "@/shared/lib/formato";
 import { textos } from "@/shared/lib/textos";
+import { FotoPerfil } from "@/features/perfil/FotoPerfil";
 
 export interface Candidato {
   nome: string;
@@ -235,6 +236,7 @@ export function Composer({ sala, rotuloSala, nome, respondendo, candidatos, aoCa
               onMouseDown={(e) => { e.preventDefault(); escolher(c); }} onMouseEnter={() => setIndice(i)}
               className={cn("flex min-h-11 cursor-pointer items-center gap-2.5 rounded-lg px-2 md:min-h-9", i === ativo && "bg-accent")}>
               <Avatar aria-hidden className={cn("size-6", !ehIa(c.nome) && "rounded-md after:rounded-md")}>
+                <FotoPerfil nome={c.nome} className={cn(!ehIa(c.nome) && "rounded-md")} />
                 <AvatarFallback className={cn("text-[9.5px] font-semibold text-white", !ehIa(c.nome) && "rounded-md")} style={{ background: corDe(c.nome) }}>
                   {siglaDe(c.nome)}
                 </AvatarFallback>

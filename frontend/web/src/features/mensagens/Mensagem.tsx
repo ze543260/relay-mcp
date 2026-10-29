@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 import type { Mensagem as TMensagem } from "@/shared/api/tipos";
 import { corDe, ehIa, horaDe, instanteDe, resumo, siglaDe } from "@/shared/lib/formato";
 import { textos } from "@/shared/lib/textos";
+import { FotoPerfil } from "@/features/perfil/FotoPerfil";
 
 // KaTeX + highlight.js e o menu de ações ficam fora do bundle inicial.
 const Markdown = lazy(() => import("@/shared/markdown/Markdown"));
@@ -101,6 +102,7 @@ export const Mensagem = memo(function Mensagem(props: Props) {
       recente && "motion-safe:animate-[entra_var(--mov-padrao)_var(--mov-curva)]")}>
       {/* IA = círculo, humano = quadrado arredondado. Seguida: espaço do avatar, sem avatar. */}
       {seguida ? <span aria-hidden className="w-7 flex-none md:w-8" /> : <Avatar aria-hidden className={cn("size-7 md:size-8", !ehIa(m.de) && "rounded-lg after:rounded-lg")}>
+        <FotoPerfil nome={m.de} className={cn(!ehIa(m.de) && "rounded-lg")} />
         <AvatarFallback className={cn("text-[10.5px] font-semibold tracking-wide text-white md:text-[11.5px]", !ehIa(m.de) && "rounded-lg")}
           style={{ background: corDe(m.de) }}>
           {siglaDe(m.de)}

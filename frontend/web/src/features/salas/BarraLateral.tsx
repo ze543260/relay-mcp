@@ -12,6 +12,7 @@ import { corDe, siglaDe } from "@/shared/lib/formato";
 import type { Tema } from "@/shared/lib/tema";
 import { textos } from "@/shared/lib/textos";
 import { useSalas } from "./useSalas";
+import { FotoPerfil } from "@/features/perfil/FotoPerfil";
 
 interface Props {
   sala: string;
@@ -58,6 +59,7 @@ export function BarraLateral({ sala, nome, admin, vistas, estado, tema, aoEscolh
   const cabecalho = (
     <>
                 <Avatar className="rounded-lg after:rounded-lg">
+        <FotoPerfil nome={nome} className="rounded-lg" />
         <AvatarFallback className="rounded-lg text-[11px] font-semibold text-white" style={{ background: corDe(nome) }}>
           {siglaDe(nome)}
         </AvatarFallback>

@@ -16,6 +16,7 @@ Env opcionais: RELAY_DB, RELAY_RETENCAO_DIAS (0 = guarda tudo), RELAY_MAX_ESPERA
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import hmac
 import json
@@ -224,6 +225,10 @@ MIGRACOES = [
          correlation_id TEXT NOT NULL UNIQUE, estado TEXT NOT NULL DEFAULT 'pendente', resultado TEXT, motivo TEXT,
          msg_id INTEGER, criado REAL NOT NULL, atualizado REAL NOT NULL, expira REAL NOT NULL);
        CREATE INDEX IF NOT EXISTS fluxo_pedido_agente ON fluxo_pedido(agente, estado, id);""",
+    # 19: foto de perfil. Bitmap pequeno no próprio banco; `versao` vai na URL pra o cliente cachear sem medo.
+    """CREATE TABLE IF NOT EXISTS foto (
+         nome TEXT PRIMARY KEY, tipo TEXT NOT NULL, dados BLOB NOT NULL, versao INTEGER NOT NULL,
+         editado_por TEXT NOT NULL, quando REAL NOT NULL);""",
 ]
 
 STATUS_TAREFA = ("a_fazer", "fazendo", "revisao", "feito")
@@ -898,6 +903,9 @@ class Handler(BaseHTTPRequestHandler):
             m = re.fullmatch(r"/agentes/([^/]+)/(persona|dono)", caminho)
             if m and metodo == "PUT":
                 return (self.editar_persona if m.group(2) == "persona" else self.definir_dono)(unquote(m.group(1)))
+            m = re.fullmatch(r"/agentes/([^/]+)/foto", caminho)
+            if m and metodo in ("GET", "PUT", "DELETE"):
+                return {"GET": self.ver_foto, "PUT": self.trocar_foto, "DELETE": self.apagar_foto}[metodo](unquote(m.group(1)))
             m = re.fullmatch(r"/arquivos/([\w-]{16,64})", caminho)
             if m and metodo == "GET":
                 return self.baixar_arquivo(m.group(1), q)
@@ -1110,11 +1118,12 @@ class Handler(BaseHTTPRequestHandler):
                    ORDER BY 1"""
             ).fetchall()
             apelidos = dict(con.execute("SELECT nome, apelido FROM apelido"))
+            fotos = dict(con.execute("SELECT nome, versao FROM foto"))
         agora = time.time()
         self._json(200, [
             {"nome": n, "apelido": apelidos.get(n), "visto_em": iso(v) if v else None, "online": bool(v and agora - v < ONLINE_S),
              "tipo": t or ("ia" if re.match(r"^(claude|gemma|qwen|llama|gpt)", n) else "humano"),
-             "tem_token": bool(tk)}
+             "tem_token": bool(tk), "foto": fotos.get(n)}
             for n, v, t, tk in linhas
         ])
 
@@ -2443,6 +2452,7 @@ class Handler(BaseHTTPRequestHandler):
             fatos = con.execute("SELECT COUNT(*) FROM fato WHERE autor=? AND estado='vigente'", (nome,)).fetchone()[0]
             salas = [r[0] for r in con.execute("SELECT sala FROM msg WHERE de=? GROUP BY sala ORDER BY MAX(id) DESC LIMIT 10", (nome,))]
             pode = self._pode_editar_perfil(con, quem, nome)
+            foto = con.execute("SELECT versao FROM foto WHERE nome=?", (nome,)).fetchone()
             tipo = ag[0] if ag else ("ia" if re.match(r"^(claude|gemma|qwen|llama|gpt)", nome) else "humano")
         v = visto[0] if visto else None
         perfil = {
@@ -2452,7 +2462,7 @@ class Handler(BaseHTTPRequestHandler):
             "persona": dict(zip(("equipe", "papel", "foco", "tom", "limites", "editado_por"), pers[:6]),
                             editado_em=iso(pers[6])) if pers else None,
             "tarefas": [{"id": i, "sala": sl, "titulo": t, "status": st, "prioridade": pr} for i, sl, t, st, pr in tarefas],
-            "fatos_registrados": fatos, "pode_editar": pode,
+            "fatos_registrados": fatos, "pode_editar": pode, "foto": foto[0] if foto else None,
         }
         if pode and ag:  # acesso: só dono/admin
             perfil["acesso"] = {"token_ativo": bool(ag[4] and not ag[3]), "criado_em": iso(ag[2]),
@@ -2478,6 +2488,54 @@ class Handler(BaseHTTPRequestHandler):
                         "papel=excluded.papel, foco=excluded.foco, tom=excluded.tom, limites=excluded.limites, "
                         "editado_por=excluded.editado_por, quando=excluded.quando",
                         (nome, *campos.values(), autor, time.time()))
+            registrar_evento(con, "perfil", "geral", 0)
+        notificar()
+        self._vazio()
+
+    FOTO_MAX = 300_000
+    # Só bitmap: SVG aberto direto no navegador roda script. Confere a assinatura, não o que o cliente diz.
+    FOTO_ASSINATURAS = ((b"\x89PNG\r\n\x1a\n", "image/png"), (b"\xff\xd8\xff", "image/jpeg"), (b"RIFF", "image/webp"))
+
+    def ver_foto(self, nome: str) -> None:
+        with conectar() as con:
+            self._quem(con)
+            linha = con.execute("SELECT tipo, dados FROM foto WHERE nome=?", (nome,)).fetchone()
+        if not linha:
+            raise ErroHttp(404, "sem_foto", "Sem foto de perfil.")
+        self._enviar(200, linha[1], linha[0], {"Cache-Control": "private, max-age=31536000, immutable",
+                                               "Content-Security-Policy": "sandbox; default-src 'none'"})
+
+    def trocar_foto(self, nome: str) -> None:
+        c = self._corpo(self.FOTO_MAX * 4 // 3 + 1024)
+        try:
+            dados = base64.b64decode(str(c.get("dados") or ""), validate=True)
+        except ValueError:
+            raise ErroHttp(400, "foto_invalida", "Mande a imagem em base64 no campo dados.") from None
+        tipo = next((t for assin, t in self.FOTO_ASSINATURAS if dados.startswith(assin)
+                     and (t != "image/webp" or dados[8:12] == b"WEBP")), None)
+        if not tipo:
+            raise ErroHttp(415, "foto_formato", "Foto: PNG, JPEG ou WebP.")
+        if len(dados) > self.FOTO_MAX:
+            raise ErroHttp(413, "foto_grande", f"Foto: até {self.FOTO_MAX // 1000} KB.")
+        with conectar() as con:
+            quem = self._quem(con)
+            if not self._pode_editar_perfil(con, quem, nome):
+                raise ErroHttp(403, "requer_dono", "Só o dono (com token humano próprio) ou o admin trocam a foto.")
+            autor = humano_confirmado(con, quem) or quem.nome or "admin"
+            versao = (con.execute("SELECT versao FROM foto WHERE nome=?", (nome,)).fetchone() or (0,))[0] + 1
+            con.execute("INSERT INTO foto VALUES (?,?,?,?,?,?) ON CONFLICT(nome) DO UPDATE SET tipo=excluded.tipo, "
+                        "dados=excluded.dados, versao=excluded.versao, editado_por=excluded.editado_por, quando=excluded.quando",
+                        (nome, tipo, dados, versao, autor, time.time()))
+            registrar_evento(con, "perfil", "geral", 0)
+        notificar()
+        self._json(200, {"foto": versao})
+
+    def apagar_foto(self, nome: str) -> None:
+        with conectar() as con:
+            quem = self._quem(con)
+            if not self._pode_editar_perfil(con, quem, nome):
+                raise ErroHttp(403, "requer_dono", "Só o dono (com token humano próprio) ou o admin trocam a foto.")
+            con.execute("DELETE FROM foto WHERE nome=?", (nome,))
             registrar_evento(con, "perfil", "geral", 0)
         notificar()
         self._vazio()

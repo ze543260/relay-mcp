@@ -12,6 +12,7 @@ import { cn } from "@/lib/utils";
 import { corDe, ehIa, siglaDe } from "@/shared/lib/formato";
 import { textos } from "@/shared/lib/textos";
 import { useEquipe, useReunioes, type Formato, type Reuniao } from "./api";
+import { FotoPerfil } from "@/features/perfil/FotoPerfil";
 
 const t = textos.reuniao;
 const FORMATOS: Formato[] = ["daily", "planejamento", "revisao", "livre"];
@@ -19,6 +20,7 @@ const FORMATOS: Formato[] = ["daily", "planejamento", "revisao", "livre"];
 function Pessoa({ nome, ativa }: { nome: string; ativa?: boolean }) {
   return (
     <Avatar title={nome} className={cn("size-6 ring-2 ring-background", !ehIa(nome) && "rounded-md after:rounded-md", ativa && "ring-primary")}>
+      <FotoPerfil nome={nome} className={cn(!ehIa(nome) && "rounded-md")} />
       <AvatarFallback className={cn("text-[9px] font-semibold text-white", !ehIa(nome) && "rounded-md")} style={{ background: corDe(nome) }}>
         {siglaDe(nome)}
       </AvatarFallback>
