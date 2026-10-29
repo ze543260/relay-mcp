@@ -111,6 +111,7 @@ fun Bolha(
     vistoPor: List<String> = emptyList(),
     vistaPorTodos: Boolean? = null,
     apelido: String? = null,
+    aoAbrirPerfil: () -> Unit = {},
 ) {
     val cores = MaterialTheme.colorScheme
     val extras = LocalExtras.current
@@ -139,11 +140,12 @@ fun Bolha(
     }
     Row(modifier.fillMaxWidth().semantics(mergeDescendants = false) { contentDescription = "${m.de}: ${resumo(m.texto, 200)}" }) {
         val forma = if (minha) FormaBolhaMinha else FormaBolha
-        if (!minha) Avatar(m.de, 30.dp)
+        if (!minha) Avatar(m.de, 30.dp, Modifier.clickable(onClickLabel = "Abrir perfil", onClick = aoAbrirPerfil))
         Column(Modifier.padding(start = if (minha) 40.dp else 10.dp, end = if (minha) 10.dp else 0.dp).weight(1f),
             horizontalAlignment = if (minha) Alignment.End else Alignment.Start) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(apelido ?: m.de, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+                Text(apelido ?: m.de, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.clickable(onClickLabel = "Abrir perfil", onClick = aoAbrirPerfil))
                 if (apelido != null) Text(m.de, style = MaterialTheme.typography.labelSmall, color = cores.onSurfaceVariant, fontFamily = dev.josev.relay.ui.tema.Mono)
                 m.para?.let { Text("→ $it", color = cores.primary, style = MaterialTheme.typography.bodyMedium) }
                 Text(hora(m.criado), color = cores.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
@@ -193,7 +195,7 @@ fun Bolha(
                 TextButton(aoDescartar, Modifier.height(32.dp)) { Text("Descartar") }
             }
         }
-        if (minha) Avatar(m.de, 30.dp)
+        if (minha) Avatar(m.de, 30.dp, Modifier.clickable(onClickLabel = "Abrir perfil", onClick = aoAbrirPerfil))
     }
 }
 

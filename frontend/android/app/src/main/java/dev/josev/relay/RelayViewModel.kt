@@ -22,6 +22,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
@@ -57,6 +58,8 @@ data class Estado(
     /** nome -> último id lido (sem mim). */
     val leituras: Map<String, Long> = emptyMap(),
     val aviso: String? = null,
+    /** Perfil aberto em tela cheia (nome técnico), ou null. */
+    val perfil: String? = null,
 )
 
 class RelayViewModel(app: Application) : AndroidViewModel(app) {
@@ -385,6 +388,20 @@ class RelayViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun avisoMostrado() = _estado.update { it.copy(aviso = null) }
+
+    // --- tema ----------------------------------------------------------------
+    val tema = config.tema.stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, "sistema")
+    /** Botão à vista: alterna entre claro e escuro a partir do que está na tela agora. */
+    fun alternarTema(escuroAgora: Boolean) = viewModelScope.launch { config.salvarTema(if (escuroAgora) "claro" else "escuro") }
+
+    // --- perfil --------------------------------------------------------------
+    fun abrirPerfil(nome: String) { if (nome != "relay") _estado.update { it.copy(perfil = nome) } }
+    fun fecharPerfil() = _estado.update { it.copy(perfil = null) }
+    suspend fun perfil(nome: String): dev.josev.relay.dados.Perfil = api!!.perfil(nome)
+    suspend fun grafo(agente: String?, sujeito: String?): dev.josev.relay.dados.Grafo = api!!.grafo(_estado.value.sala, agente, sujeito)
+    suspend fun salvarPersona(nome: String, p: dev.josev.relay.dados.Persona) = api!!.salvarPersona(nome, p)
+    suspend fun revogar(nome: String) = api!!.revogar(nome)
+    fun erro(e: Throwable) = tratar(e)
 
     private fun tratar(e: Throwable) {
         val msg = when {

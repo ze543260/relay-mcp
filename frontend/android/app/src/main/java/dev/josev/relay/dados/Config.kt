@@ -19,6 +19,11 @@ class Config(private val contexto: Context) {
     private val kNome = stringPreferencesKey("nome")
     private val kToken = stringPreferencesKey("token")
     private val kSala = stringPreferencesKey("sala")
+    private val kTema = stringPreferencesKey("tema")
+
+    /** "sistema" | "claro" | "escuro". */
+    val tema: Flow<String> = contexto.dados.data.map { it[kTema] ?: "sistema" }
+    suspend fun salvarTema(t: String) = contexto.dados.edit { it[kTema] = t }
     private fun kVista(sala: String) = longPreferencesKey("vista:$sala")
 
     val conexao: Flow<Conexao?> = contexto.dados.data.map { p ->
