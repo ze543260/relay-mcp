@@ -36,6 +36,7 @@ sealed interface Evento {
     data object SemAcesso : Evento
     data class Digitando(val nomes: List<String>) : Evento
     data object Leu : Evento
+    data object TarefaMudou : Evento
     data class Editada(val m: Mensagem) : Evento
 }
 
@@ -132,6 +133,34 @@ class RelayApi(private val conexao: Conexao) {
         return json.decodeFromString(executar(pedido(url("mensagens/$id")).patch(corpo.toRequestBody(tipoJson)).build()))
     }
 
+    // --- quadro ---------------------------------------------------------
+    suspend fun tarefas(sala: String): List<Tarefa> = json.decodeFromString(executar(pedido(url("tarefas", "sala" to sala)).build()))
+    suspend fun tarefa(id: Long): Tarefa = json.decodeFromString(executar(pedido(url("tarefas/$id")).build()))
+
+    private fun corpo(campos: Map<String, Any?>): okhttp3.RequestBody = kotlinx.serialization.json.JsonObject(campos.mapValues { (_, v) ->
+        when (v) {
+            null -> kotlinx.serialization.json.JsonNull
+            is Number -> kotlinx.serialization.json.JsonPrimitive(v)
+            is Boolean -> kotlinx.serialization.json.JsonPrimitive(v)
+            is List<*> -> kotlinx.serialization.json.JsonArray(v.map { kotlinx.serialization.json.JsonPrimitive(it.toString()) })
+            else -> kotlinx.serialization.json.JsonPrimitive(v.toString())
+        }
+    }).toString().toRequestBody(tipoJson)
+
+    suspend fun criarTarefa(sala: String, campos: Map<String, Any?>): Tarefa =
+        json.decodeFromString(executar(pedido(url("tarefas")).post(corpo(campos + ("sala" to sala) + ("de" to conexao.nome))).build()))
+
+    /** PATCH parcial: só os campos passados (null limpa o campo). */
+    suspend fun alterarTarefa(id: Long, campos: Map<String, Any?>): Tarefa =
+        json.decodeFromString(executar(pedido(url("tarefas/$id")).patch(corpo(campos + ("de" to conexao.nome))).build()))
+
+    suspend fun novoItem(id: Long, texto: String): Tarefa =
+        json.decodeFromString(executar(pedido(url("tarefas/$id/checklist")).post(corpo(mapOf("texto" to texto, "de" to conexao.nome))).build()))
+    suspend fun marcarItem(id: Long, item: Long, feito: Boolean): Tarefa =
+        json.decodeFromString(executar(pedido(url("tarefas/$id/checklist/$item")).patch(corpo(mapOf("feito" to feito, "de" to conexao.nome))).build()))
+    suspend fun apagarItem(id: Long, item: Long): Tarefa =
+        json.decodeFromString(executar(pedido(url("tarefas/$id/checklist/$item")).delete().build()))
+
     // --- perfil ---------------------------------------------------------
     suspend fun perfil(nome: String): Perfil = json.decodeFromString(executar(pedido(url("agentes/$nome")).build()))
 
@@ -187,6 +216,7 @@ class RelayApi(private val conexao: Conexao) {
                     "apagada" -> Regex("\\d+").find(data)?.value?.toLongOrNull()?.let { trySend(Evento.Apagada(it)) }
                     "digitando" -> runCatching { json.decodeFromString<NomesDigitando>(data) }.onSuccess { trySend(Evento.Digitando(it.nomes)) }
                     "leitura" -> trySend(Evento.Leu)
+                    "tarefa" -> trySend(Evento.TarefaMudou)
                 }
             }
             override fun onClosed(eventSource: EventSource) { channel.close() }
