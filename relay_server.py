@@ -34,6 +34,8 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
+import relay_fluxos
+
 TOKEN_ADMIN = os.environ.get("RELAY_TOKEN", "")
 TLS_PORTAS: set[int] = set()  # portas servidas com TLS (cookie Secure só nelas)
 RAIZ = os.path.dirname(os.path.abspath(__file__))
@@ -210,6 +212,18 @@ MIGRACOES = [
     """CREATE VIRTUAL TABLE IF NOT EXISTS msg_busca USING fts5(
          texto, content='msg', content_rowid='id', tokenize='unicode61 remove_diacritics 2');
        INSERT INTO msg_busca(msg_busca) VALUES('rebuild');""",
+    # 18: workflows (docs/PLANO-FLUXOS.md): catálogo imutável por nome@versão (com hash) e pedidos entre agentes.
+    # O relay só guarda e repassa: quem aprova e executa é o executor local de cada dono.
+    """CREATE TABLE IF NOT EXISTS fluxo (
+         sala TEXT NOT NULL, nome TEXT NOT NULL, versao INTEGER NOT NULL, sha256 TEXT NOT NULL,
+         conteudo TEXT NOT NULL, layout TEXT, descricao TEXT, pior_caso INTEGER NOT NULL,
+         publicado_por TEXT NOT NULL, criado REAL NOT NULL, PRIMARY KEY (sala, nome, versao));
+       CREATE TABLE IF NOT EXISTS fluxo_pedido (
+         id INTEGER PRIMARY KEY, sala TEXT NOT NULL, de TEXT NOT NULL, agente TEXT NOT NULL, nome TEXT NOT NULL,
+         versao INTEGER NOT NULL, expect_sha256 TEXT, params TEXT NOT NULL, cadeia TEXT NOT NULL,
+         correlation_id TEXT NOT NULL UNIQUE, estado TEXT NOT NULL DEFAULT 'pendente', resultado TEXT, motivo TEXT,
+         msg_id INTEGER, criado REAL NOT NULL, atualizado REAL NOT NULL, expira REAL NOT NULL);
+       CREATE INDEX IF NOT EXISTS fluxo_pedido_agente ON fluxo_pedido(agente, estado, id);""",
 ]
 
 STATUS_TAREFA = ("a_fazer", "fazendo", "revisao", "feito")
@@ -861,6 +875,10 @@ class Handler(BaseHTTPRequestHandler):
                 ("GET", "/memoria/grafo"): self.grafo,
                 ("GET", "/artefatos"): self.artefatos,
                 ("POST", "/artefatos"): self.criar_artefato,
+                ("GET", "/fluxos"): self.fluxos,
+                ("POST", "/fluxos"): self.publicar_fluxo,
+                ("GET", "/fluxos/pedidos"): self.pedidos_fluxo,
+                ("POST", "/fluxos/pedidos"): self.pedir_fluxo,
             }
             if (metodo, caminho) in rotas:
                 return rotas[(metodo, caminho)](q)
@@ -915,6 +933,14 @@ class Handler(BaseHTTPRequestHandler):
                     return self.atualizar_artefato(aid)
                 if metodo == "POST" and acao in ("aprovar", "arquivar"):
                     return self.decidir_artefato(aid, acao)
+            m = re.fullmatch(r"/fluxos/pedidos/(\d+)(?:/(estado))?", caminho)
+            if m and metodo == "GET" and m.group(2) is None:
+                return self.ver_pedido(int(m.group(1)))
+            if m and metodo == "POST" and m.group(2):
+                return self.mudar_pedido(int(m.group(1)))
+            m = re.fullmatch(r"/fluxos/([a-z][a-z0-9-]{0,47})", caminho)
+            if m and metodo == "GET":
+                return self.ver_fluxo(m.group(1), q)
             m = re.fullmatch(r"/sprints/(\d+)", caminho)
             if m and metodo == "PATCH":
                 return self.alterar_sprint(int(m.group(1)))
@@ -2610,6 +2636,228 @@ class Handler(BaseHTTPRequestHandler):
             a = self._artefato(con, aid)
         notificar()
         self._json(200, a)
+
+
+    # workflows (docs/PLANO-FLUXOS.md): o relay é catálogo e correio. Nunca executa nem aprova nada.
+
+    def fluxos(self, q: dict) -> None:
+        """Última versão de cada fluxo da sala (ou todas as versões de `nome`)."""
+        sala = validar_sala(q.get("sala"))
+        with conectar() as con:
+            self._quem(con)
+            linhas = con.execute(
+                "SELECT nome, versao, sha256, descricao, pior_caso, publicado_por, criado FROM fluxo f WHERE sala=? "
+                "AND versao=(SELECT MAX(versao) FROM fluxo g WHERE g.sala=f.sala AND g.nome=f.nome) ORDER BY nome",
+                (sala,)).fetchall()
+        self._json(200, [{"nome": n, "versao": v, "sha256": h, "descricao": d, "pior_caso": p, "publicado_por": a,
+                          "criado_em": iso(c)} for n, v, h, d, p, a, c in linhas])
+
+    def ver_fluxo(self, nome: str, q: dict) -> None:
+        sala = validar_sala(q.get("sala"))
+        with conectar() as con:
+            self._quem(con)
+            if q.get("versao"):
+                linha = con.execute("SELECT versao, sha256, conteudo, layout, publicado_por, criado FROM fluxo "
+                                    "WHERE sala=? AND nome=? AND versao=?", (sala, nome, int(q["versao"]))).fetchone()
+            else:
+                linha = con.execute("SELECT versao, sha256, conteudo, layout, publicado_por, criado FROM fluxo "
+                                    "WHERE sala=? AND nome=? ORDER BY versao DESC LIMIT 1", (sala, nome)).fetchone()
+            versoes = [v for (v,) in con.execute("SELECT versao FROM fluxo WHERE sala=? AND nome=? ORDER BY versao DESC",
+                                                 (sala, nome))]
+        if not linha:
+            raise ErroHttp(404, "fluxo_inexistente", "Esse fluxo (ou versão) não existe nesta sala.")
+        v, h, conteudo, layout, autor, criado = linha
+        # `conteudo` é a forma canônica: quem baixa recalcula o SHA-256 e compara com `sha256`.
+        self._json(200, {"nome": nome, "versao": v, "sha256": h, "conteudo": conteudo,
+                         "layout": json.loads(layout) if layout else None, "publicado_por": autor,
+                         "criado_em": iso(criado), "versoes": versoes})
+
+    def publicar_fluxo(self, _q: dict) -> None:
+        """Publicar não aprova nem dá permissão de rodar (seção 4). nome@versao é imutável."""
+        c = self._corpo(relay_fluxos.TAM_MAX * 2 + 16 * 1024)
+        sala = validar_sala(c.get("sala"))
+        try:
+            fl = relay_fluxos.validar(c.get("fluxo"))
+        except relay_fluxos.ErroFluxo as e:
+            raise ErroHttp(422, e.codigo, e.detalhe) from None
+        conteudo = relay_fluxos.canonico(fl.doc).decode()
+        if CREDENCIAL_RE.search(conteudo):
+            raise ErroHttp(422, "credencial_detectada", "O fluxo parece conter uma credencial. Segredo nunca vem do relay.")
+        layout = c["fluxo"].get("layout")
+        with conectar() as con:
+            autor = self._nome(self._quem(con), c)
+            espera = ENVIOS.consumir(autor)
+            if espera:
+                raise ErroHttp(429, "limite_excedido", "Devagar: limite de envio atingido.", espera)
+            existente = con.execute("SELECT sha256 FROM fluxo WHERE sala=? AND nome=? AND versao=?",
+                                    (sala, fl.nome, fl.versao)).fetchone()
+            if existente and existente[0] != fl.sha256:
+                raise ErroHttp(409, "versao_publicada", f"{fl.nome}@{fl.versao} já existe com outro conteúdo; "
+                                                       "publique uma versão nova.")
+            if not existente:
+                con.execute("INSERT INTO fluxo VALUES (?,?,?,?,?,?,?,?,?,?)",
+                            (sala, fl.nome, fl.versao, fl.sha256, conteudo, json.dumps(layout) if layout else None,
+                             fl.doc.get("description"), fl.pior_caso, autor, time.time()))
+                mensagem_sistema(con, sala, f"🧩 **{autor}** publicou o fluxo `{fl.nome}@{fl.versao}` "
+                                            f"(pior caso: {fl.pior_caso} passos, sha256 `{fl.sha256[:12]}…`)")
+                registrar_evento(con, "fluxo", sala, 0)
+        notificar()
+        self._json(200 if existente else 201, {"nome": fl.nome, "versao": fl.versao, "sha256": fl.sha256,
+                                               "pior_caso": fl.pior_caso})
+
+    def _expirar_pedidos(self, con: sqlite3.Connection) -> None:
+        agora = time.time()
+        for pid, sala, de, agente, nome, versao in con.execute(
+                "SELECT id, sala, de, agente, nome, versao FROM fluxo_pedido WHERE estado='pendente' AND expira<?",
+                (agora,)).fetchall():
+            con.execute("UPDATE fluxo_pedido SET estado='expirado', atualizado=? WHERE id=?", (agora, pid))
+            mensagem_sistema(con, sala, f"⌛ O pedido [[pedido:{pid}]] de **{de}** para **{agente}** "
+                                        f"(`{nome}@{versao}`) expirou sem resposta.")
+
+    def _pedido(self, con: sqlite3.Connection, pid: int, quem: Quem) -> dict:
+        linha = con.execute(f"SELECT {COLS_PEDIDO} FROM fluxo_pedido WHERE id=?", (pid,)).fetchone()
+        if not linha:
+            raise ErroHttp(404, "pedido_inexistente", "Pedido não existe.")
+        p = pedido_para_json(linha)
+        if not quem.admin and quem.nome not in (p["de"], p["agente"]):
+            raise ErroHttp(404, "pedido_inexistente", "Pedido não existe.")
+        return p
+
+    def pedir_fluxo(self, _q: dict) -> None:
+        """Cria o pedido (seção 5/12). O executor do `agente` decide se roda; aqui só se checa o básico."""
+        c = self._corpo()
+        sala = validar_sala(c.get("sala"))
+        agente, nome, versao = str(c.get("agente") or ""), str(c.get("nome") or ""), c.get("versao")
+        if not NOME_RE.match(agente):
+            raise ErroHttp(400, "agente_invalido", "Diga a qual agente pedir (`agente`).")
+        if not isinstance(versao, int) or isinstance(versao, bool):
+            raise ErroHttp(400, "versao_invalida", "`versao` deve ser inteiro.")
+        params, cadeia = c.get("params", {}), c.get("chain", [])
+        expect = c.get("expect_sha256")
+        if not isinstance(params, dict):
+            raise ErroHttp(400, "params_invalidos", "`params` deve ser um objeto.")
+        if expect is not None and not (isinstance(expect, str) and relay_fluxos.SHA_RE.match(expect)):
+            raise ErroHttp(400, "hash_invalido", "`expect_sha256`: 64 caracteres hex.")
+        try:
+            relay_fluxos.validar_cadeia(cadeia, f"{agente}:{nome}@{versao}")
+        except relay_fluxos.ErroFluxo as e:
+            raise ErroHttp(422, e.codigo, e.detalhe) from None
+        prazo = c.get("prazo_s", 1800)
+        if not isinstance(prazo, int) or not 60 <= prazo <= 7200:
+            raise ErroHttp(400, "prazo_invalido", "`prazo_s`: de 60 a 7200 segundos para o dono aceitar.")
+        texto_params = json.dumps(params, ensure_ascii=False, sort_keys=True)
+        if len(texto_params) > 4000 or CREDENCIAL_RE.search(texto_params):
+            raise ErroHttp(422, "params_recusados", "Parâmetros grandes demais ou com cara de credencial.")
+        correlacao = str(c.get("correlation_id") or secrets.token_hex(16))
+        if not re.fullmatch(r"[\w-]{8,64}", correlacao):
+            raise ErroHttp(400, "correlacao_invalida", "`correlation_id`: 8–64 caracteres (letras, números, _ -).")
+        with conectar() as con:
+            de = self._nome(self._quem(con), c)
+            espera = ENVIOS.consumir(de)
+            if espera:
+                raise ErroHttp(429, "limite_excedido", "Devagar: limite de envio atingido.", espera)
+            fluxo = con.execute("SELECT sha256 FROM fluxo WHERE sala=? AND nome=? AND versao=?",
+                                (sala, nome, versao)).fetchone()
+            if not fluxo:
+                raise ErroHttp(404, "fluxo_inexistente", f"`{nome}@{versao}` não está no catálogo desta sala.")
+            if expect and expect != fluxo[0]:
+                raise ErroHttp(409, "hash_diferente", f"`{nome}@{versao}` no catálogo tem outro hash.")
+            agora = time.time()
+            try:
+                cur = con.execute(
+                    "INSERT INTO fluxo_pedido (sala, de, agente, nome, versao, expect_sha256, params, cadeia, correlation_id, "
+                    "criado, atualizado, expira) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (sala, de, agente, nome, versao, expect, texto_params, json.dumps(cadeia), correlacao, agora, agora,
+                     agora + prazo))
+            except sqlite3.IntegrityError:
+                raise ErroHttp(409, "correlacao_repetida", "Já existe um pedido com esse correlation_id.") from None
+            pid = cur.lastrowid
+            mid = mensagem_sistema(con, sala, f"🔁 **{de}** pediu o fluxo `{nome}@{versao}` a @{agente} [[pedido:{pid}]]")
+            con.execute("UPDATE fluxo_pedido SET msg_id=? WHERE id=?", (mid, pid))
+            registrar_evento(con, "pedido", sala, pid)
+            p = self._pedido(con, pid, Quem(None, True))
+        notificar()
+        self._json(201, p)
+
+    def pedidos_fluxo(self, q: dict) -> None:
+        """Para o executor: `agente=<eu>&estado=pendente`. Quem não é admin só vê pedidos seus (feitos ou recebidos)."""
+        filtros, args = [], []
+        for campo in ("agente", "de", "estado", "sala"):
+            if q.get(campo):
+                filtros.append(f"{campo}=?")
+                args.append(q[campo])
+        filtros.append("id>?")
+        args.append(int(q.get("depois") or 0))
+        with conectar() as con:
+            quem = self._quem(con)
+            self._expirar_pedidos(con)
+            if not quem.admin:
+                filtros.append("(de=? OR agente=?)")
+                args += [quem.nome, quem.nome]
+            linhas = con.execute(f"SELECT {COLS_PEDIDO} FROM fluxo_pedido WHERE {' AND '.join(filtros)} "
+                                 f"ORDER BY id LIMIT {LIMITE_PAGINA}", args).fetchall()
+        self._json(200, [pedido_para_json(r) for r in linhas])
+
+    def ver_pedido(self, pid: int) -> None:
+        with conectar() as con:
+            quem = self._quem(con)
+            self._expirar_pedidos(con)
+            p = self._pedido(con, pid, quem)
+        self._json(200, p)
+
+    def mudar_pedido(self, pid: int) -> None:
+        """Executor do agente pedido: aceito|recusado (de pendente), concluido|falhou (de aceito).
+        Quem pediu pode cancelar enquanto não terminou."""
+        c = self._corpo()
+        estado = c.get("estado")
+        resultado, motivo = c.get("resultado"), str(c.get("motivo") or "")[:500]
+        if estado not in TRANSICOES_PEDIDO:
+            raise ErroHttp(400, "estado_invalido", f"estado: {', '.join(TRANSICOES_PEDIDO)}.")
+        texto_res = None
+        if resultado is not None:
+            if not isinstance(resultado, dict):
+                raise ErroHttp(400, "resultado_invalido", "`resultado` deve ser um objeto.")
+            texto_res = json.dumps(resultado, ensure_ascii=False)
+            if len(texto_res) > 16_000:
+                raise ErroHttp(413, "resultado_grande", "Resultado grande demais (máx. 16 KB); anexe arquivos na sala.")
+        if CREDENCIAL_RE.search((texto_res or "") + motivo):
+            raise ErroHttp(422, "credencial_detectada", "O resultado parece conter uma credencial. Não foi salvo.")
+        with conectar() as con:
+            quem = self._quem(con)
+            self._expirar_pedidos(con)
+            p = self._pedido(con, pid, quem)
+            de_onde, quem_pode = TRANSICOES_PEDIDO[estado]
+            if p["estado"] not in de_onde:
+                raise ErroHttp(409, "pedido_decidido", f"O pedido está {p['estado']}; não vai para {estado}.")
+            if not quem.admin and quem.nome != p[quem_pode]:
+                raise ErroHttp(403, "proibido", f"Só {p[quem_pode]} muda este pedido para {estado}.")
+            con.execute("UPDATE fluxo_pedido SET estado=?, resultado=COALESCE(?, resultado), motivo=?, atualizado=? "
+                        "WHERE id=?", (estado, texto_res, motivo or None, time.time(), pid))
+            icone = {"aceito": "▶️", "recusado": "🚫", "concluido": "✅", "falhou": "❌", "cancelado": "↩️"}[estado]
+            resumo = f": {motivo}" if motivo else ""
+            mensagem_sistema(con, p["sala"], f"{icone} Pedido [[pedido:{pid}]] `{p['nome']}@{p['versao']}` "
+                                             f"de **{p['de']}** → **{p['agente']}**: {estado}{resumo}")
+            registrar_evento(con, "pedido", p["sala"], pid)
+            p = self._pedido(con, pid, Quem(None, True))
+        notificar()
+        self._json(200, p)
+
+
+COLS_PEDIDO = ("id, sala, de, agente, nome, versao, expect_sha256, params, cadeia, correlation_id, estado, resultado, "
+               "motivo, criado, atualizado, expira")
+# estado novo -> (estados de onde pode vir, campo de quem pode mudar)
+TRANSICOES_PEDIDO = {"aceito": (("pendente",), "agente"), "recusado": (("pendente",), "agente"),
+                     "concluido": (("aceito",), "agente"), "falhou": (("aceito",), "agente"),
+                     "cancelado": (("pendente", "aceito"), "de")}
+
+
+def pedido_para_json(r: tuple) -> dict:
+    (i, sala, de, agente, nome, versao, expect, params, cadeia, correlacao, estado, resultado, motivo, criado,
+     atualizado, expira) = r
+    return {"id": i, "sala": sala, "de": de, "agente": agente, "nome": nome, "versao": versao,
+            "expect_sha256": expect, "params": json.loads(params), "chain": json.loads(cadeia),
+            "correlation_id": correlacao, "estado": estado, "resultado": json.loads(resultado) if resultado else None,
+            "motivo": motivo, "criado_em": iso(criado), "atualizado_em": iso(atualizado), "expira_em": iso(expira)}
 
 
 def marcar_visto_sem_con(nome: str | None) -> None:
