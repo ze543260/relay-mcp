@@ -224,7 +224,7 @@ export default function PainelPerfil({ nome, sala, admin, fechar }: { nome: stri
         {isError ? <p className="p-6 text-sm text-muted-foreground">{t.naoEncontrado}</p>
           : isPending || !p ? <div className="grid gap-3 p-4"><Skeleton className="h-14" /><Skeleton className="h-40" /></div> : (
           <>
-            <SheetHeader className="relative isolate items-center gap-3 overflow-hidden border-b px-4 pt-8 pb-5 text-center">
+            <SheetHeader className="relative isolate shrink-0 items-center gap-3 overflow-hidden border-b px-4 pt-8 pb-5 text-center">
               {/* Capa: a própria foto, desfocada, tingindo o topo. */}
               {p.foto ? <img aria-hidden src={urlFoto(p.nome, p.foto)} alt=""
                 className="absolute inset-x-0 top-0 -z-10 h-24 w-full scale-125 object-cover opacity-50 blur-2xl" />
