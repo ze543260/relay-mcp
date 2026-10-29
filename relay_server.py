@@ -27,6 +27,7 @@ import sqlite3
 import ssl
 import threading
 import time
+import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from http.cookies import SimpleCookie
@@ -188,6 +189,17 @@ MIGRACOES = [
          autor TEXT NOT NULL, criado REAL NOT NULL, PRIMARY KEY (artefato_id, versao));""",
     # 14: fato gerado pela aprovação do artefato (a próxima aprovação supera este; arquivar encerra)
     "ALTER TABLE artefato ADD COLUMN fato_id INTEGER;",
+    # 15: memória fase 6 (docs/PLANO-MEMORIA.md): nomes normalizados e aliases, resolvidos na leitura.
+    # O backfill das colunas *_norm roda no migrar() (é Python, não SQL).
+    """ALTER TABLE fato ADD COLUMN sujeito_norm TEXT;
+       ALTER TABLE fato ADD COLUMN objeto_norm TEXT;
+       CREATE INDEX IF NOT EXISTS fato_sujeito_norm ON fato(sala, sujeito_norm) WHERE estado='vigente';
+       CREATE INDEX IF NOT EXISTS fato_objeto_norm ON fato(sala, objeto_norm) WHERE estado='vigente';
+       CREATE TABLE IF NOT EXISTS alias (
+         sala TEXT NOT NULL, nome TEXT NOT NULL, nome_norm TEXT NOT NULL, canonico TEXT NOT NULL,
+         canonico_norm TEXT NOT NULL, estado TEXT NOT NULL DEFAULT 'vigente', criado_por TEXT NOT NULL,
+         confirmado_por TEXT, origem_tipo TEXT, origem_id TEXT, criado REAL NOT NULL,
+         PRIMARY KEY (sala, nome_norm));""",
 ]
 
 STATUS_TAREFA = ("a_fazer", "fazendo", "revisao", "feito")
@@ -227,6 +239,11 @@ def migrar() -> None:
                         raise
             con.execute(f"PRAGMA user_version={i}")
             con.commit()
+        # Fatos de antes da migração 15 (ou gravados por código antigo) ganham os nomes normalizados.
+        pendentes = con.execute("SELECT id, sujeito, objeto FROM fato WHERE sujeito_norm IS NULL OR objeto_norm IS NULL").fetchall()
+        con.executemany("UPDATE fato SET sujeito_norm=?, objeto_norm=? WHERE id=?",
+                        [(normalizar(s), normalizar(o), i) for i, s, o in pendentes])
+        con.commit()
     finally:
         con.close()
 
@@ -419,9 +436,96 @@ def inserir_fato(con: sqlite3.Connection, sala: str, campos: dict, otipo: str, o
         (sala, campos["sujeito"], campos["predicado"], campos["objeto"], otipo, oid, estado, autor, time.time(),
          campos["supera"]),
     )
+    con.execute("UPDATE fato SET sujeito_norm=?, objeto_norm=? WHERE id=?",
+                (normalizar(campos["sujeito"]), normalizar(campos["objeto"]), cur.lastrowid))
     con.execute("INSERT INTO fato_busca (rowid, sujeito, predicado, objeto) VALUES (?,?,?,?)",
                 (cur.lastrowid, campos["sujeito"], campos["predicado"], campos["objeto"]))
     return cur.lastrowid
+
+
+# --- Memória fase 6: nomes, aliases e grafo ------------------------------------
+
+ALIAS_MAX_SALA = 200
+ALIAS_TRAVA_FATOS = 20      # agente juntando num nó com tantos fatos (ou mais) vira candidato
+GRAFO_MAX_ARESTAS = 50
+ARTIGOS = ("o", "a", "os", "as", "um", "uma")
+
+
+def normalizar(nome: str) -> str:
+    """Chave de comparação de nomes: minúsculas, sem acento, espaços colapsados.
+    Única fonte da verdade da normalização (o back novo replica numa função IMMUTABLE do banco).
+    Artigo NÃO é tirado: "A Fazer" perderia o sentido; variantes com artigo viram só sugestão de alias."""
+    sem_acento = "".join(c for c in unicodedata.normalize("NFD", nome) if unicodedata.category(c) != "Mn")
+    return " ".join(sem_acento.lower().split())
+
+
+def chave_forte(norm: str) -> str:
+    """Chave só para SUGERIR aliases (nunca junta sozinha): sem artigo inicial, sufixos comuns, hífens e plural."""
+    palavras = norm.split()
+    if len(palavras) > 1 and palavras[0] in ARTIGOS:
+        palavras = palavras[1:]
+    k = re.sub(r"[-_ ](mcp|app|web|server|servidor)$", "", " ".join(palavras))
+    k = re.sub(r"[-_\s]+", "", k)
+    return k[:-1] if len(k) > 3 and k.endswith("s") else k
+
+
+def mapa_aliases(con: sqlite3.Connection, sala: str) -> dict[str, str]:
+    """nome_norm -> canonico_norm dos aliases vigentes da sala (sempre já a raiz)."""
+    return dict(con.execute("SELECT nome_norm, canonico_norm FROM alias WHERE sala=? AND estado='vigente'", (sala,)))
+
+
+def nomes_do_no(con: sqlite3.Connection, sala: str, raiz: str) -> list[str]:
+    """Todas as chaves normalizadas que caem no mesmo nó (a raiz e os aliases vigentes dela)."""
+    return [raiz] + [n for (n,) in con.execute(
+        "SELECT nome_norm FROM alias WHERE sala=? AND canonico_norm=? AND estado='vigente'", (sala, raiz))]
+
+
+def montar_grafo(con: sqlite3.Connection, sala: str, centros: set[str], autor: str | None, profundidade: int) -> dict:
+    """Busca em largura nos fatos vigentes da sala, nos dois sentidos, a partir dos nós `centros`.
+    Com `autor` (centro = agente), os fatos que ele registrou também entram no primeiro nível."""
+    aliases = mapa_aliases(con, sala)
+    raiz = lambda n: aliases.get(n, n)  # noqa: E731
+    fatos = con.execute("SELECT id, sujeito, predicado, objeto, sujeito_norm, objeto_norm, origem_tipo, origem_id, autor, criado "
+                        "FROM fato WHERE sala=? AND estado='vigente' ORDER BY criado DESC", (sala,)).fetchall()
+    sujeitos = {raiz(f[4]) for f in fatos} | set(aliases.values()) | centros  # o centro é nó mesmo só aparecendo como objeto
+    rotulo: dict[str, str] = {}
+    for f in reversed(fatos):  # rótulo do nó: o primeiro texto registrado como sujeito
+        rotulo.setdefault(raiz(f[4]), f[1])
+    arestas, vistos, fronteira, cortado = [], set(), set(centros), False
+    visitados = set(centros)
+    for nivel in range(profundidade):
+        proxima: set[str] = set()
+        for f in fatos:
+            fid, suj, pred, obj, sn, on, otipo, oid, quem, _ = f
+            de, para = raiz(sn), raiz(on)
+            toca = de in fronteira or para in fronteira or (nivel == 0 and autor is not None and quem == autor)
+            if fid in vistos or not toca:
+                continue
+            if len(arestas) >= GRAFO_MAX_ARESTAS:
+                cortado = True
+                break
+            vistos.add(fid)
+            folha = para not in sujeitos
+            arestas.append({"fato": fid, "de": de, "predicado": pred, "para": para if not folha else obj, "folha": folha,
+                            "origem": {"tipo": otipo, "id": oid}, "autor": quem})
+            for n in ((de,) if folha else (de, para)):
+                if n not in visitados:
+                    proxima.add(n)
+        if cortado:
+            break
+        visitados |= proxima
+        fronteira = proxima
+    usados = {a["de"] for a in arestas} | {a["para"] for a in arestas if not a["folha"]} | (centros & sujeitos)
+    contagem: dict[str, int] = {}
+    for f in fatos:
+        for n in {raiz(f[4]), raiz(f[5])}:
+            contagem[n] = contagem.get(n, 0) + 1
+    por_raiz: dict[str, list[str]] = {}
+    for nome, canon in aliases.items():
+        por_raiz.setdefault(canon, []).append(nome)
+    nos = [{"nome": n, "rotulo": rotulo.get(n, n), "aliases": sorted(por_raiz.get(n, [])), "fatos": contagem.get(n, 0)}
+           for n in sorted(usados)]
+    return {"nos": nos, "arestas": arestas, "cortado": cortado}
 
 
 def superar(con: sqlite3.Connection, novo: int, supera: int | None) -> None:
@@ -726,6 +830,12 @@ class Handler(BaseHTTPRequestHandler):
                 ("GET", "/fatos"): self.fatos,
                 ("POST", "/fatos"): self.registrar_fato,
                 ("GET", "/fatos/candidatos"): self.candidatos,
+                ("GET", "/memoria/aliases"): self.aliases,
+                ("POST", "/memoria/aliases"): self.criar_alias,
+                ("DELETE", "/memoria/aliases"): self.apagar_alias,
+                ("POST", "/memoria/aliases/decidir"): self.decidir_alias,
+                ("GET", "/memoria/aliases/sugestoes"): self.sugestoes_alias,
+                ("GET", "/memoria/grafo"): self.grafo,
                 ("GET", "/artefatos"): self.artefatos,
                 ("POST", "/artefatos"): self.criar_artefato,
             }
@@ -1840,12 +1950,14 @@ class Handler(BaseHTTPRequestHandler):
         filtro, args = ["f.sala=?"], [sala]
         if q.get("historico") != "1":
             filtro.append("f.estado='vigente'")
-        if q.get("sujeito"):
-            filtro.append("f.sujeito=? COLLATE NOCASE")
-            args.append(q["sujeito"])
         cols = ", ".join(f"f.{c}" for c in COLS_FATO.split(", "))
         with conectar() as con:
             self._quem(con)
+            if q.get("sujeito"):  # todos os nomes do mesmo nó (normalização + aliases vigentes)
+                norm = normalizar(q["sujeito"])
+                nomes = nomes_do_no(con, sala, mapa_aliases(con, sala).get(norm, norm))
+                filtro.append(f"f.sujeito_norm IN ({','.join('?' * len(nomes))})")
+                args += nomes
             termo = consulta_fts(q.get("q") or "")
             if (q.get("q") or "").strip() and not termo:
                 return self._json(200, [])  # só símbolos: nada a buscar, em vez de cair na listagem sem filtro
@@ -1958,6 +2070,163 @@ class Handler(BaseHTTPRequestHandler):
         notificar()
         self._json(200, fato_para_json(linha))
 
+
+    # memória fase 6: aliases e grafo (docs/PLANO-MEMORIA.md, seção 11)
+
+    def aliases(self, q: dict) -> None:
+        """Aliases da sala (vigentes e candidatos), com quantos fatos cada nome junta."""
+        sala = validar_sala(q.get("sala"))
+        with conectar() as con:
+            self._quem(con)
+            linhas = con.execute(
+                "SELECT a.nome, a.canonico, a.estado, a.criado_por, a.confirmado_por, a.origem_tipo, a.origem_id, a.criado, "
+                "(SELECT COUNT(*) FROM fato f WHERE f.sala=a.sala AND f.estado='vigente' "
+                " AND (f.sujeito_norm=a.nome_norm OR f.objeto_norm=a.nome_norm)) "
+                "FROM alias a WHERE a.sala=? ORDER BY a.canonico_norm, a.nome_norm", (sala,)).fetchall()
+        self._json(200, [{"nome": n, "canonico": c, "estado": e, "criado_por": por, "confirmado_por": conf,
+                          "origem": {"tipo": ot, "id": oi} if ot else None, "criado_em": iso(cr), "fatos": total}
+                         for n, c, e, por, conf, ot, oi, cr, total in linhas])
+
+    def criar_alias(self, _q: dict) -> None:
+        """Junta `nome` ao nó `canonico`. Humano grava direto; agente vira candidato quando o nó é grande
+        (ALIAS_TRAVA_FATOS) ou quando o próprio `nome` já tem fatos (juntar errado contamina o grafo para trás)."""
+        c = self._corpo()
+        sala = validar_sala(c.get("sala"))
+        nome = " ".join(str(c.get("nome") or "").split())
+        canonico = " ".join(str(c.get("canonico") or "").split())
+        if not (1 <= len(nome) <= 120 and 1 <= len(canonico) <= 120):
+            raise ErroHttp(400, "alias_invalido", "nome e canonico: 1–120 caracteres.")
+        nome_norm, canon_norm = normalizar(nome), normalizar(canonico)
+        otipo, oid = c.get("origem_tipo"), (str(c["origem_id"]) if c.get("origem_id") is not None else None)
+        if otipo is not None and otipo not in ORIGENS_FATO:
+            raise ErroHttp(400, "origem_invalida", f"origem_tipo deve ser um de {', '.join(ORIGENS_FATO)}.")
+        with conectar() as con:
+            quem = self._quem(con)
+            autor = self._nome(quem, c)
+            if otipo and oid:
+                self._validar_origem(con, sala, otipo, oid)
+            aliases = mapa_aliases(con, sala)
+            raiz = aliases.get(canon_norm, canon_norm)  # nunca grava cadeia: sempre a raiz
+            if raiz != canon_norm:
+                canonico = con.execute("SELECT canonico FROM alias WHERE sala=? AND nome_norm=?", (sala, canon_norm)).fetchone()[0]
+            if nome_norm == raiz:
+                raise ErroHttp(400, "alias_igual", "Esse nome já é o próprio nó (depois de normalizar).")
+            if nome_norm in aliases.values():
+                raise ErroHttp(409, "alias_e_canonico", f"\"{nome}\" já é o nó de outros aliases; junte ao contrário.")
+            if con.execute("SELECT 1 FROM alias WHERE sala=? AND nome_norm=?", (sala, nome_norm)).fetchone():
+                raise ErroHttp(409, "alias_existe", f"\"{nome}\" já tem alias nesta sala; apague antes de trocar.")
+            if con.execute("SELECT COUNT(*) FROM alias WHERE sala=?", (sala,)).fetchone()[0] >= ALIAS_MAX_SALA:
+                raise ErroHttp(409, "aliases_demais", f"Até {ALIAS_MAX_SALA} aliases por sala.")
+            humano = humano_confirmado(con, quem)
+            estado = "vigente"
+            if not humano:
+                fatos_no = con.execute(
+                    f"SELECT COUNT(*) FROM fato WHERE sala=? AND estado='vigente' AND "
+                    f"(sujeito_norm IN ({','.join('?' * len(nomes := nomes_do_no(con, sala, raiz)))}) "
+                    f" OR objeto_norm IN ({','.join('?' * len(nomes))}))", [sala, *nomes, *nomes]).fetchone()[0]
+                proprios = con.execute("SELECT COUNT(*) FROM fato WHERE sala=? AND estado='vigente' AND sujeito_norm=?",
+                                       (sala, nome_norm)).fetchone()[0]
+                if fatos_no >= ALIAS_TRAVA_FATOS or proprios:
+                    estado = "candidato"
+            con.execute("INSERT INTO alias VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                        (sala, nome, nome_norm, canonico, raiz, estado, autor, humano, otipo, oid, time.time()))
+            if estado == "candidato":
+                mensagem_sistema(con, sala, f"🔗 **{autor}** propôs juntar \"{titulo_seguro(nome)}\" a \"{titulo_seguro(canonico)}\" "
+                                            "na memória; um humano da sala confirma.")
+            registrar_evento(con, "fato", sala, 0)
+        notificar()
+        self._json(201, {"nome": nome, "canonico": canonico, "estado": estado, "criado_por": autor})
+
+    def decidir_alias(self, _q: dict) -> None:
+        """Humano confirma (`acao=confirmar`) ou recusa (`acao=rejeitar`) um alias candidato."""
+        c = self._corpo()
+        sala = validar_sala(c.get("sala"))
+        nome_norm = normalizar(str(c.get("nome") or ""))
+        if c.get("acao") not in ("confirmar", "rejeitar"):
+            raise ErroHttp(400, "acao_invalida", "acao: confirmar ou rejeitar.")
+        with conectar() as con:
+            eu = humano_confirmado(con, self._quem(con))
+            if not eu:
+                raise ErroHttp(403, "requer_humano", "Só um humano com token próprio decide aliases candidatos.")
+            if c["acao"] == "rejeitar":
+                feito = con.execute("DELETE FROM alias WHERE sala=? AND nome_norm=? AND estado='candidato'", (sala, nome_norm)).rowcount
+            else:
+                feito = con.execute("UPDATE alias SET estado='vigente', confirmado_por=? WHERE sala=? AND nome_norm=? AND estado='candidato'",
+                                    (eu, sala, nome_norm)).rowcount
+            if not feito:
+                raise ErroHttp(404, "alias_inexistente", "Não há alias candidato com esse nome nesta sala.")
+            registrar_evento(con, "fato", sala, 0)
+        notificar()
+        self._vazio()
+
+    def apagar_alias(self, q: dict) -> None:
+        """Desfaz um alias (os fatos continuam todos lá; o nó só volta a se separar). Quem criou ou humano."""
+        sala = validar_sala(q.get("sala"))
+        nome_norm = normalizar(q.get("nome") or "")
+        with conectar() as con:
+            quem = self._quem(con)
+            linha = con.execute("SELECT criado_por FROM alias WHERE sala=? AND nome_norm=?", (sala, nome_norm)).fetchone()
+            if not linha:
+                raise ErroHttp(404, "alias_inexistente", "Esse alias não existe nesta sala.")
+            if not (humano_confirmado(con, quem) or quem.nome == linha[0] or quem.admin):
+                raise ErroHttp(403, "proibido", "Só quem criou o alias ou um humano da sala desfaz.")
+            con.execute("DELETE FROM alias WHERE sala=? AND nome_norm=?", (sala, nome_norm))
+            registrar_evento(con, "fato", sala, 0)
+        notificar()
+        self._vazio()
+
+    def sugestoes_alias(self, q: dict) -> None:
+        """Nomes diferentes que provavelmente são a mesma coisa (artigo, plural, hífen, -mcp/-app).
+        Só sugere: juntar é sempre uma ação explícita."""
+        sala = validar_sala(q.get("sala"))
+        with conectar() as con:
+            self._quem(con)
+            aliases = mapa_aliases(con, sala)
+            ja = set(aliases) | {n for (n,) in con.execute("SELECT nome_norm FROM alias WHERE sala=?", (sala,))}
+            contagem: dict[str, tuple[str, int]] = {}
+            for texto, norm in con.execute("SELECT sujeito, sujeito_norm FROM fato WHERE sala=? AND estado='vigente'", (sala,)):
+                raiz = aliases.get(norm, norm)
+                rot, n = contagem.get(raiz, (texto, 0))
+                contagem[raiz] = (rot, n + 1)
+        grupos: dict[str, list[str]] = {}
+        for norm in contagem:
+            grupos.setdefault(chave_forte(norm), []).append(norm)
+        saida = []
+        for nomes in grupos.values():
+            if len(nomes) < 2:
+                continue
+            alvo = max(nomes, key=lambda n: (contagem[n][1], -len(n)))  # o nome mais usado vira o canônico sugerido
+            for n in nomes:
+                if n != alvo and n not in ja:
+                    saida.append({"nome": contagem[n][0], "canonico": contagem[alvo][0], "fatos": contagem[n][1]})
+        self._json(200, sorted(saida, key=lambda s: -s["fatos"])[:50])
+
+    def grafo(self, q: dict) -> None:
+        """Vizinhança na memória: `sujeito=X` (resolve alias) ou `centro=agente:NOME` (fatos sobre o agente
+        e os que ele registrou). `profundidade` 1 ou 2; até GRAFO_MAX_ARESTAS arestas (`cortado` se passar)."""
+        sala = validar_sala(q.get("sala"))
+        profundidade = 2 if q.get("profundidade") == "2" else 1
+        centro, autor = q.get("centro") or "", None
+        if centro.startswith("agente:"):
+            autor = centro[len("agente:"):]
+            if not NOME_RE.match(autor):
+                raise ErroHttp(400, "nome_invalido", "Agente inválido.")
+            nome = autor
+        else:
+            nome = q.get("sujeito") or centro
+        if not nome.strip():
+            raise ErroHttp(400, "sujeito_obrigatorio", "Informe `sujeito` ou `centro=agente:NOME`.")
+        with conectar() as con:
+            self._quem(con)
+            aliases = mapa_aliases(con, sala)
+            norm = normalizar(nome)
+            centros = {aliases.get(norm, norm)}
+            if autor:  # o agente também é conhecido pelo apelido de exibição
+                apelido = con.execute("SELECT apelido FROM apelido WHERE nome=?", (autor,)).fetchone()
+                if apelido:
+                    centros.add(aliases.get(normalizar(apelido[0]), normalizar(apelido[0])))
+            g = montar_grafo(con, sala, centros, autor, profundidade)
+        self._json(200, {"centro": sorted(centros)[0], "centros": sorted(centros), **g})
 
     # artefatos (docs/PLANO-ARTEFATOS.md)
 
