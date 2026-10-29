@@ -1,4 +1,4 @@
-import { ChevronRightIcon, CircleDotIcon, KeyRoundIcon, ListTodoIcon, NetworkIcon, PencilIcon, UserRoundIcon } from "lucide-react";
+import { CameraIcon, ChevronRightIcon, CircleDotIcon, KeyRoundIcon, LoaderIcon, ListTodoIcon, NetworkIcon, PencilIcon, UserRoundIcon } from "lucide-react";
 import { useRef, useState, type FormEvent } from "react";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
@@ -14,6 +14,7 @@ import { cn } from "@/lib/utils";
 import { corDe, ehIa, horaDe, siglaDe } from "@/shared/lib/formato";
 import { textos } from "@/shared/lib/textos";
 import { useEditarPerfil, useGrafo, usePerfil, type Perfil, type Persona } from "./api";
+import { FotoPerfil } from "@/features/perfil/FotoPerfil";
 
 const t = textos.perfil;
 const CAMPOS = [["equipe", 60], ["papel", 160], ["foco", 160], ["tom", 80], ["limites", 240]] as const;
@@ -158,6 +159,37 @@ function Acesso({ perfil, admin }: { perfil: Perfil; admin: boolean }) {
   );
 }
 
+/** Avatar do cabeçalho; pro dono vira botão de trocar foto (e remover, se tiver). */
+function FotoEditavel({ perfil: p, ia }: { perfil: Perfil; ia: boolean }) {
+  const { foto } = useEditarPerfil(p.nome);
+  const entrada = useRef<HTMLInputElement>(null);
+  const avatar = (
+    <Avatar aria-hidden className={cn("size-12", !ia && "rounded-xl after:rounded-xl")}>
+      <FotoPerfil nome={p.nome} className={cn(!ia && "rounded-xl")} />
+      <AvatarFallback className={cn("text-base font-semibold text-white", !ia && "rounded-xl")} style={{ background: corDe(p.nome) }}>
+        {siglaDe(p.nome)}
+      </AvatarFallback>
+    </Avatar>
+  );
+  if (!p.pode_editar) return avatar;
+  return (
+    <div className="grid justify-items-center gap-0.5">
+      <button type="button" onClick={() => entrada.current?.click()} disabled={foto.isPending} aria-label={t.trocarFoto}
+        title={t.trocarFoto} className={cn("group relative rounded-full focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none", !ia && "rounded-xl")}>
+        {avatar}
+        <span aria-hidden className={cn("absolute inset-0 grid place-items-center rounded-full bg-black/45 text-white opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100",
+          !ia && "rounded-xl", foto.isPending && "opacity-100")}>
+          {foto.isPending ? <LoaderIcon className="size-4 animate-spin" /> : <CameraIcon className="size-4" />}
+        </span>
+      </button>
+      <input ref={entrada} type="file" accept="image/png,image/jpeg,image/webp" hidden
+        onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) foto.mutate(f); }} />
+      {!!p.foto && <button type="button" onClick={() => foto.mutate(null)} disabled={foto.isPending}
+        className="text-[10px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline">{t.removerFoto}</button>}
+    </div>
+  );
+}
+
 /** Perfil de um participante: identidade, ficha de persona, trabalho, memória e (pro dono) acesso. */
 export default function PainelPerfil({ nome, sala, admin, fechar }: { nome: string | null; sala: string; admin: boolean; fechar: () => void }) {
   const { data: p, isPending, isError } = usePerfil(nome);
@@ -169,11 +201,7 @@ export default function PainelPerfil({ nome, sala, admin, fechar }: { nome: stri
           : isPending || !p ? <div className="grid gap-3 p-4"><Skeleton className="h-14" /><Skeleton className="h-40" /></div> : (
           <>
             <SheetHeader className="flex-row items-center gap-3 border-b pr-12">
-              <Avatar aria-hidden className={cn("size-12", !ia && "rounded-xl after:rounded-xl")}>
-                <AvatarFallback className={cn("text-base font-semibold text-white", !ia && "rounded-xl")} style={{ background: corDe(p.nome) }}>
-                  {siglaDe(p.nome)}
-                </AvatarFallback>
-              </Avatar>
+              <FotoEditavel perfil={p} ia={ia} />
               <div className="grid min-w-0 gap-0.5">
                 <SheetTitle className="truncate text-base">{p.apelido ?? p.nome}</SheetTitle>
                 <SheetDescription className="flex flex-wrap items-center gap-1.5 text-xs">

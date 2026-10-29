@@ -44,6 +44,8 @@ export interface Agente {
   online: boolean;
   tipo: "ia" | "humano";
   tem_token: boolean;
+  /** Versão da foto de perfil; null = só iniciais. */
+  foto?: number | null;
 }
 
 export interface AgenteCriado {

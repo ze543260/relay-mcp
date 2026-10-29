@@ -13,6 +13,7 @@ import { textos } from "@/shared/lib/textos";
 import { PRIORIDADES, STATUS, useEquipe, useEtiquetas, useSprints, useTarefas, type Prioridade, type Status, type Tarefa } from "./api";
 import { ChipEtiqueta, IconePrioridade } from "./pecas";
 import { formatarPrazo } from "./prazo";
+import { FotoPerfil } from "@/features/perfil/FotoPerfil";
 
 const PainelTarefa = lazy(() => import("./PainelTarefa"));
 
@@ -53,6 +54,7 @@ function Responsavel({ nome }: { nome: string }) {
   return (
     <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
       <Avatar aria-hidden className={cn("size-5", !ehIa(nome) && "rounded-md after:rounded-md")}>
+        <FotoPerfil nome={nome} className={cn(!ehIa(nome) && "rounded-md")} />
         <AvatarFallback className={cn("text-[8.5px] font-semibold text-white", !ehIa(nome) && "rounded-md")} style={{ background: corDe(nome) }}>
           {siglaDe(nome)}
         </AvatarFallback>

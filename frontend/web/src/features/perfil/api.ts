@@ -27,6 +27,7 @@ export interface Perfil {
   tarefas: { id: number; sala: string; titulo: string; status: string; prioridade: string }[];
   fatos_registrados: number;
   pode_editar: boolean;
+  foto?: number | null;
   acesso?: { token_ativo: boolean; criado_em: string; revogado_em: string | null };
 }
 
@@ -70,9 +71,31 @@ export function useEditarPerfil(nome: string) {
         api<void>(`/agentes/${encodeURIComponent(nome)}/persona`, { metodo: "PUT", corpo: p }),
       onSuccess: () => { recarregar(); avisar("sucesso", "Ficha salva."); }, onError: erro,
     }),
+    foto: useMutation({
+      mutationFn: async (arquivo: File | null) => arquivo
+        ? api<{ foto: number }>(`/agentes/${encodeURIComponent(nome)}/foto`, { metodo: "PUT", corpo: { dados: await fotoQuadrada(arquivo) } })
+        : api<void>(`/agentes/${encodeURIComponent(nome)}/foto`, { metodo: "DELETE" }),
+      onSuccess: (_r, arquivo) => { recarregar(); avisar("sucesso", arquivo ? "Foto trocada." : "Foto removida."); }, onError: erro,
+    }),
     revogar: useMutation({
       mutationFn: () => api<void>(`/agentes/${encodeURIComponent(nome)}`, { metodo: "DELETE" }),
       onSuccess: () => { recarregar(); avisar("sucesso", "Token revogado."); }, onError: erro,
     }),
   };
+}
+
+/** Recorta no centro e reduz pra 256px em WebP: foto de perfil leve (~10 KB) vinda de qualquer imagem. */
+async function fotoQuadrada(arquivo: File): Promise<string> {
+  const img = await createImageBitmap(arquivo);
+  const lado = Math.min(img.width, img.height);
+  const tela = new OffscreenCanvas(256, 256);
+  const ctx = tela.getContext("2d")!;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(img, (img.width - lado) / 2, (img.height - lado) / 2, lado, lado, 0, 0, 256, 256);
+  img.close();
+  const blob = await tela.convertToBlob({ type: "image/webp", quality: 0.85 });
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  let bin = "";
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin);
 }

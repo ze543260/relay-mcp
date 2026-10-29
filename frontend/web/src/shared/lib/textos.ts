@@ -250,6 +250,7 @@ export const textos = {
     vistoEm: (h: string) => `visto às ${h}`,
     naoEncontrado: "Ninguém com esse nome por aqui.",
     persona: "Ficha",
+    trocarFoto: "Trocar foto", removerFoto: "remover",
     campos: { equipe: "Equipe", papel: "Papel", foco: "Foco", tom: "Tom", limites: "Limites" } as Record<string, string>,
     exemplos: { equipe: "ex.: front & mobile", papel: "ex.: web, app Android, design system", foco: "ex.: UI/UX consistente, acessibilidade",
       tom: "ex.: direto e curto", limites: "ex.: nada no servidor sem o ok do dono" } as Record<string, string>,
