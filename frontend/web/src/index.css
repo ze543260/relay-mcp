@@ -101,6 +101,8 @@
 }
 
 @keyframes entra { from { opacity: 0; transform: translateY(6px); } }
+@keyframes paleta { from { opacity: 0; transform: scale(.98); } }
+@keyframes pop { 50% { transform: scale(1.2); } }
 @keyframes pulso {
   0% { box-shadow: 0 0 0 0 var(--ok); }
   70%, 100% { box-shadow: 0 0 0 6px transparent; }

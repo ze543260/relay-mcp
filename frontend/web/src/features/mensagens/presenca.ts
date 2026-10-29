@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef } from "react";
 import { api } from "@/shared/api/cliente";
 
@@ -36,6 +36,7 @@ export function useDigitando(sala: string) {
 
 /** Envia "li até X" agrupando (1 pedido por segundo, só quando avança). */
 export function useMarcarLeitura(sala: string) {
+  const qc = useQueryClient();
   const enviado = useRef(0);
   const pendente = useRef(0);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -48,7 +49,9 @@ export function useMarcarLeitura(sala: string) {
       timer.current = null;
       const alvo = pendente.current;
       enviado.current = alvo;
-      void api("/leituras", { metodo: "POST", corpo: { sala, ultimo_id: alvo } }).catch(() => { enviado.current = 0; });
+      void api("/leituras", { metodo: "POST", corpo: { sala, ultimo_id: alvo } })
+        .then(() => qc.invalidateQueries({ queryKey: ["salas"] })) // zera o selo da sala
+        .catch(() => { enviado.current = 0; });
     }, 1000);
-  }, [sala]);
+  }, [sala, qc]);
 }
