@@ -47,6 +47,8 @@ class TestBusca(unittest.TestCase):
         self.assertEqual(([m["id"] for m in r["mensagens"]], r["tem_mais"]), (ids[:2:-1][:2], True))
         _, r = pedir("GET", f"/mensagens/busca?sala=bx3&q=kiwi&limite=10&antes={ids[2]}", token=self.ana)
         self.assertEqual(([m["id"] for m in r["mensagens"]], r["tem_mais"]), ([ids[1], ids[0]], False))
+        _, r = pedir("GET", "/mensagens/busca?sala=bx3&q=kiwi%20a%20b", token=self.ana)  # 1 letra é ignorada
+        self.assertEqual(len(r["mensagens"]), 5)
         status, r = pedir("GET", "/mensagens/busca?sala=bx3&q=%3B%3B", token=self.ana)
         self.assertEqual((status, r["codigo"]), (400, "busca_vazia"))
 
@@ -68,7 +70,7 @@ class TestBusca(unittest.TestCase):
         s = next(x for x in salas if x["sala"] == "bx5")
         self.assertEqual((s["nao_lidas"], s["mencoes"]), (0, 0))
         postar("bx5", "depois @bia-bx", self.ana)
-        postar("bx5", "depois 2", self.ana)
+        postar("bx5", "depois 2 @bia-bxx", self.ana)  # outro nome: não é menção à bia-bx
         _, salas = pedir("GET", "/salas", token=self.bia)
         s = next(x for x in salas if x["sala"] == "bx5")
         self.assertEqual((s["nao_lidas"], s["mencoes"]), (2, 1))
