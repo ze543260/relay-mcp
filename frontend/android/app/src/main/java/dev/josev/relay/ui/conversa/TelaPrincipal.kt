@@ -1,5 +1,18 @@
 package dev.josev.relay.ui.conversa
 
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.isImeVisible
+import androidx.compose.material.icons.automirrored.outlined.Chat
+import androidx.compose.material.icons.outlined.DarkMode
+import androidx.compose.material.icons.outlined.Description
+import androidx.compose.material.icons.outlined.LightMode
+import androidx.compose.material.icons.outlined.Psychology
+import androidx.compose.material.icons.outlined.ViewKanban
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -110,6 +123,7 @@ fun TelaPrincipal(vm: RelayViewModel, estado: Estado) {
 @Composable
 private fun TelaPrincipalConteudo(vm: RelayViewModel, estado: Estado) {
     val largo = LocalConfiguration.current.screenWidthDp >= 840
+    var aba by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(Aba.CONVERSA) }
     val gaveta = rememberDrawerState(DrawerValue.Closed)
     val escopo = rememberCoroutineScope()
     val conteudoGaveta = @Composable {
@@ -117,11 +131,11 @@ private fun TelaPrincipalConteudo(vm: RelayViewModel, estado: Estado) {
     }
     if (largo) {
         PermanentNavigationDrawer(drawerContent = { PermanentDrawerSheet(Modifier.width(300.dp)) { conteudoGaveta() } }) {
-            Conversa(vm, estado, aoMenu = null)
+            Conversa(vm, estado, aoMenu = null, aba = aba, aoAba = { aba = it })
         }
     } else {
         ModalNavigationDrawer(drawerState = gaveta, drawerContent = { ModalDrawerSheet(Modifier.width(310.dp)) { conteudoGaveta() } }) {
-            Conversa(vm, estado, aoMenu = { escopo.launch { gaveta.open() } })
+            Conversa(vm, estado, aoMenu = { escopo.launch { gaveta.open() } }, aba = aba, aoAba = { aba = it })
         }
     }
 }
@@ -200,9 +214,9 @@ private fun NovaSala(aoFechar: () -> Unit, aoEntrar: (String) -> Unit) {
     )
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
-private fun Conversa(vm: RelayViewModel, estado: Estado, aoMenu: (() -> Unit)?) {
+private fun Conversa(vm: RelayViewModel, estado: Estado, aoMenu: (() -> Unit)?, aba: Aba, aoAba: (Aba) -> Unit) {
     val eu = estado.conexao?.nome.orEmpty()
     val lista = rememberLazyListState()
     val snack = remember { SnackbarHostState() }
@@ -258,14 +272,20 @@ private fun Conversa(vm: RelayViewModel, estado: Estado, aoMenu: (() -> Unit)?) 
                     }
                 },
                 navigationIcon = { if (aoMenu != null) IconButton(aoMenu) { Icon(Icons.Filled.Menu, "Abrir salas") } },
-                actions = { Participantes(estado) },
+                actions = {
+                    Participantes(estado, vm::abrirPerfil)
+                    BotaoTema(vm)
+                },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
             )
         },
         snackbarHost = { SnackbarHost(snack) },
+        // Teclado aberto: a barra some e o composer encosta no teclado.
+        bottomBar = { if (!WindowInsets.isImeVisible) BarraInferior(aba, aoAba) },
         contentWindowInsets = WindowInsets(0),
     ) { pad ->
-        Column(Modifier.fillMaxSize().padding(pad).imePadding()) {
+        if (aba != Aba.CONVERSA) { EmBreve(aba, Modifier.padding(pad)); return@Scaffold }
+        Column(Modifier.fillMaxSize().padding(pad).consumeWindowInsets(pad).imePadding()) {
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             Box(Modifier.weight(1f)) {
                 if (estado.carregando && estado.mensagens.isEmpty()) Esqueleto()
@@ -282,6 +302,7 @@ private fun Conversa(vm: RelayViewModel, estado: Estado, aoMenu: (() -> Unit)?) 
                                 aoSegurar = { acoesDe = it.m }, modifier = Modifier.animateItem(),
                                 apelido = estado.agentes.firstOrNull { a -> a.nome == it.m.de }?.apelido,
                                 vistoPor = vistoEm[it.m.id].orEmpty(), vistaPorTodos = if (it.m.de == eu) vistaPorTodos(it.m.id) else null,
+                                aoAbrirPerfil = { vm.abrirPerfil(it.m.de) },
                             )
                             is Item.Pend -> Bolha(
                                 m = Mensagem(-1, it.p.de, texto = it.p.texto, criado = it.p.criadoMs / 1000.0, replyTo = it.p.replyTo, anexos = it.p.anexos),
@@ -349,13 +370,52 @@ private fun Digitando(nomes: List<String>) {
     }
 }
 
+enum class Aba(val rotulo: String) { CONVERSA("Conversa"), QUADRO("Quadro"), MEMORIA("Memória"), ARTEFATOS("Artefatos") }
+
 @Composable
-private fun Participantes(estado: Estado) {
+private fun BarraInferior(aba: Aba, aoAba: (Aba) -> Unit) {
+    NavigationBar(containerColor = MaterialTheme.colorScheme.surfaceContainerLow) {
+        Aba.entries.forEach { a ->
+            val icone = when (a) {
+                Aba.CONVERSA -> Icons.AutoMirrored.Outlined.Chat
+                Aba.QUADRO -> Icons.Outlined.ViewKanban
+                Aba.MEMORIA -> Icons.Outlined.Psychology
+                Aba.ARTEFATOS -> Icons.Outlined.Description
+            }
+            NavigationBarItem(selected = aba == a, onClick = { aoAba(a) }, icon = { Icon(icone, null) }, label = { Text(a.rotulo) })
+        }
+    }
+}
+
+/** Botão de tema à vista: um toque alterna claro/escuro ("Sistema" fica no padrão até a primeira troca). */
+@Composable
+private fun BotaoTema(vm: RelayViewModel) {
+    val escuro = MaterialTheme.colorScheme.background.luminance() < 0.5f
+    IconButton({ vm.alternarTema(escuro) }) {
+        Icon(if (escuro) Icons.Outlined.LightMode else Icons.Outlined.DarkMode, if (escuro) "Mudar para o tema claro" else "Mudar para o tema escuro")
+    }
+}
+
+/** Abas que chegam nas próximas fases do plano: por enquanto apontam pro web. */
+@Composable
+private fun EmBreve(aba: Aba, modifier: Modifier) {
+    val fase = when (aba) { Aba.QUADRO -> "na fase 2"; Aba.MEMORIA, Aba.ARTEFATOS -> "na fase 4"; else -> "" }
+    Column(modifier.fillMaxSize().padding(32.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
+        Text("${aba.rotulo} chega ao app $fase", style = MaterialTheme.typography.titleMedium, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+        Spacer(Modifier.height(6.dp))
+        Text("Por enquanto, use a aba ${aba.rotulo} no web.", color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+    }
+}
+
+@Composable
+private fun Participantes(estado: Estado, aoAbrir: (String) -> Unit) {
     val online = estado.agentes.filter { it.online && it.nome != "relay" }.take(4)
-    Row(Modifier.padding(end = 12.dp), horizontalArrangement = Arrangement.spacedBy((-8).dp)) {
+    Row(Modifier.padding(end = 4.dp), horizontalArrangement = Arrangement.spacedBy((-8).dp)) {
         online.forEach { a ->
             // Anel na cor do fundo separa os avatares sobrepostos.
-            Box(Modifier.size(30.dp).background(MaterialTheme.colorScheme.background, CircleShape), contentAlignment = Alignment.Center) {
+            Box(Modifier.size(30.dp).background(MaterialTheme.colorScheme.background, CircleShape)
+                .clickable(onClickLabel = "Abrir perfil de ${a.apelido ?: a.nome}") { aoAbrir(a.nome) }, contentAlignment = Alignment.Center) {
                 Avatar(a.nome, 26.dp)
             }
         }

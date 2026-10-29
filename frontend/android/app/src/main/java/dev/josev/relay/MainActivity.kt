@@ -27,7 +27,17 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
-        setContent { TemaRelay { Raiz(vm) } }
+        setContent {
+            val tema by vm.tema.collectAsStateWithLifecycle()
+            val escuro = when (tema) { "claro" -> false; "escuro" -> true; else -> androidx.compose.foundation.isSystemInDarkTheme() }
+            // Ícones da barra de status seguem o tema do app (não só o do sistema).
+            androidx.compose.runtime.LaunchedEffect(escuro) {
+                val estilo = if (escuro) androidx.activity.SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+                else androidx.activity.SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT)
+                enableEdgeToEdge(statusBarStyle = estilo, navigationBarStyle = estilo)
+            }
+            TemaRelay(escuro = escuro) { Raiz(vm) }
+        }
         abrirDaNotificacao(intent)
         if (android.os.Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED
@@ -57,7 +67,13 @@ private fun Raiz(vm: RelayViewModel) {
             when (t) {
                 0 -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
                 1 -> TelaEntrar(vm, estado.aviso)
-                else -> TelaPrincipal(vm, estado)
+                else -> {
+                    TelaPrincipal(vm, estado)
+                    estado.perfil?.let { nome ->
+                        androidx.activity.compose.BackHandler { vm.fecharPerfil() }
+                        dev.josev.relay.ui.perfil.TelaPerfil(vm, nome, admin = estado.admin)
+                    }
+                }
             }
         }
         AvisoAtualizacao()

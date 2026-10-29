@@ -132,6 +132,21 @@ class RelayApi(private val conexao: Conexao) {
         return json.decodeFromString(executar(pedido(url("mensagens/$id")).patch(corpo.toRequestBody(tipoJson)).build()))
     }
 
+    // --- perfil ---------------------------------------------------------
+    suspend fun perfil(nome: String): Perfil = json.decodeFromString(executar(pedido(url("agentes/$nome")).build()))
+
+    suspend fun salvarPersona(nome: String, p: Persona) {
+        val corpo = json.encodeToString(Persona.serializer(), p.copy(editadoPor = null)).toRequestBody(tipoJson)
+        executar(pedido(url("agentes/$nome/persona")).put(corpo).build())
+    }
+
+    suspend fun revogar(nome: String) { executar(pedido(url("agentes/$nome")).delete().build()) }
+
+    /** Vizinhança na memória: centro = agente (fatos sobre e de autoria dele) ou um assunto. */
+    suspend fun grafo(sala: String, agente: String?, sujeito: String?): Grafo = json.decodeFromString(executar(pedido(
+        url("memoria/grafo", "sala" to sala, "profundidade" to 1,
+            "centro" to agente?.let { "agente:$it" }, "sujeito" to sujeito)).build()))
+
     suspend fun apagar(id: Long) {
         executar(pedido(url("mensagens/$id")).delete().build())
     }

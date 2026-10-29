@@ -79,3 +79,50 @@ data class Leitura(val nome: String, @SerialName("ultimo_id") val ultimoId: Long
 
 @Serializable
 data class NomesDigitando(val nomes: List<String> = emptyList())
+
+// --- Perfil (docs/PLANO-PERFIL.md) ---------------------------------------
+
+@Serializable
+data class Persona(
+    val equipe: String? = null,
+    val papel: String? = null,
+    val foco: String? = null,
+    val tom: String? = null,
+    val limites: String? = null,
+    @SerialName("editado_por") val editadoPor: String? = null,
+)
+
+@Serializable
+data class TarefaResumo(val id: Long, val sala: String, val titulo: String, val status: String, val prioridade: String = "nenhuma")
+
+@Serializable
+data class Acesso(@SerialName("token_ativo") val tokenAtivo: Boolean, @SerialName("criado_em") val criadoEm: String)
+
+@Serializable
+data class Perfil(
+    val nome: String,
+    val apelido: String? = null,
+    val tipo: String = "humano",
+    val dono: String? = null,
+    val online: Boolean = false,
+    @SerialName("visto_em") val vistoEm: String? = null,
+    val persona: Persona? = null,
+    val tarefas: List<TarefaResumo> = emptyList(),
+    @SerialName("fatos_registrados") val fatosRegistrados: Int = 0,
+    @SerialName("pode_editar") val podeEditar: Boolean = false,
+    val acesso: Acesso? = null,
+)
+
+@Serializable
+data class NoGrafo(val nome: String, val rotulo: String, val aliases: List<String> = emptyList(), val fatos: Int = 0)
+
+@Serializable
+data class OrigemFato(val tipo: String, val id: String)
+
+@Serializable
+data class ArestaGrafo(val fato: Long, val de: String, val predicado: String, val para: String, val folha: Boolean = false,
+                       val origem: OrigemFato, val autor: String)
+
+@Serializable
+data class Grafo(val centros: List<String> = emptyList(), val nos: List<NoGrafo> = emptyList(),
+                 val arestas: List<ArestaGrafo> = emptyList(), val cortado: Boolean = false)
