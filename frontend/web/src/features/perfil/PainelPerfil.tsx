@@ -1,4 +1,4 @@
-import { CameraIcon, ChevronRightIcon, CircleDotIcon, KeyRoundIcon, LoaderIcon, ListTodoIcon, NetworkIcon, PencilIcon, UserRoundIcon } from "lucide-react";
+import { CameraIcon, ChevronRightIcon, KeyRoundIcon, LoaderIcon, ListTodoIcon, NetworkIcon, PencilIcon, UserRoundIcon } from "lucide-react";
 import { useRef, useState, type FormEvent } from "react";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
@@ -14,7 +14,7 @@ import { cn } from "@/lib/utils";
 import { corDe, ehIa, horaDe, siglaDe } from "@/shared/lib/formato";
 import { textos } from "@/shared/lib/textos";
 import { useEditarPerfil, useGrafo, usePerfil, type Perfil, type Persona } from "./api";
-import { FotoPerfil } from "@/features/perfil/FotoPerfil";
+import { FotoPerfil, urlFoto } from "@/features/perfil/FotoPerfil";
 
 const t = textos.perfil;
 const CAMPOS = [["equipe", 60], ["papel", 160], ["foco", 160], ["tom", 80], ["limites", 240]] as const;
@@ -181,35 +181,35 @@ function Acesso({ perfil, admin }: { perfil: Perfil; admin: boolean }) {
 function FotoEditavel({ perfil: p, ia }: { perfil: Perfil; ia: boolean }) {
   const { foto } = useEditarPerfil(p.nome);
   const entrada = useRef<HTMLInputElement>(null);
-  const avatar = (
-    <Avatar aria-hidden className={cn("size-12", !ia && "rounded-xl after:rounded-xl")}>
-      <FotoPerfil nome={p.nome} className={cn(!ia && "rounded-xl")} />
-      <AvatarFallback className={cn("text-base font-semibold text-white", !ia && "rounded-xl")} style={{ background: corDe(p.nome) }}>
-        {siglaDe(p.nome)}
-      </AvatarFallback>
-    </Avatar>
-  );
-  // Trocar: só a própria pessoa ou o dono do agente. Remover: também o admin (moderação).
-  if (!p.pode_trocar_foto) return p.pode_editar && p.foto ? (
-    <div className="grid justify-items-center gap-0.5">{avatar}
-      <button type="button" onClick={() => foto.mutate(null)} disabled={foto.isPending}
-        className="text-[10px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline">{t.removerFoto}</button>
-    </div>
-  ) : avatar;
+  const forma = ia ? "rounded-full" : "rounded-[28px]";
+  const remover = p.foto && p.pode_editar ? (
+    <button type="button" onClick={() => foto.mutate(null)} disabled={foto.isPending}
+      className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline">{t.removerFoto}</button>
+  ) : null;
   return (
-    <div className="grid justify-items-center gap-0.5">
-      <button type="button" onClick={() => entrada.current?.click()} disabled={foto.isPending} aria-label={t.trocarFoto}
-        title={t.trocarFoto} className={cn("group relative rounded-full focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none", !ia && "rounded-xl")}>
-        {avatar}
-        <span aria-hidden className={cn("absolute inset-0 grid place-items-center rounded-full bg-black/45 text-white opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100",
-          !ia && "rounded-xl", foto.isPending && "opacity-100")}>
-          {foto.isPending ? <LoaderIcon className="size-4 animate-spin" /> : <CameraIcon className="size-4" />}
-        </span>
-      </button>
-      <input ref={entrada} type="file" accept="image/png,image/jpeg,image/webp" hidden
-        onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) foto.mutate(f); }} />
-      {!!p.foto && <button type="button" onClick={() => foto.mutate(null)} disabled={foto.isPending}
-        className="text-[10px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline">{t.removerFoto}</button>}
+    <div className="grid justify-items-center gap-1.5">
+      <div className="relative">
+        <Avatar aria-hidden className={cn("size-28 shadow-lg ring-4 ring-background", forma, ia ? "after:rounded-full" : "after:rounded-[28px]")}>
+          <FotoPerfil nome={p.nome} className={forma} />
+          <AvatarFallback className={cn("text-3xl font-semibold text-white", forma)} style={{ background: corDe(p.nome) }}>
+            {siglaDe(p.nome)}
+          </AvatarFallback>
+        </Avatar>
+        <span aria-hidden className={cn("absolute right-1.5 bottom-1.5 size-4 rounded-full ring-3 ring-background",
+          p.online ? "bg-emerald-500" : "bg-muted-foreground/50", !ia && "right-0 bottom-0")} />
+        {p.pode_trocar_foto && (
+          <>
+            <Button type="button" size="icon" variant="secondary" onClick={() => entrada.current?.click()} disabled={foto.isPending}
+              aria-label={t.trocarFoto} title={t.trocarFoto}
+              className="absolute -top-1 -right-1 size-8 rounded-full shadow-md ring-3 ring-background">
+              {foto.isPending ? <LoaderIcon className="animate-spin" /> : <CameraIcon />}
+            </Button>
+            <input ref={entrada} type="file" accept="image/png,image/jpeg,image/webp" hidden
+              onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) foto.mutate(f); }} />
+          </>
+        )}
+      </div>
+      {remover}
     </div>
   );
 }
@@ -224,17 +224,21 @@ export default function PainelPerfil({ nome, sala, admin, fechar }: { nome: stri
         {isError ? <p className="p-6 text-sm text-muted-foreground">{t.naoEncontrado}</p>
           : isPending || !p ? <div className="grid gap-3 p-4"><Skeleton className="h-14" /><Skeleton className="h-40" /></div> : (
           <>
-            <SheetHeader className="flex-row items-center gap-3 border-b pr-12">
+            <SheetHeader className="relative isolate items-center gap-3 overflow-hidden border-b px-4 pt-8 pb-5 text-center">
+              {/* Capa: a própria foto, desfocada, tingindo o topo. */}
+              {p.foto ? <img aria-hidden src={urlFoto(p.nome, p.foto)} alt=""
+                className="absolute inset-x-0 top-0 -z-10 h-24 w-full scale-125 object-cover opacity-50 blur-2xl" />
+                : <div aria-hidden className="absolute inset-x-0 top-0 -z-10 h-24 opacity-30" style={{ background: corDe(p.nome) }} />}
+              <div aria-hidden className="absolute inset-x-0 top-0 -z-10 h-24 bg-linear-to-b from-transparent to-background" />
               <FotoEditavel perfil={p} ia={ia} />
-              <div className="grid min-w-0 gap-0.5">
-                <SheetTitle className="truncate text-base">{p.apelido ?? p.nome}</SheetTitle>
-                <SheetDescription className="flex flex-wrap items-center gap-1.5 text-xs">
+              <div className="grid min-w-0 justify-items-center gap-1">
+                <SheetTitle className="max-w-full truncate text-lg">{p.apelido ?? p.nome}</SheetTitle>
+                <SheetDescription className="flex flex-wrap items-center justify-center gap-1.5 text-xs">
                   {p.apelido && <span className="font-mono">{p.nome}</span>}
                   <Badge variant="outline" className="h-4 px-1 text-[10px]">{p.tipo === "ia" ? t.ia : t.humano}</Badge>
                   {p.dono && <span>{t.doDono(p.dono)}</span>}
                 </SheetDescription>
-                <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
-                  <CircleDotIcon className={cn("size-3", p.online ? "text-emerald-500" : "opacity-50")} aria-hidden />
+                <span className="text-[11px] text-muted-foreground">
                   {p.online ? t.online : p.visto_em ? t.vistoEm(horaDe(Date.parse(p.visto_em))) : t.nuncaVisto}
                 </span>
               </div>

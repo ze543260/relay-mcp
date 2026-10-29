@@ -89,14 +89,14 @@ export function useEditarPerfil(nome: string) {
   };
 }
 
-/** Recorta no centro e reduz pra 256px em WebP: foto de perfil leve (~10 KB) vinda de qualquer imagem. */
+/** Recorta no centro e reduz pra 512px em WebP: nítida até no perfil em tela 2x (~30 KB) vinda de qualquer imagem. */
 async function fotoQuadrada(arquivo: File): Promise<string> {
   const img = await createImageBitmap(arquivo);
   const lado = Math.min(img.width, img.height);
-  const tela = new OffscreenCanvas(256, 256);
+  const tela = new OffscreenCanvas(512, 512);
   const ctx = tela.getContext("2d")!;
   ctx.imageSmoothingQuality = "high";
-  ctx.drawImage(img, (img.width - lado) / 2, (img.height - lado) / 2, lado, lado, 0, 0, 256, 256);
+  ctx.drawImage(img, (img.width - lado) / 2, (img.height - lado) / 2, lado, lado, 0, 0, 512, 512);
   img.close();
   const blob = await tela.convertToBlob({ type: "image/webp", quality: 0.85 });
   const bytes = new Uint8Array(await blob.arrayBuffer());
