@@ -1,5 +1,6 @@
 package dev.josev.relay.ui.conversa
 
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -112,6 +113,11 @@ fun Bolha(
     vistaPorTodos: Boolean? = null,
     apelido: String? = null,
     aoAbrirPerfil: () -> Unit = {},
+    /** Mesma pessoa, poucos minutos depois: sem avatar nem cabeçalho. */
+    seguida: Boolean = false,
+    /** Alvo de "ir para" (citação, busca): o contorno pisca. */
+    destacada: Boolean = false,
+    aoIrParaCitada: ((Long) -> Unit)? = null,
 ) {
     val cores = MaterialTheme.colorScheme
     val extras = LocalExtras.current
@@ -132,37 +138,58 @@ fun Bolha(
         return
     }
     val mencionaMe = !minha && Regex("@${Regex.escape(eu)}\\b", RegexOption.IGNORE_CASE).containsMatchIn(m.texto)
+    // Pulso de contorno: ao chegar como alvo (1 s) ou menção que acabou de chegar (600 ms).
+    val pulso = remember { androidx.compose.animation.core.Animatable(0f) }
+    val recente = remember(m.id) { System.currentTimeMillis() - (m.criado * 1000).toLong() < 15_000 }
+    val movimento = movimentoLigado()
+    androidx.compose.runtime.LaunchedEffect(destacada) {
+        if (destacada) {
+            if (!movimento) { pulso.snapTo(1f); kotlinx.coroutines.delay(1000); pulso.snapTo(0f); return@LaunchedEffect }
+            pulso.animateTo(1f, androidx.compose.animation.core.tween(Tokens.movRapido))
+            kotlinx.coroutines.delay(500)
+            pulso.animateTo(0f, androidx.compose.animation.core.tween(Tokens.movEntrada))
+        }
+    }
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        if (recente && movimento && !minha && Regex("@${Regex.escape(eu)}\\b", RegexOption.IGNORE_CASE).containsMatchIn(m.texto)) {
+            pulso.animateTo(1f, androidx.compose.animation.core.tween(240)); pulso.animateTo(0f, androidx.compose.animation.core.tween(360))
+        }
+    }
     val borda = when {
         pendente?.falhou == true -> cores.error.copy(alpha = 0.6f)
         mencionaMe -> cores.primary.copy(alpha = 0.6f)
         minha -> cores.primary.copy(alpha = 0.35f)
         else -> cores.outlineVariant
     }
-    Row(modifier.fillMaxWidth().semantics(mergeDescendants = false) { contentDescription = "${m.de}: ${resumo(m.texto, 200)}" }) {
+    Row(modifier.fillMaxWidth().semantics(mergeDescendants = false) { contentDescription = "${apelido ?: m.de}, ${hora(m.criado)}: ${resumo(m.texto, 200)}" }) {
         val forma = if (minha) FormaBolhaMinha else FormaBolha
-        if (!minha) Avatar(m.de, 30.dp, Modifier.clickable(onClickLabel = "Abrir perfil", onClick = aoAbrirPerfil))
+        if (!minha) {
+            if (seguida) Spacer(Modifier.width(30.dp))
+            else Avatar(m.de, 30.dp, Modifier.clickable(onClickLabel = "Abrir perfil", onClick = aoAbrirPerfil))
+        }
         Column(Modifier.padding(start = if (minha) 40.dp else 10.dp, end = if (minha) 10.dp else 0.dp).weight(1f),
             horizontalAlignment = if (minha) Alignment.End else Alignment.Start) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(apelido ?: m.de, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium,
+            val cabecalho = !seguida || pendente != null || m.editado != null
+            if (cabecalho) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (!seguida) Text(apelido ?: m.de, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium,
                     modifier = Modifier.clickable(onClickLabel = "Abrir perfil", onClick = aoAbrirPerfil))
-                if (apelido != null) Text(m.de, style = MaterialTheme.typography.labelSmall, color = cores.onSurfaceVariant, fontFamily = dev.josev.relay.ui.tema.Mono)
-                m.para?.let { Text("→ $it", color = cores.primary, style = MaterialTheme.typography.bodyMedium) }
+                if (apelido != null && !seguida) Text(m.de, style = MaterialTheme.typography.labelSmall, color = cores.onSurfaceVariant, fontFamily = dev.josev.relay.ui.tema.Mono)
+                if (!seguida) m.para?.let { Text("→ $it", color = cores.primary, style = MaterialTheme.typography.bodyMedium) }
                 Text(hora(m.criado), color = cores.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
                 if (m.editado != null) Text("(editada)", color = cores.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium, fontStyle = androidx.compose.ui.text.font.FontStyle.Italic)
                 when {
                     pendente?.falhou == true -> Text("não enviada", color = cores.error, style = MaterialTheme.typography.bodyMedium)
                     pendente != null -> Text("enviando…", color = cores.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
-                    vistaPorTodos == true -> Icon(Icons.Filled.DoneAll, "Vista por todos", Modifier.size(15.dp), tint = cores.primary)
-                    vistaPorTodos == false -> Icon(Icons.Filled.Done, "Entregue", Modifier.size(15.dp), tint = cores.onSurfaceVariant)
+                    vistaPorTodos != null -> ConfirmacaoLeitura(vistaPorTodos)
                 }
             }
             if (m.texto.isNotBlank() || citada != null || m.replyTo != null) {
             Box(
-                Modifier.padding(top = 4.dp).widthIn(max = 640.dp)
+                Modifier.padding(top = if (cabecalho) 4.dp else 0.dp).widthIn(max = 640.dp)
                     .alpha(if (pendente != null && !pendente.falhou) 0.6f else 1f)
                     .background(if (mencionaMe) cores.primary.copy(alpha = 0.08f) else extras.bolha, forma)
                     .border(1.dp, borda, forma)
+                    .border((2 * pulso.value).dp, cores.primary.copy(alpha = pulso.value), forma)
                     .combinedClickable(onClick = {}, onLongClick = {
                         if (pendente == null) { haptico.performHapticFeedback(HapticFeedbackType.LongPress); aoSegurar() }
                     }, onLongClickLabel = "Ações da mensagem")
@@ -170,7 +197,9 @@ fun Bolha(
             ) {
                 Column {
                     if (citada != null || m.replyTo != null) {
-                        Row(Modifier.padding(bottom = 6.dp).height(IntrinsicSize.Min)) {
+                        val irCitada = m.replyTo?.takeIf { aoIrParaCitada != null }
+                        Row(Modifier.padding(bottom = 6.dp).height(IntrinsicSize.Min)
+                            .then(if (irCitada != null) Modifier.clickable(onClickLabel = "Ir para a mensagem respondida") { aoIrParaCitada?.invoke(irCitada) } else Modifier)) {
                             Box(Modifier.width(2.dp).fillMaxHeight().background(cores.primary.copy(alpha = 0.5f)))
                             Text(
                                 if (citada != null) "${citada.de}  ${resumo(citada.texto)}" else "mensagem anterior (não carregada)",
@@ -195,7 +224,32 @@ fun Bolha(
                 TextButton(aoDescartar, Modifier.height(32.dp)) { Text("Descartar") }
             }
         }
-        if (minha) Avatar(m.de, 30.dp, Modifier.clickable(onClickLabel = "Abrir perfil", onClick = aoAbrirPerfil))
+        if (minha) {
+            if (seguida) Spacer(Modifier.width(30.dp))
+            else Avatar(m.de, 30.dp, Modifier.clickable(onClickLabel = "Abrir perfil", onClick = aoAbrirPerfil))
+        }
+    }
+}
+
+/** ✓ entregue → ✓✓ vista por todos, com um "pop" na troca. */
+@Composable
+private fun ConfirmacaoLeitura(todos: Boolean) {
+    val cores = MaterialTheme.colorScheme
+    androidx.compose.animation.AnimatedContent(todos, label = "leitura", transitionSpec = {
+        (androidx.compose.animation.scaleIn(androidx.compose.animation.core.spring(dampingRatio = 0.45f, stiffness = 800f), initialScale = 0.6f) +
+            androidx.compose.animation.fadeIn()) togetherWith androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(80))
+    }) { t ->
+        if (t) Icon(Icons.Filled.DoneAll, "Vista por todos", Modifier.size(15.dp), tint = cores.primary)
+        else Icon(Icons.Filled.Done, "Entregue", Modifier.size(15.dp), tint = cores.onSurfaceVariant)
+    }
+}
+
+/** Respeita "Remover animações" do Android (escala de animação 0). */
+@Composable
+fun movimentoLigado(): Boolean {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    return remember {
+        android.provider.Settings.Global.getFloat(ctx.contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) > 0f
     }
 }
 
@@ -258,12 +312,26 @@ fun Composer(
     aoCancelarResposta: () -> Unit, aoEnviar: (String) -> Unit,
     anexando: List<dev.josev.relay.Anexando> = emptyList(), aoAnexar: (List<android.net.Uri>) -> Unit = {}, aoRemoverAnexo: (String) -> Unit = {},
     aoDigitar: (Boolean) -> Unit = {},
+    carregarRascunho: suspend () -> String = { "" },
+    salvarRascunho: (String) -> Unit = {},
 ) {
     val seletor = androidx.activity.compose.rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.GetMultipleContents()) { if (it.isNotEmpty()) aoAnexar(it) }
     val subindo = anexando.any { it.anexo == null && it.erro == null }
     val prontos = anexando.count { it.anexo != null }
     var campo by remember(sala) { mutableStateOf(androidx.compose.ui.text.input.TextFieldValue("")) }
+    // Rascunho por sala (só neste aparelho): volta ao abrir a sala e se salva 400 ms depois de parar de digitar.
+    var rascunhoPronto by remember(sala) { mutableStateOf(false) }
+    androidx.compose.runtime.LaunchedEffect(sala) {
+        val r = carregarRascunho()
+        if (campo.text.isEmpty() && r.isNotEmpty()) campo = androidx.compose.ui.text.input.TextFieldValue(r, androidx.compose.ui.text.TextRange(r.length))
+        rascunhoPronto = true
+    }
+    androidx.compose.runtime.LaunchedEffect(sala, campo.text, rascunhoPronto) {
+        if (!rascunhoPronto) return@LaunchedEffect
+        kotlinx.coroutines.delay(400)
+        salvarRascunho(campo.text)
+    }
     val cores = MaterialTheme.colorScheme
     // `@parcial` logo antes do cursor abre a lista de quem pode ser mencionado.
     val antes = campo.text.take(campo.selection.start)
@@ -333,7 +401,8 @@ fun Composer(
                 Icon(Icons.Outlined.AttachFile, "Anexar foto ou arquivo", tint = cores.onSurfaceVariant)
             }
             TextField(
-                campo, { campo = it; aoDigitar(it.text.isNotBlank()) }, modifier = Modifier.weight(1f).heightIn(min = 48.dp, max = 180.dp),
+                campo, { campo = it; aoDigitar(it.text.isNotBlank()) }, modifier = Modifier.weight(1f).heightIn(min = 48.dp, max = 180.dp)
+                    .border(1.dp, cores.outline, RoundedCornerShape(24.dp)),  // borda de campo 3:1 (WCAG 1.4.11)
                 placeholder = { Text("Mandar como $nome em #$sala…", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 shape = RoundedCornerShape(24.dp),
                 colors = TextFieldDefaults.colors(
