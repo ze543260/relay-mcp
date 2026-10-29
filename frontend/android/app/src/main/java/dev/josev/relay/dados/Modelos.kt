@@ -18,6 +18,8 @@ data class Mensagem(
     @SerialName("reply_to") val replyTo: Long? = null,
     val anexos: List<Anexo> = emptyList(),
     val editado: Double? = null,
+    /** Só vem no stream de todas as salas (serviço em segundo plano). */
+    val sala: String? = null,
 )
 
 @Serializable
@@ -58,6 +60,7 @@ data class NovaMensagem(
     @SerialName("client_id") val clientId: String,
     @SerialName("reply_to") val replyTo: Long? = null,
     val anexos: List<String>? = null,
+    val para: String? = null,
 )
 
 /** Mensagem minha ainda não confirmada pelo servidor (envio otimista). */

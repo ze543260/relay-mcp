@@ -1,5 +1,6 @@
 package dev.josev.relay.ui.conversa
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.consumeWindowInsets
@@ -127,7 +128,9 @@ private fun TelaPrincipalConteudo(vm: RelayViewModel, estado: Estado) {
     val gaveta = rememberDrawerState(DrawerValue.Closed)
     val escopo = rememberCoroutineScope()
     val conteudoGaveta = @Composable {
-        Gaveta(estado, aoEscolher = { vm.abrirSala(it); escopo.launch { gaveta.close() } }, aoSair = vm::sair)
+        val tempoReal by vm.tempoReal.collectAsStateWithLifecycle()
+        Gaveta(estado, aoEscolher = { vm.abrirSala(it); escopo.launch { gaveta.close() } }, aoSair = vm::sair,
+            tempoReal = tempoReal, aoTempoReal = vm::alternarTempoReal)
     }
     if (largo) {
         PermanentNavigationDrawer(drawerContent = { PermanentDrawerSheet(Modifier.width(300.dp)) { conteudoGaveta() } }) {
@@ -141,7 +144,7 @@ private fun TelaPrincipalConteudo(vm: RelayViewModel, estado: Estado) {
 }
 
 @Composable
-private fun Gaveta(estado: Estado, aoEscolher: (String) -> Unit, aoSair: () -> Unit) {
+private fun Gaveta(estado: Estado, aoEscolher: (String) -> Unit, aoSair: () -> Unit, tempoReal: Boolean, aoTempoReal: (Boolean) -> Unit) {
     var criando by remember { mutableStateOf(false) }
     val salas = estado.salas.let { s -> if (s.any { it.sala == estado.sala }) s else listOf(dev.josev.relay.dados.Sala(estado.sala, 0)) + s }
     Column(Modifier.fillMaxHeight().statusBarsPadding().navigationBarsPadding()) {
@@ -183,6 +186,17 @@ private fun Gaveta(estado: Estado, aoEscolher: (String) -> Unit, aoSair: () -> U
                     modifier = Modifier.padding(vertical = 2.dp),
                 )
             }
+        }
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        // Tempo real: serviço conectado (notificação fixa discreta). Economia: confere a cada 15 min.
+        Row(Modifier.fillMaxWidth().clickable { aoTempoReal(!tempoReal) }.padding(horizontal = 20.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Notificações em tempo real", fontWeight = FontWeight.Medium)
+                Text(if (tempoReal) "Na hora; mostra uma notificação fixa discreta" else "Economia: confere a cada 15 min",
+                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            androidx.compose.material3.Switch(tempoReal, aoTempoReal)
         }
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         val nome = estado.conexao?.nome.orEmpty()

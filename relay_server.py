@@ -1185,6 +1185,12 @@ class Handler(BaseHTTPRequestHandler):
              depois: int, sem_minhas: bool) -> list[dict]:
         filtro, args = filtro_visiveis(quem, eu, todas)
         extra = " AND de IS NOT ?" if sem_minhas else ""
+        if sala == "*":  # todas as salas (serviço em segundo plano do app): cada mensagem leva a sala
+            linhas = con.execute(
+                f"SELECT {COLUNAS}, sala FROM msg WHERE id>? AND {filtro}{extra} ORDER BY id LIMIT 200",
+                [depois, *args, *([eu] if sem_minhas else [])],
+            ).fetchall()
+            return com_anexos(con, [{**linha_para_msg(r[:-1]), "sala": r[-1]} for r in linhas])
         linhas = con.execute(
             f"SELECT {COLUNAS} FROM msg WHERE sala=? AND id>? AND {filtro}{extra} ORDER BY id LIMIT 200",
             [sala, depois, *args, *([eu] if sem_minhas else [])],
@@ -1257,14 +1263,17 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, {"mensagens": msgs, "tem_mais": tem_mais})
 
     def stream(self, q: dict) -> None:
-        """SSE: `id` do evento = id da mensagem; reconecta com Last-Event-ID."""
-        sala = validar_sala(q.get("sala"))
+        """SSE: `id` do evento = id da mensagem; reconecta com Last-Event-ID.
+        `sala=*`: todas as salas que a pessoa vê (só mensagens; começa do agora e não marca presença)."""
+        geral = q.get("sala") == "*"
+        sala = "*" if geral else validar_sala(q.get("sala"))
         with conectar() as con:
             quem = self._quem(con)
             ultimo_evento = con.execute("SELECT COALESCE(MAX(seq),0) FROM evento").fetchone()[0]
+            maior = con.execute("SELECT COALESCE(MAX(id),0) FROM msg").fetchone()[0]
         eu = quem.nome if (quem.nome and not quem.admin) else (q.get("eu") or quem.nome)
         todas = q.get("todas") == "1"
-        depois = int(self.headers.get("Last-Event-ID") or q.get("depois") or 0)
+        depois = int(self.headers.get("Last-Event-ID") or q.get("depois") or 0) or (maior if geral else 0)
         if not ESPERAS.acquire(blocking=False):
             raise ErroHttp(503, "ocupado", "Muitas conexões abertas; tente de novo.", 2)
         try:
@@ -1283,10 +1292,10 @@ class Handler(BaseHTTPRequestHandler):
             while time.monotonic() < fim:
                 with conectar() as con:
                     msgs = self._ler(con, quem, sala, eu, todas, depois, sem_minhas=False)
-                    eventos = con.execute(
+                    eventos = [] if geral else con.execute(
                         "SELECT seq, tipo, msg_id FROM evento WHERE seq>? AND sala=? ORDER BY seq", (ultimo_evento, sala)
                     ).fetchall()
-                    if eu:
+                    if eu and not geral:  # o serviço em segundo plano não conta como "online"
                         marcar_visto(con, eu)
                 for m in msgs:
                     depois = m["id"]
@@ -1303,7 +1312,7 @@ class Handler(BaseHTTPRequestHandler):
                                 self.wfile.write(f"event: editada\ndata: {dados}\n\n".encode())
                         continue
                     self.wfile.write(f"event: {tipo}\ndata: {json.dumps({'id': ref})}\n\n".encode())
-                digitando = [n for n in digitando_em(sala) if n != eu]
+                digitando = [] if geral else [n for n in digitando_em(sala) if n != eu]
                 if digitando != ultimo_digitando:
                     ultimo_digitando = digitando
                     self.wfile.write(f"event: digitando\ndata: {json.dumps({'nomes': digitando})}\n\n".encode())

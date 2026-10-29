@@ -120,7 +120,8 @@ class RelayViewModel(app: Application) : AndroidViewModel(app) {
         }
         api = nova
         dev.josev.relay.notificacoes.Notificacoes.criarCanais(getApplication())
-        dev.josev.relay.notificacoes.Notificacoes.agendar(getApplication())
+        dev.josev.relay.notificacoes.Notificacoes.agendar(getApplication())  // economia, e reserva do tempo real
+        viewModelScope.launch { if (config.tempoReal.first()) dev.josev.relay.notificacoes.ServicoTempoReal.iniciar(getApplication()) }
         _estado.update {
             it.copy(verificando = false, conexao = c, admin = isAdmin, sala = config.sala(), vistas = config.vistas(), aviso = null)
         }
@@ -134,6 +135,7 @@ class RelayViewModel(app: Application) : AndroidViewModel(app) {
 
     fun sair() {
         dev.josev.relay.notificacoes.Notificacoes.cancelarAgenda(getApplication())
+        dev.josev.relay.notificacoes.ServicoTempoReal.parar(getApplication())
         stream?.cancel(); periodico?.cancel(); api = null
         viewModelScope.launch { config.sair() }
         _estado.value = Estado(verificando = false)
@@ -398,6 +400,14 @@ class RelayViewModel(app: Application) : AndroidViewModel(app) {
     val tema = config.tema.stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, "sistema")
     /** Botão à vista: alterna entre claro e escuro a partir do que está na tela agora. */
     fun alternarTema(escuroAgora: Boolean) = viewModelScope.launch { config.salvarTema(if (escuroAgora) "claro" else "escuro") }
+
+    // --- tempo real ----------------------------------------------------------
+    val tempoReal = config.tempoReal.stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, true)
+    fun alternarTempoReal(ligado: Boolean) = viewModelScope.launch {
+        config.salvarTempoReal(ligado)
+        if (ligado) dev.josev.relay.notificacoes.ServicoTempoReal.iniciar(getApplication())
+        else dev.josev.relay.notificacoes.ServicoTempoReal.parar(getApplication())
+    }
 
     // --- quadro --------------------------------------------------------------
     fun abrirTarefa(id: Long) = _estado.update { it.copy(tarefa = id) }
