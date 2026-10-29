@@ -51,6 +51,49 @@ object Atualizador {
 
     fun podeInstalar(ctx: Context) = ctx.packageManager.canRequestPackageInstalls()
 
+    /**
+     * Atualização sem toque (Android 12+): só vale quando o próprio Relay foi quem instalou a versão atual
+     * (a 1ª atualização feita pelo app o torna "instalador"); instalado pelo navegador, o sistema ainda pede confirmação.
+     */
+    fun podeSilencioso(ctx: Context): Boolean {
+        if (android.os.Build.VERSION.SDK_INT < 31 || !podeInstalar(ctx)) return false
+        val origem = runCatching { ctx.packageManager.getInstallSourceInfo(ctx.packageName) }.getOrNull() ?: return false
+        return origem.installingPackageName == ctx.packageName || origem.updateOwnerPackageNameCompat() == ctx.packageName
+    }
+
+    private fun android.content.pm.InstallSourceInfo.updateOwnerPackageNameCompat(): String? =
+        if (android.os.Build.VERSION.SDK_INT >= 34) updateOwnerPackageName else null
+
+    private fun prefs(ctx: Context) = ctx.getSharedPreferences("atualizacao", Context.MODE_PRIVATE)
+
+    /** Guarda as notas antes de instalar: a 1ª abertura da versão nova mostra "o que mudou". */
+    fun lembrarNotas(ctx: Context, v: Versao) = prefs(ctx).edit().putInt("codigo", v.codigo).putString("nome", v.nome).putString("notas", v.notas).apply()
+
+    /** Notas da versão que acabou de ser instalada sozinha (uma vez só). */
+    fun novidades(ctx: Context): Versao? {
+        val p = prefs(ctx)
+        if (p.getInt("codigo", -1) != BuildConfig.VERSION_CODE) return null
+        val v = Versao(BuildConfig.VERSION_CODE, p.getString("nome", "").orEmpty(), p.getString("notas", "").orEmpty(), "", 0)
+        p.edit().clear().apply()
+        return v
+    }
+
+    /** Agenda a verificação a cada 6 h, com rede; a instalação silenciosa acontece com o app fora da tela. */
+    fun agendar(ctx: Context) {
+        val pedido = androidx.work.PeriodicWorkRequestBuilder<AtualizarSozinho>(6, java.util.concurrent.TimeUnit.HOURS)
+            .setConstraints(androidx.work.Constraints.Builder().setRequiredNetworkType(androidx.work.NetworkType.CONNECTED).build())
+            .build()
+        androidx.work.WorkManager.getInstance(ctx).enqueueUniquePeriodicWork("atualizar-app", androidx.work.ExistingPeriodicWorkPolicy.KEEP, pedido)
+    }
+
+    /** Pede uma verificação já (ex.: o app acabou de ir pro fundo e havia versão nova). */
+    fun verificarAgora(ctx: Context) {
+        val pedido = androidx.work.OneTimeWorkRequestBuilder<AtualizarSozinho>()
+            .setConstraints(androidx.work.Constraints.Builder().setRequiredNetworkType(androidx.work.NetworkType.CONNECTED).build())
+            .build()
+        androidx.work.WorkManager.getInstance(ctx).enqueueUniqueWork("atualizar-app-agora", androidx.work.ExistingWorkPolicy.KEEP, pedido)
+    }
+
     fun pedirPermissao(ctx: Context) = ctx.startActivity(
         Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${ctx.packageName}"))
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -90,6 +133,21 @@ object Atualizador {
                 sessao.abandon(); throw e
             }
         }
+    }
+}
+
+/** Em segundo plano: se há versão nova e dá pra instalar sem toque, instala (nunca com o app na tela). */
+class AtualizarSozinho(ctx: Context, params: androidx.work.WorkerParameters) : androidx.work.CoroutineWorker(ctx, params) {
+    override suspend fun doWork(): Result {
+        val ctx = applicationContext
+        if (!Atualizador.podeSilencioso(ctx)) return Result.success()
+        val naTela = withContext(Dispatchers.Main) {
+            androidx.lifecycle.ProcessLifecycleOwner.get().lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)
+        }
+        if (naTela) return Result.success()  // não derruba o app no meio do uso; tenta quando sair da tela
+        val v = runCatching { Atualizador.verificar() }.getOrElse { return Result.retry() } ?: return Result.success()
+        Atualizador.lembrarNotas(ctx, v)
+        return runCatching { Atualizador.instalar(ctx, v) {} }.fold({ Result.success() }, { Result.retry() })
     }
 }
 

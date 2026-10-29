@@ -431,7 +431,11 @@ private fun Conversa(vm: RelayViewModel, estado: Estado, aoMenu: (() -> Unit)?, 
                 .togetherWith(androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(90)))
         }) { abaAtual ->
         if (abaAtual == Aba.QUADRO) { dev.josev.relay.ui.quadro.Quadro(vm, estado.sala, estado.versaoTarefas, Modifier.padding(pad)); return@AnimatedContent }
-        if (abaAtual != Aba.CONVERSA) { EmBreve(abaAtual, Modifier.padding(pad)); return@AnimatedContent }
+        if (abaAtual == Aba.MEMORIA) {
+            dev.josev.relay.ui.memoria.Memoria(vm, estado.sala, estado.admin, Modifier.padding(pad)) { id -> aoAba(Aba.CONVERSA); vm.irParaMensagem(id) }
+            return@AnimatedContent
+        }
+        if (abaAtual == Aba.ARTEFATOS) { dev.josev.relay.ui.artefatos.Artefatos(vm, estado.sala, eu, Modifier.padding(pad)); return@AnimatedContent }
         Column(Modifier.fillMaxSize().padding(pad).consumeWindowInsets(pad).imePadding()) {
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             Box(Modifier.weight(1f)) {
@@ -578,18 +582,6 @@ private fun BotaoTema(vm: RelayViewModel) {
         }) { e ->
             Icon(if (e) Icons.Outlined.LightMode else Icons.Outlined.DarkMode, if (e) "Mudar para o tema claro" else "Mudar para o tema escuro")
         }
-    }
-}
-
-/** Abas que chegam nas próximas fases do plano: por enquanto apontam pro web. */
-@Composable
-private fun EmBreve(aba: Aba, modifier: Modifier) {
-    val fase = when (aba) { Aba.QUADRO -> "na fase 2"; Aba.MEMORIA, Aba.ARTEFATOS -> "na fase 4"; else -> "" }
-    Column(modifier.fillMaxSize().padding(32.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
-        Text("${aba.rotulo} chega ao app $fase", style = MaterialTheme.typography.titleMedium, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
-        Spacer(Modifier.height(6.dp))
-        Text("Por enquanto, use a aba ${aba.rotulo} no web.", color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = androidx.compose.ui.text.style.TextAlign.Center)
     }
 }
 
