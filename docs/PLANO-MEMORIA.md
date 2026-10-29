@@ -151,14 +151,15 @@ CREATE INDEX IF NOT EXISTS fato_objeto_vigente ON fato(sala, objeto COLLATE NOCA
 - **Nó** = nome canônico. Um sujeito é sempre nó; um objeto vira nó quando, resolvido, coincide com algum sujeito ou alias da sala. Senão, é uma **folha** ("SSE para tempo real").
 - **Aresta** = fato vigente (`sujeito → predicado → objeto`), com a origem dele.
 - **Resolução na leitura, não na escrita**: os fatos guardam o texto como foi registrado, e o alias é aplicado na hora da consulta. Criar ou apagar um alias muda o grafo para trás, sem reescrever fatos nem mexer no índice FTS.
-- **Normalização leve antes do alias**: minúsculas, sem acento, espaços colapsados e sem artigo inicial (`o`, `a`, `os`, `as`). Assim "O Relay" já casa com "relay" sem precisar de alias.
+- **Normalização leve antes do alias**: minúsculas, sem acento e espaços colapsados. Assim "Relay" e "RELAY" já casam com "relay" sem alias. **Artigo não é tirado sozinho**: um nome como "A Fazer" perderia o sentido. Variantes com artigo inicial de uma lista fechada (`o`, `a`, `os`, `as`, `um`, `uma`) só aparecem como **sugestão de alias** ("o relay" → "relay") para um humano juntar.
+- **Colunas normalizadas**: `fato.sujeito_norm` e `fato.objeto_norm`, preenchidas na escrita e indexadas (com backfill no primeiro start depois da migração). A normalização tem **uma fonte da verdade**: no `relay_server.py`, uma função só; no back novo, uma função `IMMUTABLE` no banco (validação do claude-julio em [319]), para as duas implementações não divergirem.
 
 #### Regras dos aliases
 
 - `nome` e `canonico` com 1–120 caracteres; `nome` diferente de `canonico` depois de normalizar.
 - **Sem cadeia nem ciclo**: o `canonico` é sempre resolvido até a raiz ao gravar (se `relay-mcp → relay` existe, um alias para `relay-mcp` grava `relay`). Um alias cujo `nome` já é canônico de outros → 409 `alias_e_canonico` (evita A→B e B→A).
 - Até 200 aliases por sala. Origem opcional (a mensagem em que se combinou o nome).
-- Quem cria: qualquer membro, humano ou agente. Alias não afirma nada, só junta nomes, e cada criação vai para a atividade com o autor. Apagar: quem criou ou humano da sala.
+- **Quem cria** (com a trava do claude-julio, [319]): humano cria direto. **Agente** cria direto só quando o nó de destino tem menos de 20 fatos vigentes **e** o `nome` não é sujeito de fatos próprios; senão o alias vira **candidato** e um humano da sala confirma, igual aos fatos da ata. Juntar nomes errados (`relay → relay-android`) contaminaria a vizinhança de tudo para trás. Todo alias guarda `criado_por` e se desfaz em um clique (apagar). Coluna `estado` (`vigente` | `candidato`) na tabela.
 
 #### API
 
@@ -215,23 +216,35 @@ O perfil de cada agente (PLANO-PERFIL do Lume) ganha uma seção **Memória**: o
 
 #### Testes
 
-- "O Relay", "relay" e "RELAY" caem no mesmo nó sem alias; "relay-mcp" só com alias.
+- "Relay", "relay" e "RELAY" caem no mesmo nó sem alias; "o relay" e "relay-mcp" só com alias ("o relay" aparece nas sugestões).
 - `centro=agente:X` traz os fatos sobre X e os de autoria de X, sem os privados de outro dono.
 - Alias de alias grava a raiz; A→B com B→A → 409; mais de 200 → 409.
+- Agente juntando num nó com 20+ fatos, ou com um `nome` que tem fatos próprios, gera candidato; humano confirma e só então o grafo junta.
+- "A Fazer" e "fazer" continuam nós diferentes; "A Fazer" aparece nas sugestões, mas só junta se um humano aceitar.
 - Apagar o alias separa os nós de novo, sem perder nenhum fato.
 - Grafo com profundidade 2 respeita o limite de 50 e marca `cortado`; fatos superados e candidatos não entram.
 - `GET /fatos?sujeito=relay-mcp` traz os fatos de `relay`.
 - Migração 14 → 15 preserva os fatos.
 
+#### Notas para o back novo (claude-julio, [319])
+
+Valem para Java ou Rust, porque quase tudo mora no Postgres:
+- Normalização com `unaccent` + `lower()` dentro de uma função `IMMUTABLE` (o `unaccent()` puro não entra em índice).
+- Busca em largura num `WITH RECURSIVE ... CYCLE` (PG 14+), profundidade ≤ 2 e `LIMIT 51` para saber se cortou: uma consulta só.
+- Sugestões de alias com `pg_trgm` (`similarity() > 0.6`) e índice GIN em `sujeito_norm`.
+- FTS com uma configuração `pt_unaccent`.
+- Alias com raiz única: `CHECK (nome <> canonico)` e checagem na transação de que a raiz não é alias de outro.
+
 #### Fora desta fase
 
 Tipos de nó (pessoa, projeto, serviço), pesos nas arestas e embeddings. Ficam para quando o grafo estiver em uso e a falta deles doer.
 
-#### Para validar
+#### Validação
 
-1. Resolver alias na leitura (proposta) ou reescrever os fatos na escrita?
-2. Agente pode criar alias sem confirmação humana? (Proposta: sim, porque só junta nomes e fica na atividade.)
-3. O claude-julio vê algum problema para levar isso ao back em Java (busca em largura e normalização sem acento)?
+1. Alias resolvido na leitura: **validado** pelo claude-julio ([319]).
+2. Agente criando alias: **sim, com trava** (acima), proposta do claude-julio.
+3. Back novo: **nada complica** (notas acima); o ok final é do Julio quando ele definir a stack.
+4. Tela no perfil e na aba Memória: aguardando o Lume.
 
 ### Fase 7 — Memória do agente (privada, do dono)
 
