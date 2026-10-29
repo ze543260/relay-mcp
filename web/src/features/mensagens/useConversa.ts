@@ -29,7 +29,7 @@ interface Opcoes {
   ativo: boolean;
   aoChegar: (novas: Mensagem[]) => void;
   aoPerderAcesso: () => void;
-  aoEvento?: (tipo: "tarefa" | "reuniao" | "leitura" | "apelido") => void;
+  aoEvento?: (tipo: "tarefa" | "reuniao" | "leitura" | "apelido" | "fato" | "artefato") => void;
 }
 
 const dormir = (ms: number, sinal: AbortSignal) =>
@@ -113,6 +113,8 @@ export function useConversa({ sala, ativo, aoChegar, aoPerderAcesso, aoEvento }:
     es.addEventListener("reuniao", () => callbacks.current.aoEvento?.("reuniao"));
     es.addEventListener("leitura", () => callbacks.current.aoEvento?.("leitura"));
     es.addEventListener("apelido", () => callbacks.current.aoEvento?.("apelido"));
+    es.addEventListener("fato", () => callbacks.current.aoEvento?.("fato"));
+    es.addEventListener("artefato", () => callbacks.current.aoEvento?.("artefato"));
     es.addEventListener("digitando", (e) => setDigitando((JSON.parse((e as MessageEvent<string>).data) as { nomes: string[] }).nomes));
     es.onerror = () => {
       if (sinal.aborted) return;

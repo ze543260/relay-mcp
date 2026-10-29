@@ -1,10 +1,12 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { ApelidosContexto } from "@/shared/lib/apelidos";
 import { ArrowDownIcon } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { Mensagem as TMensagem } from "@/shared/api/tipos";
+import { avisar } from "@/shared/lib/avisar";
 import { textos } from "@/shared/lib/textos";
 import { Mensagem } from "./Mensagem";
 import type { Pendente } from "./useConversa";
@@ -31,6 +33,9 @@ interface Props {
   /** nome -> último id lido (sem mim). */
   leituras: Map<string, number>;
   apelidos: Map<string, string>;
+  /** Pular até esta mensagem (ex.: origem de um fato da Memória); carrega as antigas se precisar. */
+  irPara?: number | null;
+  aoChegarEm?: () => void;
 }
 
 type Item =
@@ -60,7 +65,7 @@ function Digitando({ nomes }: { nomes: string[] }) {
 
 /** Lista virtualizada com marcador de não lidas: só o que está visível (+ margem) fica no DOM. */
 export function Conversa(props: Props) {
-  const { sala, eu, mensagens, pendentes, carregando, temMais, carregandoAntigas, ultimaLida, carregarAntigas, aoLer, retentar, descartar, admin, aoResponder, apagar, editar, digitando, leituras, apelidos } = props;
+  const { sala, eu, mensagens, pendentes, carregando, temMais, carregandoAntigas, ultimaLida, carregarAntigas, aoLer, retentar, descartar, admin, aoResponder, apagar, editar, digitando, leituras, apelidos, irPara, aoChegarEm } = props;
   const mostrar = (n: string) => apelidos.get(n) ?? n;
   // Avatares de "visto": cada leitor aparece na última mensagem que leu (estilo Messenger).
   const vistoEm = new Map<number, string[]>();
@@ -144,6 +149,28 @@ export function Conversa(props: Props) {
     lerSeVisivel();
   }, [mensagens, pendentes, virtual, irParaFim, lerSeVisivel]);
 
+  // Pular até uma mensagem (origem de fato): acha na lista, carrega mais antigas se faltar, destaca por 2,5 s.
+  const [destaque, setDestaque] = useState<number | null>(null);
+  useEffect(() => {
+    if (!irPara || mensagens.length === 0) return;
+    const idx = itens.findIndex((it) => it.tipo === "msg" && it.m.id === irPara);
+    if (idx >= 0) {
+      presoNoFim.current = false;
+      setNoFim(false);
+      virtual.scrollToIndex(idx, { align: "center" });
+      setDestaque(irPara);
+      aoChegarEm?.();
+      const tempo = setTimeout(() => setDestaque(null), 2500);
+      return () => clearTimeout(tempo);
+    }
+    if ((mensagens[0]?.id ?? 0) > irPara && temMais) {
+      if (!carregandoAntigas) carregarAntigas();
+    } else {
+      avisar("erro", t.naoEncontrada);
+      aoChegarEm?.();
+    }
+  }, [irPara, itens, mensagens, temMais, carregandoAntigas]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Alturas reais (Markdown, KaTeX) e o teclado do celular mudam o tamanho: mantém o fim.
   // Observa o conteúdo interno pelo próprio feed, que existe desde a montagem.
   useEffect(() => {
@@ -183,6 +210,7 @@ export function Conversa(props: Props) {
   const anuncio = ultima && ultima.de !== eu ? `${ultima.de}: ${ultima.texto.slice(0, 200)}` : "";
 
   return (
+    <ApelidosContexto.Provider value={apelidos}>
     <div className="relative flex min-h-0 flex-1 flex-col">
       <div ref={feed} onScroll={aoRolar} role="log" aria-live="off" aria-label={t.rotulo} tabIndex={0}
         className="flex-1 overflow-y-auto overscroll-contain px-3 py-4 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset md:p-6">
@@ -217,7 +245,9 @@ export function Conversa(props: Props) {
               if (!it) return null;
               return (
                 <div key={v.key} data-index={v.index} ref={virtual.measureElement}
-                  className="absolute top-0 left-0 w-full" style={{ transform: `translateY(${v.start}px)` }}>
+                  className={cn("absolute top-0 left-0 w-full rounded-xl transition-shadow duration-500",
+                    it.tipo === "msg" && it.m.id === destaque && "ring-2 ring-primary ring-offset-4 ring-offset-background")}
+                  style={{ transform: `translateY(${v.start}px)` }}>
                   {it.tipo === "divisor" ? (
                     <div role="separator" aria-label={t.novas} className="flex items-center gap-3 text-xs font-medium text-primary">
                       <span className="h-px flex-1 bg-primary/40" />{t.novas}<span className="h-px flex-1 bg-primary/40" />
@@ -249,5 +279,6 @@ export function Conversa(props: Props) {
       <Digitando nomes={digitando.map(mostrar)} />
       <div className="sr-only" aria-live="polite">{anuncio}</div>
     </div>
+    </ApelidosContexto.Provider>
   );
 }
