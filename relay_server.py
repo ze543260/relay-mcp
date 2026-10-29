@@ -1277,6 +1277,8 @@ class Handler(BaseHTTPRequestHandler):
                 (sala, de, para, texto, time.time(), client_id, reply_to),
             )
             indexar_msg(con, cur.lastrowid, texto)
+            with TRAVA_DIGITANDO:  # a mensagem chegou: o "digitando" de quem mandou some junto
+                DIGITANDO.get(sala, {}).pop(de, None)
             if anexos:
                 con.execute(f"UPDATE arquivo SET msg_id=? WHERE id IN ({','.join('?' * len(anexos))})", [cur.lastrowid, *anexos])
             marcar_visto(con, de)
