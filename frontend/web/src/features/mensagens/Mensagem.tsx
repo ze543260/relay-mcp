@@ -31,6 +31,10 @@ interface Props {
   aoApagar?: (id: number) => void;
   /** Só nas minhas: salva o texto novo (true = deu certo). */
   aoEditar?: (id: number, texto: string) => Promise<boolean>;
+  /** Continuação de uma mensagem do mesmo autor: sem avatar nem nome (hora e ações no hover). */
+  seguida?: boolean;
+  /** Tocar na citação pula pra mensagem original. */
+  aoIrPara?: (id: number) => void;
   /** Apelido do autor, se houver (mostrado no lugar do nome, com o nome ao lado). */
   apelido?: string | null;
   /** Quem tem esta como última mensagem lida (avatares pequenos embaixo). */
@@ -60,7 +64,7 @@ function CartaoArtefato({ id, texto, ms }: { id: number; texto: string; ms: numb
 }
 
 export const Mensagem = memo(function Mensagem(props: Props) {
-  const { m, minha, mencionaMe, citada, podeApagar, aoResponder, aoApagar, estado, aoTentar, aoDescartar, vistoPor, vistaPorTodos, apelido, aoEditar } = props;
+  const { m, minha, mencionaMe, citada, podeApagar, aoResponder, aoApagar, estado, aoTentar, aoDescartar, vistoPor, vistaPorTodos, apelido, aoEditar, seguida, aoIrPara } = props;
   const ms = instanteDe(m);
   // A lista virtual remonta itens ao rolar: só anima o que acabou de chegar.
   const [recente] = useState(() => Date.now() - ms < RECENTE_MS);
@@ -93,20 +97,24 @@ export const Mensagem = memo(function Mensagem(props: Props) {
   }
 
   return (
-    <article className={cn("group/msg flex max-w-full gap-2 md:max-w-[760px] md:gap-3", minha && "ml-auto flex-row-reverse", recente && "motion-safe:animate-[entra_.3s_ease-out]")}>
-      {/* IA = círculo, humano = quadrado arredondado. */}
-      <Avatar aria-hidden className={cn("size-7 md:size-8", !ehIa(m.de) && "rounded-lg after:rounded-lg")}>
+    <article className={cn("group/msg flex max-w-full gap-2 md:max-w-[760px] md:gap-3", minha && "ml-auto flex-row-reverse", seguida && "-mt-2",
+      recente && "motion-safe:animate-[entra_var(--mov-padrao)_var(--mov-curva)]")}>
+      {/* IA = círculo, humano = quadrado arredondado. Seguida: espaço do avatar, sem avatar. */}
+      {seguida ? <span aria-hidden className="w-7 flex-none md:w-8" /> : <Avatar aria-hidden className={cn("size-7 md:size-8", !ehIa(m.de) && "rounded-lg after:rounded-lg")}>
         <AvatarFallback className={cn("text-[10.5px] font-semibold tracking-wide text-white md:text-[11.5px]", !ehIa(m.de) && "rounded-lg")}
           style={{ background: corDe(m.de) }}>
           {siglaDe(m.de)}
         </AvatarFallback>
-      </Avatar>
+      </Avatar>}
       <div className={cn("min-w-0 flex-1", minha && "flex flex-col items-end")}>
-        <div className={cn("flex items-center gap-2 text-xs text-muted-foreground", minha && "flex-row-reverse")}>
+        <div className={cn("flex items-center gap-2 text-xs text-muted-foreground", minha && "flex-row-reverse",
+          seguida && "h-4 opacity-0 transition-opacity duration-[var(--mov-rapido)] group-hover/msg:opacity-100 group-focus-within/msg:opacity-100")}>
+          {seguida ? <span className="sr-only">{apelido ?? m.de}</span> : <>
           <button type="button" onClick={() => abrirPerfil(m.de)} aria-label={textos.perfil.abrir(apelido ?? m.de)}
             className="rounded-sm text-[13px] font-semibold text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-ring">{apelido ?? m.de}</button>
           {apelido && <span className="font-mono text-[11px]">{m.de}</span>}
           {m.para && <span className="text-primary">→ {m.para}</span>}
+          </>}
           <time dateTime={new Date(ms).toISOString()} className="tabular-nums">{horaDe(ms)}</time>
           {m.editado && <span className="italic">({t.editada})</span>}
           {estado === "enviando" && <span>{t.enviando}</span>}
@@ -117,7 +125,7 @@ export const Mensagem = memo(function Mensagem(props: Props) {
               : <CheckIcon className="size-3.5" aria-label={t.entregue} />
           )}
           {confirmada && (acoes ? (
-            <Suspense fallback={<Button variant="ghost" size="icon-xs" className={GATILHO} disabled><EllipsisIcon /></Button>}>
+            <Suspense fallback={<Button variant="ghost" size="icon-xs" className={GATILHO} disabled aria-label={t.acoes}><EllipsisIcon /></Button>}>
               <AcoesMensagem m={m} podeApagar={Boolean(podeApagar)} classeGatilho={minha ? GATILHO.replace("ml-auto", "mr-auto") : GATILHO} aoResponder={aoResponder} aoApagar={aoApagar}
                 aoEditar={aoEditar && m.texto.trim() ? () => setEditando(m.texto) : undefined} />
             </Suspense>
@@ -153,7 +161,12 @@ export const Mensagem = memo(function Mensagem(props: Props) {
           )}>
             {(citada || m.reply_to) && (
               <blockquote className="mb-2 border-l-2 border-primary/50 pl-2 text-xs text-muted-foreground not-italic">
-                {citada ? <><b className="font-medium text-foreground">{citada.de}</b> {resumo(citada.texto)}</> : t.citacaoIndisponivel}
+                {m.reply_to && aoIrPara ? (
+                  <button type="button" onClick={() => aoIrPara(m.reply_to!)} aria-label={t.irParaOriginal(citada?.de ?? "")}
+                    className="w-full rounded-sm text-left hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring">
+                    {citada ? <><b className="font-medium text-foreground">{citada.de}</b> {resumo(citada.texto)}</> : t.citacaoIndisponivel}
+                  </button>
+                ) : citada ? <><b className="font-medium text-foreground">{citada.de}</b> {resumo(citada.texto)}</> : t.citacaoIndisponivel}
               </blockquote>
             )}
             <Suspense fallback={<p className="whitespace-pre-wrap">{m.texto}</p>}>
@@ -163,7 +176,7 @@ export const Mensagem = memo(function Mensagem(props: Props) {
         )}
         {m.anexos && m.anexos.length > 0 && <ListaAnexos anexos={m.anexos} />}
         {vistoPor && vistoPor.length > 0 && (
-          <div className="mt-1 flex items-center justify-end gap-0.5" aria-label={t.vistoPor(vistoPor.join(", "))} title={t.vistoPor(vistoPor.join(", "))}>
+          <div role="group" className="mt-1 flex items-center justify-end gap-0.5" aria-label={t.vistoPor(vistoPor.join(", "))} title={t.vistoPor(vistoPor.join(", "))}>
             {vistoPor.slice(0, 6).map((n) => (
               <span key={n} aria-hidden className={cn("grid size-4 place-items-center text-[7px] font-semibold text-white ring-2 ring-background", ehIa(n) ? "rounded-full" : "rounded-[3px]")}
                 style={{ background: corDe(n) }}>{siglaDe(n)}</span>

@@ -1,4 +1,4 @@
-/* Gerado por design/gerar.py a partir de design/tokens.json (Relay DS 1.0.0). Não edite à mão. */
+/* Gerado por design/gerar.py a partir de design/tokens.json (Relay DS 1.1.0). Não edite à mão. */
 
 :root {
   --fundo: #F6F6F4;
@@ -8,13 +8,14 @@
   --codigo: #F6F6F4;
   --borda: #E6E5E1;
   --borda-forte: #D6D5D0;
+  --borda-campo: #8A8882;
   --texto: #1D1C1A;
-  --suave: #6F6D68;
-  --acento: #C96442;
+  --suave: #6A6863;
+  --acento: #A64E2D;
   --acento-texto: #FFFFFF;
   --acento-fundo: #F5E6DF;
-  --ok: #2F8F5B;
-  --erro: #D0453A;
+  --ok: #27794C;
+  --erro: #C03B31;
   --raio-sm: 6px;
   --raio-md: 8px;
   --raio-lg: 10px;
@@ -29,14 +30,14 @@
   --espaco-5: 20px;
   --espaco-6: 24px;
   --espaco-8: 32px;
-  --agente-0: #C96442;
-  --agente-1: #3B7DD8;
-  --agente-2: #2F8F5B;
-  --agente-3: #8B5CF6;
-  --agente-4: #D4A017;
-  --agente-5: #D0453A;
-  --agente-6: #0E9AA7;
-  --agente-7: #B4529B;
+  --agente-0: #B4593B;
+  --agente-1: #3775CB;
+  --agente-2: #2B8353;
+  --agente-3: #8256E7;
+  --agente-4: #946F10;
+  --agente-5: #CB4338;
+  --agente-6: #0B818C;
+  --agente-7: #B05097;
   --alvo-toque: 44px;
   --mov-rapido: 150ms;
   --mov-padrao: 220ms;
@@ -61,10 +62,11 @@
     --codigo: #141413;
     --borda: #2C2B28;
     --borda-forte: #3A3935;
+    --borda-campo: #75736C;
     --texto: #ECEBE6;
     --suave: #93918A;
     --acento: #D97757;
-    --acento-texto: #FFFFFF;
+    --acento-texto: #1D1C1A;
     --acento-fundo: #33241E;
     --ok: #4FBF82;
     --erro: #E5675D;
@@ -79,10 +81,11 @@
   --codigo: #141413;
   --borda: #2C2B28;
   --borda-forte: #3A3935;
+  --borda-campo: #75736C;
   --texto: #ECEBE6;
   --suave: #93918A;
   --acento: #D97757;
-  --acento-texto: #FFFFFF;
+  --acento-texto: #1D1C1A;
   --acento-fundo: #33241E;
   --ok: #4FBF82;
   --erro: #E5675D;
@@ -97,12 +100,13 @@
   --codigo: #F6F6F4;
   --borda: #E6E5E1;
   --borda-forte: #D6D5D0;
+  --borda-campo: #8A8882;
   --texto: #1D1C1A;
-  --suave: #6F6D68;
-  --acento: #C96442;
+  --suave: #6A6863;
+  --acento: #A64E2D;
   --acento-texto: #FFFFFF;
   --acento-fundo: #F5E6DF;
-  --ok: #2F8F5B;
-  --erro: #D0453A;
+  --ok: #27794C;
+  --erro: #C03B31;
   color-scheme: light;
 }
