@@ -1,4 +1,4 @@
-import { CopyIcon, CornerUpLeftIcon, EllipsisIcon, PencilIcon, Trash2Icon } from "lucide-react";
+import { CopyIcon, CornerUpLeftIcon, EllipsisIcon, InfoIcon, PencilIcon, Trash2Icon } from "lucide-react";
 import { useState } from "react";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
@@ -19,10 +19,11 @@ interface Props {
   aoResponder?: (m: Mensagem) => void;
   aoApagar?: (id: number) => void;
   aoEditar?: () => void;
+  aoInfo?: () => void;
 }
 
 /** Carregado sob demanda no 1º clique em "⋯" (Menu + AlertDialog fora do bundle inicial). Já abre aberto. */
-export default function AcoesMensagem({ m, podeApagar, classeGatilho, aoResponder, aoApagar, aoEditar }: Props) {
+export default function AcoesMensagem({ m, podeApagar, classeGatilho, aoResponder, aoApagar, aoEditar, aoInfo }: Props) {
   const [confirmando, setConfirmando] = useState(false);
 
   async function copiar() {
@@ -44,6 +45,7 @@ export default function AcoesMensagem({ m, podeApagar, classeGatilho, aoResponde
           <DropdownMenuItem onClick={() => aoResponder?.(m)}><CornerUpLeftIcon /> {t.responder}</DropdownMenuItem>
           <DropdownMenuItem onClick={() => void copiar()}><CopyIcon /> {t.copiar}</DropdownMenuItem>
           {aoEditar && <DropdownMenuItem onClick={aoEditar}><PencilIcon /> {t.editar}</DropdownMenuItem>}
+          {aoInfo && <DropdownMenuItem onClick={aoInfo}><InfoIcon /> {t.infoTitulo}</DropdownMenuItem>}
           {podeApagar && (
             <>
               <DropdownMenuSeparator />
