@@ -277,6 +277,8 @@ class RelayViewModel(app: Application) : AndroidViewModel(app) {
 
     suspend fun buscar(q: String, sala: String?): dev.josev.relay.dados.PaginaHistorico = api!!.buscar(q, sala)
 
+    suspend fun foto(nome: String, versao: Int): ByteArray? = runCatching { api?.foto(nome, versao) }.getOrNull()
+
     suspend fun rascunho(sala: String) = config.rascunho(sala)
     fun salvarRascunho(sala: String, texto: String) = viewModelScope.launch { config.salvarRascunho(sala, texto) }
 
