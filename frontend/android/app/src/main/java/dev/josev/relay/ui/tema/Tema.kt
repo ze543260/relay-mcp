@@ -24,7 +24,7 @@ private val Claro = with(Tokens.Claro) {
         background = fundo, onBackground = texto, surface = fundo, onSurface = texto,
         surfaceContainerLowest = painel, surfaceContainerLow = painel, surfaceContainer = painel,
         surfaceContainerHigh = superficie, surfaceVariant = superficie, onSurfaceVariant = suave,
-        outline = bordaForte, outlineVariant = borda, error = erro,
+        outline = bordaCampo, outlineVariant = borda, error = erro,
     )
 }
 
@@ -36,7 +36,7 @@ private val Escuro = with(Tokens.Escuro) {
         background = fundo, onBackground = texto, surface = fundo, onSurface = texto,
         surfaceContainerLowest = fundo, surfaceContainerLow = painel, surfaceContainer = painel,
         surfaceContainerHigh = superficie, surfaceVariant = superficie, onSurfaceVariant = suave,
-        outline = bordaForte, outlineVariant = borda, error = erro,
+        outline = bordaCampo, outlineVariant = borda, error = erro,
     )
 }
 
@@ -59,6 +59,9 @@ private val Tipografia = with(Tokens.Tipo) {
 }
 
 val Mono = FontFamily.Monospace
+
+/** Troca claro/escuro com revelação em círculo a partir de um ponto da tela (centro do botão). */
+val LocalTrocaTema = staticCompositionLocalOf<(androidx.compose.ui.geometry.Offset) -> Unit> { {} }
 
 @Composable
 fun TemaRelay(escuro: Boolean = isSystemInDarkTheme(), conteudo: @Composable () -> Unit) {

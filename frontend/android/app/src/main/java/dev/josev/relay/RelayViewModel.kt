@@ -32,6 +32,9 @@ import java.util.UUID
 
 data class Anexando(val chave: String, val nome: String, val tamanho: Long, val ehImagem: Boolean, val anexo: dev.josev.relay.dados.Anexo? = null, val erro: String? = null)
 
+/** Aviso no topo quando chega mensagem de outra sala com o app aberto (agrupa por sala). */
+data class Toast(val id: Long, val sala: String, val de: String, val texto: String, val mencao: Boolean, val quantas: Int = 1)
+
 enum class StatusConexao { CARREGANDO, AO_VIVO, RECONECTANDO, PAUSADO }
 
 data class Estado(
@@ -64,6 +67,11 @@ data class Estado(
     val tarefa: Long? = null,
     /** Sobe a cada evento "tarefa" do SSE: quadro e tela da tarefa recarregam. */
     val versaoTarefas: Int = 0,
+    val toast: Toast? = null,
+    /** Mensagem pra qual a conversa deve rolar e destacar (citação, busca); a tela zera ao chegar. */
+    val irPara: Long? = null,
+    /** Buscando páginas antigas atrás do alvo de "ir para": a tela não rola pro fim nesse meio-tempo. */
+    val temIrPendente: Boolean = false,
 )
 
 class RelayViewModel(app: Application) : AndroidViewModel(app) {
@@ -74,13 +82,18 @@ class RelayViewModel(app: Application) : AndroidViewModel(app) {
     private var api: RelayApi? = null
     private var stream: Job? = null
     private var periodico: Job? = null
+    /** Com o app aberto: ouve todas as salas só pra avisos e selos (o serviço cala quando a tela está à vista). */
+    private var geral: Job? = null
+    private var ultimoGeral = 0L
+    /** Depois de abrir uma sala vinda da busca: rola até esta mensagem quando o histórico chegar. */
+    private var irDepoisDeAbrir: Long? = null
     private val ultimoId get() = _estado.value.mensagens.lastOrNull()?.id ?: 0L
 
     // App em segundo plano: fecha o stream (bateria); de volta: reabre do último id.
     private val ciclo = object : DefaultLifecycleObserver {
-        override fun onStart(owner: LifecycleOwner) { if (api != null) abrirStream() }
+        override fun onStart(owner: LifecycleOwner) { if (api != null) { abrirStream(); abrirGeral() } }
         override fun onStop(owner: LifecycleOwner) {
-            stream?.cancel()
+            stream?.cancel(); geral?.cancel()
             _estado.update { it.copy(status = StatusConexao.PAUSADO) }
         }
     }
@@ -126,6 +139,7 @@ class RelayViewModel(app: Application) : AndroidViewModel(app) {
             it.copy(verificando = false, conexao = c, admin = isAdmin, sala = config.sala(), vistas = config.vistas(), aviso = null)
         }
         abrirSala(_estado.value.sala)
+        abrirGeral()
         periodico?.cancel()
         periodico = viewModelScope.launch {
             while (isActive) { atualizarListas(); delay(30_000) }
@@ -136,7 +150,7 @@ class RelayViewModel(app: Application) : AndroidViewModel(app) {
     fun sair() {
         dev.josev.relay.notificacoes.Notificacoes.cancelarAgenda(getApplication())
         dev.josev.relay.notificacoes.ServicoTempoReal.parar(getApplication())
-        stream?.cancel(); periodico?.cancel(); api = null
+        stream?.cancel(); periodico?.cancel(); geral?.cancel(); api = null
         viewModelScope.launch { config.sair() }
         _estado.value = Estado(verificando = false)
     }
@@ -154,11 +168,12 @@ class RelayViewModel(app: Application) : AndroidViewModel(app) {
 
     fun abrirSala(sala: String) {
         val a = api ?: return
+        if (_estado.value.toast?.sala == sala) fecharToast()
         dev.josev.relay.notificacoes.Notificacoes.limpar(getApplication(), sala)
         stream?.cancel()
         viewModelScope.launch { config.salvarSala(sala) }
         _estado.update {
-            it.copy(sala = sala, mensagens = emptyList(), pendentes = emptyList(), carregando = true, digitando = emptyList(), leituras = emptyMap(),
+            it.copy(sala = sala, irPara = null, mensagens = emptyList(), pendentes = emptyList(), carregando = true, digitando = emptyList(), leituras = emptyMap(),
                 status = StatusConexao.CARREGANDO, respondendo = null, marcoLeitura = it.vistas[sala] ?: 0L)
         }
         viewModelScope.launch {
@@ -167,7 +182,11 @@ class RelayViewModel(app: Application) : AndroidViewModel(app) {
             while (isActive) {
                 try {
                     val p = a.historico(sala)
-                    _estado.update { it.copy(mensagens = p.mensagens, temMais = p.temMais, carregando = false) }
+                    // Vindo da busca: o alvo sai junto com o histórico, pra tela não abrir no divisor por cima dele.
+                    val alvo = irDepoisDeAbrir.also { irDepoisDeAbrir = null }
+                    val carregado = alvo != null && p.mensagens.any { it.id == alvo }
+                    _estado.update { it.copy(mensagens = p.mensagens, temMais = p.temMais, carregando = false, irPara = if (carregado) alvo else it.irPara) }
+                    if (alvo != null && !carregado) irParaMensagem(alvo)
                     break
                 } catch (e: Exception) {
                     if (e is kotlinx.coroutines.CancellationException) throw e
@@ -201,6 +220,63 @@ class RelayViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
     }
+
+    private fun abrirGeral() {
+        val a = api ?: return
+        if (geral?.isActive == true) return
+        geral = viewModelScope.launch {
+            a.tempoReal("*") { ultimoGeral }.collect { e ->
+                if (e !is Evento.Nova) return@collect
+                ultimoGeral = maxOf(ultimoGeral, e.m.id)
+                val m = e.m
+                val s = _estado.value
+                val eu = s.conexao?.nome ?: return@collect
+                if (m.sala == null || m.sala == s.sala || m.de == eu || m.de == "relay") return@collect
+                val mencao = m.para == eu || Regex("@${Regex.escape(eu)}\\b", RegexOption.IGNORE_CASE).containsMatchIn(m.texto)
+                _estado.update { st ->
+                    val antes = st.toast?.takeIf { it.sala == m.sala }
+                    st.copy(toast = Toast(m.id, m.sala, m.de, m.texto, mencao || antes?.mencao == true, (antes?.quantas ?: 0) + 1))
+                }
+                atualizarListas()  // selos da gaveta
+            }
+        }
+    }
+
+    fun fecharToast() = _estado.update { it.copy(toast = null) }
+
+    /** Rola até a mensagem (carrega as anteriores se precisar). Fora do histórico da sala: avisa. */
+    fun irParaMensagem(id: Long) {
+        val s = _estado.value
+        if (s.mensagens.any { it.id == id }) return _estado.update { it.copy(irPara = id) }
+        val a = api ?: return
+        _estado.update { it.copy(temIrPendente = true) }
+        viewModelScope.launch {
+            var paginas = 0
+            while (paginas++ < 20) {
+                val st = _estado.value
+                val menor = st.mensagens.firstOrNull()?.id ?: break
+                if (menor <= id || !st.temMais) break
+                val p = runCatching { a.historico(st.sala, antes = menor, limite = 100) }.getOrNull() ?: break
+                _estado.update { it.copy(mensagens = p.mensagens.filter { m -> m.id < menor } + it.mensagens, temMais = p.temMais) }
+                if (p.mensagens.any { it.id == id }) break
+            }
+            _estado.update { it.copy(temIrPendente = false, irPara = id.takeIf { _ -> it.mensagens.any { m -> m.id == id } }, aviso = if (it.mensagens.any { m -> m.id == id }) it.aviso else "Mensagem não encontrada (talvez apagada).") }
+        }
+    }
+
+    fun chegouEm() = _estado.update { it.copy(irPara = null) }
+
+    /** Resultado de busca ou toast: abre a sala (se outra) e rola até a mensagem. */
+    fun abrirMensagem(sala: String, id: Long?) {
+        if (sala == _estado.value.sala) { id?.let(::irParaMensagem); return }
+        irDepoisDeAbrir = id
+        abrirSala(sala)
+    }
+
+    suspend fun buscar(q: String, sala: String?): dev.josev.relay.dados.PaginaHistorico = api!!.buscar(q, sala)
+
+    suspend fun rascunho(sala: String) = config.rascunho(sala)
+    fun salvarRascunho(sala: String, texto: String) = viewModelScope.launch { config.salvarRascunho(sala, texto) }
 
     private fun atualizarLeituras() {
         val a = api ?: return

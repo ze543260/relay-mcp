@@ -55,6 +55,13 @@ class Config(private val contexto: Context) {
     }
 
     /** Último id já notificado por sala (separado de "vista": notificar não é ler). */
+    /** Rascunho do composer por sala: cada aparelho guarda o seu. */
+    private fun kRascunho(sala: String) = stringPreferencesKey("rascunho:$sala")
+    suspend fun rascunho(sala: String): String = contexto.dados.data.first()[kRascunho(sala)].orEmpty()
+    suspend fun salvarRascunho(sala: String, texto: String) = contexto.dados.edit {
+        if (texto.isBlank()) it.remove(kRascunho(sala)) else it[kRascunho(sala)] = texto
+    }
+
     private fun kNotificado(sala: String) = longPreferencesKey("notificado:$sala")
     suspend fun notificado(sala: String): Long = contexto.dados.data.first()[kNotificado(sala)] ?: 0L
     suspend fun marcarNotificado(sala: String, id: Long) = contexto.dados.edit { it[kNotificado(sala)] = id }

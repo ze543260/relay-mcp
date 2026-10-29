@@ -15,6 +15,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.drawscope.clipPath
+import androidx.compose.ui.graphics.layer.drawLayer
+import androidx.compose.runtime.setValue
+import kotlinx.coroutines.launch
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.josev.relay.atualizacao.AvisoAtualizacao
 import dev.josev.relay.ui.conversa.TelaPrincipal
@@ -36,7 +41,40 @@ class MainActivity : ComponentActivity() {
                 else androidx.activity.SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT)
                 enableEdgeToEdge(statusBarStyle = estilo, navigationBarStyle = estilo)
             }
-            TemaRelay(escuro = escuro) { Raiz(vm) }
+            // Revelação do tema: foto da tela no tema antigo por cima, recortada por um círculo que cresce do botão.
+            val camada = androidx.compose.ui.graphics.rememberGraphicsLayer()
+            var antigo by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null) }
+            var origem by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
+            val raio = androidx.compose.runtime.remember { androidx.compose.animation.core.Animatable(0f) }
+            val escopo = androidx.compose.runtime.rememberCoroutineScope()
+            val anda = dev.josev.relay.ui.conversa.movimentoLigado()
+            val trocar: (androidx.compose.ui.geometry.Offset) -> Unit = { ponto ->
+                escopo.launch {
+                    if (antigo != null) return@launch
+                    if (anda) runCatching { antigo = camada.toImageBitmap(); origem = ponto; raio.snapTo(0f) }.onFailure { android.util.Log.w("RelayTema", "sem foto do tema", it) }
+                    vm.alternarTema(escuro).join()
+                    androidx.compose.runtime.withFrameNanos { }; androidx.compose.runtime.withFrameNanos { }  // tema novo já desenhado
+                    if (antigo != null) raio.animateTo(1f, androidx.compose.animation.core.tween(450, easing = androidx.compose.animation.core.CubicBezierEasing(0.2f, 0f, 0f, 1f)))
+                    antigo = null
+                }
+            }
+            Box(Modifier.fillMaxSize().drawWithContent {
+                camada.record { this@drawWithContent.drawContent() }
+                drawLayer(camada)
+                antigo?.let { foto ->
+                    val r = raio.value * kotlin.math.hypot(maxOf(origem.x, size.width - origem.x), maxOf(origem.y, size.height - origem.y))
+                    val fora = androidx.compose.ui.graphics.Path().apply {
+                        addRect(androidx.compose.ui.geometry.Rect(androidx.compose.ui.geometry.Offset.Zero, size))
+                        addOval(androidx.compose.ui.geometry.Rect(origem, r))
+                        fillType = androidx.compose.ui.graphics.PathFillType.EvenOdd
+                    }
+                    clipPath(fora) { drawImage(foto) }
+                }
+            }) {
+                TemaRelay(escuro = escuro) {
+                    androidx.compose.runtime.CompositionLocalProvider(dev.josev.relay.ui.tema.LocalTrocaTema provides trocar) { Raiz(vm) }
+                }
+            }
         }
         abrirDaNotificacao(intent)
         if (android.os.Build.VERSION.SDK_INT >= 33 &&

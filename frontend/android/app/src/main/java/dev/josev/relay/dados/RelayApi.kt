@@ -90,6 +90,10 @@ class RelayApi(private val conexao: Conexao) {
     suspend fun historico(sala: String, antes: Long? = null, limite: Int = 50): PaginaHistorico =
         json.decodeFromString(executar(pedido(url("mensagens/historico", "sala" to sala, "antes" to antes, "limite" to limite, "eu" to conexao.nome, "todas" to 1)).build()))
 
+    /** Busca nas mensagens visíveis (mais recente primeiro); sem `sala`, em todas. Cada uma traz a `sala`. */
+    suspend fun buscar(q: String, sala: String?, limite: Int = 30): PaginaHistorico =
+        json.decodeFromString(executar(pedido(url("mensagens/busca", "q" to q, "sala" to sala, "limite" to limite, "eu" to conexao.nome)).build()))
+
     suspend fun enviar(m: NovaMensagem): Long {
         val corpo = json.encodeToString(NovaMensagem.serializer(), m).toRequestBody(tipoJson)
         return json.decodeFromString<IdCriado>(executar(pedido(url("mensagens")).post(corpo).build())).id

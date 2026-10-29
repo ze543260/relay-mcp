@@ -88,6 +88,17 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.animation.togetherWith
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.material.icons.outlined.Search
 import dev.josev.relay.Estado
 import dev.josev.relay.RelayViewModel
 import dev.josev.relay.StatusConexao
@@ -98,9 +109,25 @@ import kotlinx.coroutines.launch
 
 private sealed interface Item {
     val chave: Any
-    data class Msg(val m: Mensagem) : Item { override val chave: Any = m.id }
+    data class Msg(val m: Mensagem, val seguida: Boolean = false) : Item { override val chave: Any = m.id }
+    data class Data(val dia: String, val rotulo: String) : Item { override val chave: Any = "d-$dia" }
     data class Pend(val p: dev.josev.relay.dados.Pendente) : Item { override val chave: Any = "p-${p.clientId}" }
     data object Divisor : Item { override val chave: Any = "divisor" }
+}
+
+private val fmtChaveDia = java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.ROOT)
+private val fmtDiaLongo = java.text.SimpleDateFormat("EEEE, d 'de' MMMM", java.util.Locale("pt", "BR"))
+private const val AGRUPA_MS = 5 * 60_000L
+
+/** "Hoje", "Ontem" ou "quarta, 22 de outubro". */
+private fun rotuloDia(ms: Long): String {
+    val hoje = fmtChaveDia.format(java.util.Date())
+    val ontem = fmtChaveDia.format(java.util.Date(System.currentTimeMillis() - 86_400_000L))
+    return when (fmtChaveDia.format(java.util.Date(ms))) {
+        hoje -> "Hoje"
+        ontem -> "Ontem"
+        else -> fmtDiaLongo.format(java.util.Date(ms)).replaceFirstChar { it.uppercase() }
+    }
 }
 
 private fun textoStatus(e: Estado) = when (e.status) {
@@ -132,13 +159,58 @@ private fun TelaPrincipalConteudo(vm: RelayViewModel, estado: Estado) {
         Gaveta(estado, aoEscolher = { vm.abrirSala(it); escopo.launch { gaveta.close() } }, aoSair = vm::sair,
             tempoReal = tempoReal, aoTempoReal = vm::alternarTempoReal)
     }
-    if (largo) {
-        PermanentNavigationDrawer(drawerContent = { PermanentDrawerSheet(Modifier.width(300.dp)) { conteudoGaveta() } }) {
-            Conversa(vm, estado, aoMenu = null, aba = aba, aoAba = { aba = it })
+    Box(Modifier.fillMaxSize()) {
+        if (largo) {
+            PermanentNavigationDrawer(drawerContent = { PermanentDrawerSheet(Modifier.width(300.dp)) { conteudoGaveta() } }) {
+                Conversa(vm, estado, aoMenu = null, aba = aba, aoAba = { aba = it })
+            }
+        } else {
+            ModalNavigationDrawer(drawerState = gaveta, drawerContent = { ModalDrawerSheet(Modifier.width(310.dp)) { conteudoGaveta() } }) {
+                Conversa(vm, estado, aoMenu = { escopo.launch { gaveta.open() } }, aba = aba, aoAba = { aba = it })
+            }
         }
-    } else {
-        ModalNavigationDrawer(drawerState = gaveta, drawerContent = { ModalDrawerSheet(Modifier.width(310.dp)) { conteudoGaveta() } }) {
-            Conversa(vm, estado, aoMenu = { escopo.launch { gaveta.open() } }, aba = aba, aoAba = { aba = it })
+        ToastSala(estado.toast, Modifier.align(Alignment.TopCenter), aoFechar = vm::fecharToast) { t ->
+            vm.fecharToast(); aba = Aba.CONVERSA; vm.abrirMensagem(t.sala, t.id)
+        }
+    }
+}
+
+/** Mensagem de outra sala com o app aberto: desce do topo, some em 5 s; tocar abre a sala na mensagem. */
+@Composable
+private fun ToastSala(toast: dev.josev.relay.Toast?, modifier: Modifier, aoFechar: () -> Unit, aoAbrir: (dev.josev.relay.Toast) -> Unit) {
+    var ultimo by remember { mutableStateOf(toast) }
+    if (toast != null) ultimo = toast
+    LaunchedEffect(toast?.id) { if (toast != null) { kotlinx.coroutines.delay(5_000); aoFechar() } }
+    val cores = MaterialTheme.colorScheme
+    AnimatedVisibility(
+        toast != null, modifier.statusBarsPadding().padding(horizontal = 12.dp, vertical = 8.dp),
+        enter = androidx.compose.animation.slideInVertically(androidx.compose.animation.core.tween(dev.josev.relay.ui.tema.Tokens.movEntrada)) { -it } + fadeIn(),
+        exit = androidx.compose.animation.slideOutVertically(androidx.compose.animation.core.tween(dev.josev.relay.ui.tema.Tokens.movPadrao)) { -it } + fadeOut(),
+    ) {
+        val t = ultimo ?: return@AnimatedVisibility
+        androidx.compose.material3.Surface(
+            onClick = { aoAbrir(t) },
+            modifier = Modifier.widthIn(max = 520.dp).fillMaxWidth()
+                .semantics { liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite },
+            shape = RoundedCornerShape(dev.josev.relay.ui.tema.Tokens.Raio.xl), tonalElevation = 3.dp, shadowElevation = 8.dp,
+            color = cores.surfaceContainerHigh,
+            border = androidx.compose.foundation.BorderStroke(1.dp, if (t.mencao) cores.primary else cores.outlineVariant),
+        ) {
+            Row(Modifier.padding(start = 12.dp, top = 10.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Avatar(t.de, 32.dp)
+                Column(Modifier.weight(1f).padding(start = 10.dp)) {
+                    Text(
+                        buildString {
+                            append(t.de); append(" em #"); append(t.sala)
+                            if (t.quantas > 1) append(" · ${t.quantas} novas")
+                        },
+                        style = MaterialTheme.typography.labelSmall, color = if (t.mencao) cores.primary else cores.onSurfaceVariant,
+                        fontWeight = if (t.mencao) FontWeight.Bold else FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(dev.josev.relay.ui.comum.resumo(t.texto, 140), style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                }
+                IconButton(aoFechar) { Icon(Icons.Filled.Close, "Dispensar aviso") }
+            }
         }
     }
 }
@@ -168,7 +240,10 @@ private fun Gaveta(estado: Estado, aoEscolher: (String) -> Unit, aoSair: () -> U
         }
         LazyColumn(Modifier.weight(1f).padding(horizontal = 12.dp)) {
             items(salas, key = { it.sala }) { s ->
-                val naoLida = s.sala != estado.sala && (s.ultimoId ?: 0) > (estado.vistas[s.sala] ?: 0)
+                val ativa = s.sala == estado.sala
+                // Servidor novo conta por pessoa; o antigo só deixa saber "tem não lida".
+                val naoLidas = if (ativa) 0 else s.naoLidas ?: if ((s.ultimoId ?: 0) > (estado.vistas[s.sala] ?: 0)) -1 else 0
+                val mencoes = if (ativa) 0 else s.mencoes ?: 0
                 NavigationDrawerItem(
                     label = {
                         Column {
@@ -179,7 +254,7 @@ private fun Gaveta(estado: Estado, aoEscolher: (String) -> Unit, aoSair: () -> U
                         }
                     },
                     icon = { Icon(Icons.Filled.Tag, null) },
-                    badge = { if (naoLida) Badge(containerColor = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary) { Text("${s.total}") } else Text("${s.total}", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) },
+                    badge = { SeloSala(naoLidas, mencoes) },
                     selected = s.sala == estado.sala,
                     onClick = { aoEscolher(s.sala) },
                     colors = NavigationDrawerItemDefaults.colors(selectedContainerColor = MaterialTheme.colorScheme.primaryContainer),
@@ -212,6 +287,27 @@ private fun Gaveta(estado: Estado, aoEscolher: (String) -> Unit, aoSair: () -> U
     if (criando) NovaSala(aoFechar = { criando = false }, aoEntrar = { criando = false; aoEscolher(it) })
 }
 
+/** `@N` (menções, em destaque) ou o número de não lidas; "pop" quando muda. -1 = há não lidas sem contagem. */
+@Composable
+private fun SeloSala(naoLidas: Int, mencoes: Int) {
+    val texto = when { mencoes > 0 -> "@$mencoes"; naoLidas > 99 -> "99+"; naoLidas > 0 -> "$naoLidas"; naoLidas < 0 -> "•"; else -> null } ?: return
+    val descricao = listOfNotNull(
+        if (naoLidas > 0) "$naoLidas não ${if (naoLidas == 1) "lida" else "lidas"}" else if (naoLidas < 0) "há não lidas" else null,
+        if (mencoes > 0) "$mencoes ${if (mencoes == 1) "menção" else "menções"} a você" else null,
+    ).joinToString(", ")
+    androidx.compose.animation.AnimatedContent(texto, label = "selo", transitionSpec = {
+        androidx.compose.animation.scaleIn(androidx.compose.animation.core.spring(dampingRatio = 0.45f, stiffness = 900f), initialScale = 0.7f)
+            .togetherWith(androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(60)))
+    }) { t ->
+        val forte = mencoes > 0
+        Badge(
+            containerColor = if (forte) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerHigh,
+            contentColor = if (forte) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.semantics { contentDescription = descricao },
+        ) { Text(t, fontWeight = if (forte) FontWeight.Bold else FontWeight.Medium) }
+    }
+}
+
 @Composable
 private fun NovaSala(aoFechar: () -> Unit, aoEntrar: (String) -> Unit) {
     var nome by remember { mutableStateOf("") }
@@ -236,12 +332,26 @@ private fun Conversa(vm: RelayViewModel, estado: Estado, aoMenu: (() -> Unit)?, 
     val snack = remember { SnackbarHostState() }
     val escopo = rememberCoroutineScope()
     var acoesDe by remember { mutableStateOf<Mensagem?>(null) }
+    var destaque by remember { mutableStateOf<Long?>(null) }
+    var buscando by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
 
     // reverseLayout: índice 0 = mais nova, embaixo. O divisor fica antes da 1ª nova de outra pessoa.
     val itens = remember(estado.mensagens, estado.pendentes, estado.marcoLeitura) {
         val lista = mutableListOf<Item>()
         val idxNova = if (estado.marcoLeitura > 0) estado.mensagens.indexOfFirst { it.id > estado.marcoLeitura && it.de != eu } else -1
-        estado.mensagens.forEachIndexed { i, m -> if (i == idxNova) lista += Item.Divisor; lista += Item.Msg(m) }
+        var anterior: Mensagem? = null
+        estado.mensagens.forEachIndexed { i, m ->
+            val ms = (m.criado * 1000).toLong()
+            val dia = fmtChaveDia.format(java.util.Date(ms))
+            val novoDia = anterior?.let { fmtChaveDia.format(java.util.Date((it.criado * 1000).toLong())) } != dia
+            if (novoDia) lista += Item.Data(dia, rotuloDia(ms))
+            if (i == idxNova) lista += Item.Divisor
+            // Agrupa a mesma pessoa em até 5 min, no mesmo dia, sem divisor no meio (o relay nunca agrupa).
+            val seguida = !novoDia && i != idxNova && anterior?.de == m.de && m.de != "relay" && m.para == anterior?.para &&
+                ms - ((anterior?.criado ?: 0.0) * 1000).toLong() < AGRUPA_MS
+            lista += Item.Msg(m, seguida)
+            anterior = m
+        }
         estado.pendentes.forEach { lista += Item.Pend(it) }
         lista.asReversed()
     }
@@ -256,18 +366,33 @@ private fun Conversa(vm: RelayViewModel, estado: Estado, aoMenu: (() -> Unit)?, 
     val noFim by remember { derivedStateOf { lista.firstVisibleItemIndex <= 1 } }
     val novasAbaixo = if (noFim) 0 else estado.mensagens.count { it.id > (estado.vistas[estado.sala] ?: 0) && it.de != eu }
 
+    // "Ir para" (citação, busca, toast): rola até a mensagem, centraliza e destaca.
+    LaunchedEffect(estado.irPara, itens) {
+        val alvo = estado.irPara ?: return@LaunchedEffect
+        val idx = itens.indexOfFirst { it is Item.Msg && it.m.id == alvo }
+        if (idx < 0) return@LaunchedEffect
+        val meio = -(lista.layoutInfo.viewportSize.height / 3)
+        lista.animateScrollToItem(idx, meio)
+        destaque = alvo
+        vm.chegouEm()
+        kotlinx.coroutines.delay(1500)
+        if (destaque == alvo) destaque = null
+    }
     LaunchedEffect(estado.aviso) {
         estado.aviso?.let { snack.showSnackbar(it); vm.avisoMostrado() }
     }
     // Abre no divisor de não lidas; se não houver, no fim.
     LaunchedEffect(estado.sala, estado.carregando) {
-        if (!estado.carregando) {
+        if (!estado.carregando && estado.irPara == null && !estado.temIrPendente) {
             val d = itens.indexOfFirst { it is Item.Divisor }
             lista.scrollToItem(if (d >= 0) d else 0)
         }
     }
     // Chegou mensagem e eu estava no fim: continua no fim (e conta como lida).
-    LaunchedEffect(itens.size) { if (noFim) { lista.animateScrollToItem(0); vm.marcarLida() } }
+    LaunchedEffect(itens.size) {
+        // Páginas antigas chegando atrás de um "ir para" não contam como mensagem nova.
+        if (noFim && estado.irPara == null && !estado.temIrPendente && destaque == null) { lista.animateScrollToItem(0); vm.marcarLida() }
+    }
     LaunchedEffect(lista) {
         snapshotFlow { lista.firstVisibleItemIndex }.collect { primeiro ->
             if (primeiro <= 1) vm.marcarLida()
@@ -288,6 +413,7 @@ private fun Conversa(vm: RelayViewModel, estado: Estado, aoMenu: (() -> Unit)?, 
                 navigationIcon = { if (aoMenu != null) IconButton(aoMenu) { Icon(Icons.Filled.Menu, "Abrir salas") } },
                 actions = {
                     Participantes(estado, vm::abrirPerfil)
+                    IconButton({ buscando = true }) { Icon(Icons.Outlined.Search, "Buscar mensagens") }
                     BotaoTema(vm)
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
@@ -298,8 +424,14 @@ private fun Conversa(vm: RelayViewModel, estado: Estado, aoMenu: (() -> Unit)?, 
         bottomBar = { if (!WindowInsets.isImeVisible) BarraInferior(aba, aoAba) },
         contentWindowInsets = WindowInsets(0),
     ) { pad ->
-        if (aba == Aba.QUADRO) { dev.josev.relay.ui.quadro.Quadro(vm, estado.sala, estado.versaoTarefas, Modifier.padding(pad)); return@Scaffold }
-        if (aba != Aba.CONVERSA) { EmBreve(aba, Modifier.padding(pad)); return@Scaffold }
+        // Troca de aba: o conteúdo entra com fade + 4 dp (e sai rápido).
+        androidx.compose.animation.AnimatedContent(aba, label = "aba", transitionSpec = {
+            (androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(dev.josev.relay.ui.tema.Tokens.movPadrao)) +
+                androidx.compose.animation.slideInVertically(androidx.compose.animation.core.tween(dev.josev.relay.ui.tema.Tokens.movPadrao)) { it / 100 })
+                .togetherWith(androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(90)))
+        }) { abaAtual ->
+        if (abaAtual == Aba.QUADRO) { dev.josev.relay.ui.quadro.Quadro(vm, estado.sala, estado.versaoTarefas, Modifier.padding(pad)); return@AnimatedContent }
+        if (abaAtual != Aba.CONVERSA) { EmBreve(abaAtual, Modifier.padding(pad)); return@AnimatedContent }
         Column(Modifier.fillMaxSize().padding(pad).consumeWindowInsets(pad).imePadding()) {
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             Box(Modifier.weight(1f)) {
@@ -308,13 +440,13 @@ private fun Conversa(vm: RelayViewModel, estado: Estado, aoMenu: (() -> Unit)?, 
                 else LazyColumn(
                     state = lista, reverseLayout = true, modifier = Modifier.fillMaxSize(),
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 12.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     items(itens, key = { it.chave }, contentType = { it::class }) { it ->
                         when (it) {
                             is Item.Msg -> Bolha(
                                 m = it.m, minha = it.m.de == eu, eu = eu, citada = it.m.replyTo?.let(porId::get),
-                                aoSegurar = { acoesDe = it.m }, modifier = Modifier.animateItem(),
+                                aoSegurar = { acoesDe = it.m }, modifier = Modifier.animateItem().padding(top = if (it.seguida) 3.dp else 12.dp),
+                                seguida = it.seguida, destacada = destaque == it.m.id, aoIrParaCitada = vm::irParaMensagem,
                                 apelido = estado.agentes.firstOrNull { a -> a.nome == it.m.de }?.apelido,
                                 vistoPor = vistoEm[it.m.id].orEmpty(), vistaPorTodos = if (it.m.de == eu) vistaPorTodos(it.m.id) else null,
                                 aoAbrirPerfil = { vm.abrirPerfil(it.m.de) },
@@ -323,9 +455,10 @@ private fun Conversa(vm: RelayViewModel, estado: Estado, aoMenu: (() -> Unit)?, 
                                 m = Mensagem(-1, it.p.de, texto = it.p.texto, criado = it.p.criadoMs / 1000.0, replyTo = it.p.replyTo, anexos = it.p.anexos),
                                 minha = true, eu = eu, citada = it.p.replyTo?.let(porId::get),
                                 pendente = it.p, aoTentar = { vm.retentar(it.p.clientId) }, aoDescartar = { vm.descartar(it.p.clientId) },
-                                modifier = Modifier.animateItem(),
+                                modifier = Modifier.animateItem().padding(top = 12.dp),
                             )
-                            Item.Divisor -> Divisor()
+                            Item.Divisor -> Divisor(Modifier.animateItem().padding(top = 12.dp))
+                            is Item.Data -> SeparadorDia(it.rotulo, Modifier.padding(top = 16.dp))
                         }
                     }
                     item(key = "topo") {
@@ -346,8 +479,17 @@ private fun Conversa(vm: RelayViewModel, estado: Estado, aoMenu: (() -> Unit)?, 
             }
             Digitando(estado.digitando)
             Composer(estado.sala, eu, estado.respondendo, candidatos, aoCancelarResposta = { vm.responder(null) }, aoEnviar = vm::enviar,
-                anexando = estado.anexando, aoAnexar = vm::anexar, aoRemoverAnexo = vm::removerAnexo, aoDigitar = vm::digitando)
+                anexando = estado.anexando, aoAnexar = vm::anexar, aoRemoverAnexo = vm::removerAnexo, aoDigitar = vm::digitando,
+                carregarRascunho = { vm.rascunho(estado.sala) }, salvarRascunho = { vm.salvarRascunho(estado.sala, it) })
         }
+        }
+    }
+
+    if (buscando) {
+        androidx.activity.compose.BackHandler { buscando = false }
+        TelaBusca(vm, estado.sala, aoFechar = { buscando = false }, aoEscolher = { sala, id ->
+            buscando = false; aoAba(Aba.CONVERSA); vm.abrirMensagem(sala, id)
+        })
     }
 
     acoesDe?.let { m ->
@@ -380,8 +522,28 @@ private fun Digitando(nomes: List<String>) {
         else -> "${nomes.size} pessoas estão digitando…"
     }
     androidx.compose.animation.AnimatedVisibility(texto.isNotEmpty()) {
-        Text(texto, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp))
+        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Pontos()
+            Text(texto, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 8.dp))
+        }
+    }
+}
+
+/** Três pontos pulando em sequência (1,2 s); parados se as animações do sistema estão desligadas. */
+@Composable
+private fun Pontos() {
+    val cor = MaterialTheme.colorScheme.onSurfaceVariant
+    val anda = movimentoLigado()
+    val t = androidx.compose.animation.core.rememberInfiniteTransition(label = "pontos")
+    val fase by t.animateFloat(0f, 1f, androidx.compose.animation.core.infiniteRepeatable(androidx.compose.animation.core.tween(1200, easing = androidx.compose.animation.core.LinearEasing)), label = "fase")
+    Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+        repeat(3) { i ->
+            // Cada ponto sobe no seu terço do ciclo.
+            val x = ((fase - i * 0.125f + 1f) % 1f)
+            val sobe = if (anda && x < 0.3f) kotlin.math.sin(x / 0.3f * Math.PI).toFloat() else 0f
+            Box(Modifier.offset(y = (-3 * sobe).dp).size(5.dp).background(cor.copy(alpha = 0.5f + 0.5f * sobe), CircleShape))
+        }
     }
 }
 
@@ -406,8 +568,16 @@ private fun BarraInferior(aba: Aba, aoAba: (Aba) -> Unit) {
 @Composable
 private fun BotaoTema(vm: RelayViewModel) {
     val escuro = MaterialTheme.colorScheme.background.luminance() < 0.5f
-    IconButton({ vm.alternarTema(escuro) }) {
-        Icon(if (escuro) Icons.Outlined.LightMode else Icons.Outlined.DarkMode, if (escuro) "Mudar para o tema claro" else "Mudar para o tema escuro")
+    val trocar = dev.josev.relay.ui.tema.LocalTrocaTema.current
+    var centro by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
+    IconButton({ trocar(centro) }, Modifier.onGloballyPositioned { centro = it.boundsInRoot().center }) {
+        // Ícone novo entra crescendo (sol ↔ lua).
+        androidx.compose.animation.AnimatedContent(escuro, label = "icone-tema", transitionSpec = {
+            (androidx.compose.animation.scaleIn(androidx.compose.animation.core.tween(300), initialScale = 0.5f) + fadeIn())
+                .togetherWith(fadeOut(androidx.compose.animation.core.tween(90)))
+        }) { e ->
+            Icon(if (e) Icons.Outlined.LightMode else Icons.Outlined.DarkMode, if (e) "Mudar para o tema claro" else "Mudar para o tema escuro")
+        }
     }
 }
 
@@ -438,9 +608,21 @@ private fun Participantes(estado: Estado, aoAbrir: (String) -> Unit) {
 }
 
 @Composable
-private fun Divisor() {
+private fun SeparadorDia(rotulo: String, modifier: Modifier) {
+    val cor = MaterialTheme.colorScheme.outlineVariant
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = modifier.fillMaxWidth()
+        .semantics { heading() }) {
+        Box(Modifier.weight(1f).height(1.dp).background(cor))
+        Text(rotulo.uppercase(), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall,
+            modifier = Modifier.padding(horizontal = 10.dp))
+        Box(Modifier.weight(1f).height(1.dp).background(cor))
+    }
+}
+
+@Composable
+private fun Divisor(modifier: Modifier = Modifier) {
     val cor = MaterialTheme.colorScheme.primary
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = modifier.fillMaxWidth().padding(vertical = 4.dp)) {
         Box(Modifier.weight(1f).height(1.dp).background(cor.copy(alpha = 0.4f)))
         Text("Novas mensagens", color = cor, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(horizontal = 10.dp))
         Box(Modifier.weight(1f).height(1.dp).background(cor.copy(alpha = 0.4f)))

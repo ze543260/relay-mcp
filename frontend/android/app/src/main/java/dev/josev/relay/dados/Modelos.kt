@@ -28,6 +28,9 @@ data class Sala(
     val total: Int,
     @SerialName("ultimo_id") val ultimoId: Long? = null,
     val agentes: List<String> = emptyList(),
+    /** Servidor novo: contagem do ponto de vista de quem pede. */
+    @SerialName("nao_lidas") val naoLidas: Int? = null,
+    val mencoes: Int? = null,
 )
 
 @Serializable
