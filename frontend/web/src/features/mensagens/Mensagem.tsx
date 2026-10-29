@@ -1,6 +1,7 @@
 import { CheckCheckIcon, CheckIcon, EllipsisIcon, FileCodeIcon } from "lucide-react";
 import { lazy, memo, Suspense, useContext, useState } from "react";
 import { AbrirArtefatoContexto } from "@/features/artefatos/api";
+import { AbrirPerfilContexto } from "@/features/perfil/api";
 import { Textarea } from "@/components/ui/textarea";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -64,6 +65,7 @@ export const Mensagem = memo(function Mensagem(props: Props) {
   // A lista virtual remonta itens ao rolar: só anima o que acabou de chegar.
   const [recente] = useState(() => Date.now() - ms < RECENTE_MS);
   const [acoes, setAcoes] = useState(false);
+  const abrirPerfil = useContext(AbrirPerfilContexto);
   const confirmada = estado === undefined;
   const [editando, setEditando] = useState<string | null>(null);
   const [salvando, setSalvando] = useState(false);
@@ -101,7 +103,8 @@ export const Mensagem = memo(function Mensagem(props: Props) {
       </Avatar>
       <div className={cn("min-w-0 flex-1", minha && "flex flex-col items-end")}>
         <div className={cn("flex items-center gap-2 text-xs text-muted-foreground", minha && "flex-row-reverse")}>
-          <b className="text-[13px] font-semibold text-foreground">{apelido ?? m.de}</b>
+          <button type="button" onClick={() => abrirPerfil(m.de)} aria-label={textos.perfil.abrir(apelido ?? m.de)}
+            className="rounded-sm text-[13px] font-semibold text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-ring">{apelido ?? m.de}</button>
           {apelido && <span className="font-mono text-[11px]">{m.de}</span>}
           {m.para && <span className="text-primary">→ {m.para}</span>}
           <time dateTime={new Date(ms).toISOString()} className="tabular-nums">{horaDe(ms)}</time>

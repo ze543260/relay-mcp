@@ -21,6 +21,7 @@ const PORCODIGO: Record<string, Traducao> = {
   limite_excedido: { mensagem: "Devagar: limite de envio atingido.", campo: "texto" },
   proibido: { mensagem: "Você não tem permissão para isso.", campo: "raiz" },
   requer_humano: { mensagem: "Só quem entra com um token humano próprio confirma fatos (o token de admin não vale).", campo: "raiz" },
+  requer_dono: { mensagem: "Só o dono (com token humano próprio) ou o admin editam a ficha.", campo: "raiz" },
   conflito: { mensagem: "Alguém salvou uma versão nova enquanto você editava. Abra de novo e reaplique a sua mudança.", campo: "raiz" },
   artefato_grande: { mensagem: "Artefato grande demais (máx. 200 KB por versão).", campo: "raiz" },
   artefato_cheio: { mensagem: "Esse artefato chegou ao limite de versões. Crie um novo a partir dele.", campo: "raiz" },

@@ -7,6 +7,7 @@ const Quadro = lazy(() => import("@/features/equipe/Quadro"));
 const Memoria = lazy(() => import("@/features/memoria/Memoria"));
 const Artefatos = lazy(() => import("@/features/artefatos/Artefatos"));
 const PainelArtefato = lazy(() => import("@/features/artefatos/PainelArtefato"));
+const PainelPerfil = lazy(() => import("@/features/perfil/PainelPerfil"));
 const FaixaReuniao = lazy(() => import("@/features/equipe/FaixaReuniao").then((m) => ({ default: m.FaixaReuniao })));
 const NovaReuniao = lazy(() => import("@/features/equipe/FaixaReuniao").then((m) => ({ default: m.NovaReuniao })));
 const PaletaSalas = lazy(() => import("@/features/salas/PaletaSalas").then((m) => ({ default: m.PaletaSalas })));
@@ -30,6 +31,7 @@ import { textos } from "@/shared/lib/textos";
 import { gravar, lerJson } from "@/shared/lib/armazenamento";
 import { rotaSala } from "../router";
 import { AbrirArtefatoContexto } from "@/features/artefatos/api";
+import { AbrirPerfilContexto } from "@/features/perfil/api";
 
 export function RotaSala() {
   const { sala } = rotaSala.useParams();
@@ -114,6 +116,8 @@ export function RotaSala() {
   const [aba, setAba] = useState<"conversa" | "quadro" | "memoria" | "artefatos">("conversa");
   const [artefatoAberto, setArtefatoAberto] = useState<number | null>(null);
   const abrirArtefato = useCallback((id: number) => setArtefatoAberto(id), []);
+  const [perfilAberto, setPerfilAberto] = useState<string | null>(null);
+  const abrirPerfil = useCallback((n: string) => { if (n !== "relay") setPerfilAberto(n); }, []);
   const [irPara, setIrPara] = useState<number | null>(null);
   const [novaReuniao, setNovaReuniao] = useState(false);
   const { data: reunioes } = useReunioes(sala);
@@ -128,6 +132,7 @@ export function RotaSala() {
 
   return (
     <AbrirArtefatoContexto.Provider value={abrirArtefato}>
+    <AbrirPerfilContexto.Provider value={abrirPerfil}>
     <SidebarProvider className="h-dvh min-h-0">
       <BarraLateral sala={sala} nome={nome} admin={admin} vistas={vistas} estado={conversa.estado} tema={tema}
         aoEscolher={escolher} aoBuscar={() => setPaletaAberta(true)} aoTema={escolherTema}
@@ -199,7 +204,11 @@ export function RotaSala() {
       <Suspense fallback={null}>
         <PainelArtefato id={artefatoAberto} admin={admin} fechar={() => setArtefatoAberto(null)} />
       </Suspense>
+      <Suspense fallback={null}>
+        <PainelPerfil nome={perfilAberto} sala={doCanal?.sala ?? sala} admin={admin} fechar={() => setPerfilAberto(null)} />
+      </Suspense>
     </SidebarProvider>
+    </AbrirPerfilContexto.Provider>
     </AbrirArtefatoContexto.Provider>
   );
 }
