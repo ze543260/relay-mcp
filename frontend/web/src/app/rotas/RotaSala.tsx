@@ -11,6 +11,8 @@ const PainelPerfil = lazy(() => import("@/features/perfil/PainelPerfil"));
 const FaixaReuniao = lazy(() => import("@/features/equipe/FaixaReuniao").then((m) => ({ default: m.FaixaReuniao })));
 const NovaReuniao = lazy(() => import("@/features/equipe/FaixaReuniao").then((m) => ({ default: m.NovaReuniao })));
 const PaletaSalas = lazy(() => import("@/features/salas/PaletaSalas").then((m) => ({ default: m.PaletaSalas })));
+const BuscaSala = lazy(() => import("@/features/busca/BuscaSala"));
+import type { Destino } from "@/features/salas/PaletaSalas";
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { useSessao } from "@/features/auth/sessao";
 import { Composer } from "@/features/mensagens/Composer";
@@ -19,7 +21,7 @@ import { useConversa } from "@/features/mensagens/useConversa";
 import { useAgentes } from "@/features/agentes/useAgentes";
 import { useReunioes } from "@/features/equipe/api";
 import { useDigitando, useLeituras, useMarcarLeitura } from "@/features/mensagens/presenca";
-import { BrainIcon, CalendarPlusIcon, EllipsisVerticalIcon, FileCodeIcon, KanbanIcon, MessagesSquareIcon, MoonIcon, SunIcon } from "lucide-react";
+import { BrainIcon, CalendarPlusIcon, EllipsisVerticalIcon, FileCodeIcon, KanbanIcon, MessagesSquareIcon, MoonIcon, SearchIcon, SunIcon } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -70,6 +72,11 @@ export function RotaSala() {
   const [paletaAberta, setPaletaAbertaEstado] = useState(false);
   const [paletaUsada, setPaletaUsada] = useState(false);
   const setPaletaAberta = useCallback((a: boolean) => { if (a) setPaletaUsada(true); setPaletaAbertaEstado(a); }, []);
+  // Monta paleta e busca (fechadas) com a página já parada: o 1º Ctrl+K abre na hora e não perde o que se digita.
+  useEffect(() => {
+    const t = setTimeout(() => { setPaletaUsada(true); setBuscaSalaUsada(true); }, 4000);
+    return () => clearTimeout(t);
+  }, []);
   // O atalho precisa existir antes da paleta carregar.
   useEffect(() => {
     const aoTeclar = (e: KeyboardEvent) => {
@@ -121,6 +128,18 @@ export function RotaSala() {
   const [perfilAberto, setPerfilAberto] = useState<string | null>(null);
   const abrirPerfil = useCallback((n: string) => { if (n !== "relay") setPerfilAberto(n); }, []);
   const [irPara, setIrPara] = useState<number | null>(null);
+  const [tarefaPedida, setTarefaPedida] = useState<number | null>(null);
+  const [buscaSala, setBuscaSala] = useState(false);
+  const [buscaSalaUsada, setBuscaSalaUsada] = useState(false);
+  const abrirBuscaSala = useCallback(() => { setBuscaSalaUsada(true); setBuscaSala(true); }, []);
+  // Ctrl+Shift+F: busca na sala (Ctrl+F continua sendo o do navegador).
+  useEffect(() => {
+    const aoTeclar = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() === "f" && (e.ctrlKey || e.metaKey) && e.shiftKey) { e.preventDefault(); abrirBuscaSala(); }
+    };
+    document.addEventListener("keydown", aoTeclar);
+    return () => document.removeEventListener("keydown", aoTeclar);
+  }, [abrirBuscaSala]);
   const [novaReuniao, setNovaReuniao] = useState(false);
   const { data: reunioes } = useReunioes(sala);
   const reuniaoAtiva = reunioes?.some((r) => r.estado !== "encerrada") ?? false;
@@ -133,6 +152,16 @@ export function RotaSala() {
   if (estadoSessao === "fora") return <Navigate to="/entrar" search={{ volta: sala }} replace />;
 
   const escolher = (s: string) => void navegar({ to: "/s/$sala", params: { sala: s } });
+  // Resultado do Ctrl+K: vai pra sala certa e abre a aba/painel do item.
+  const aoIr = (d: Destino) => {
+    if (d.tipo === "pessoa") return abrirPerfil(d.nome);
+    if (d.sala !== sala) escolher(d.sala);
+    if (d.tipo === "sala") return setAba("conversa");
+    if (d.tipo === "mensagem") { setIrPara(d.id); setAba("conversa"); }
+    else if (d.tipo === "tarefa") { setTarefaPedida(d.id); setAba("quadro"); }
+    else if (d.tipo === "artefato") { setAba("artefatos"); abrirArtefato(d.id); }
+    else setAba("memoria");
+  };
 
   return (
     <AbrirArtefatoContexto.Provider value={abrirArtefato}>
@@ -143,7 +172,12 @@ export function RotaSala() {
         notificacoes={avisos.suportado ? { ativas: avisos.ativas, negadas: avisos.negadas, alternar: () => void avisos.alternar() } : null} aoSair={() => sair()} />
       {paletaUsada && (
         <Suspense fallback={null}>
-          <PaletaSalas aberta={paletaAberta} setAberta={setPaletaAberta} salaAtual={sala} aoEscolher={escolher} />
+          <PaletaSalas aberta={paletaAberta} setAberta={setPaletaAberta} salaAtual={sala} aoIr={aoIr} />
+        </Suspense>
+      )}
+      {buscaSalaUsada && (
+        <Suspense fallback={null}>
+          <BuscaSala sala={sala} aberta={buscaSala} setAberta={setBuscaSala} aoIrPara={(id) => { setIrPara(id); setAba("conversa"); }} />
         </Suspense>
       )}
       <SidebarInset className="group/sala min-h-0 min-w-0">
@@ -171,8 +205,12 @@ export function RotaSala() {
             ))}
           </div>
           <div className="hidden xl:contents"><Participantes autores={autores} /></div>
+          <Button variant="ghost" size="icon" className="ml-auto size-11 md:size-8 xl:ml-0" aria-label={textos.buscaSala.abrir(sala)}
+            title={`${textos.buscaSala.abrir(sala)} (Ctrl Shift F)`} onClick={abrirBuscaSala}>
+            <SearchIcon />
+          </Button>
           {/* Tema à vista: um clique alterna claro/escuro ("Sistema" fica no menu do usuário). */}
-          <Button variant="ghost" size="icon" className="ml-auto size-11 md:ml-0 md:size-8"
+          <Button variant="ghost" size="icon" className="size-11 md:size-8"
             aria-label={temaResolvido === "escuro" ? textos.tema.paraClaro : textos.tema.paraEscuro}
             title={temaResolvido === "escuro" ? textos.tema.paraClaro : textos.tema.paraEscuro}
             onClick={() => escolherTema(temaResolvido === "escuro" ? "claro" : "escuro")}>
@@ -219,7 +257,7 @@ export function RotaSala() {
             }} />
           </Suspense>
         ) : aba === "quadro" ? (
-          <Suspense fallback={<div className="flex-1" />}><Quadro sala={doCanal?.sala ?? sala} eu={nome} admin={admin} /></Suspense>
+          <Suspense fallback={<div className="flex-1" />}><Quadro sala={doCanal?.sala ?? sala} eu={nome} admin={admin} abrir={tarefaPedida} /></Suspense>
         ) : (
           <>
             <Conversa key={sala} sala={sala} eu={nome} carregando={conversa.estado.tipo === "carregando"}

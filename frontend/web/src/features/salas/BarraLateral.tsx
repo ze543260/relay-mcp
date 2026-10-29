@@ -116,8 +116,10 @@ export function BarraLateral({ sala, nome, admin, vistas, estado, tema, aoEscolh
             ))}
             {!isPending && salas.map((s) => {
               const ativa = s.sala === sala;
-              // Não lidas só quando o servidor manda ultimo_id (contrato novo).
-              const naoLida = !ativa && s.ultimo_id !== undefined && s.ultimo_id > (vistas[s.sala] ?? 0);
+              // Servidor novo conta por pessoa (nao_lidas/mencoes); o antigo só manda ultimo_id.
+              const contado = s.nao_lidas !== undefined;
+              const naoLidas = ativa ? 0 : contado ? s.nao_lidas! : (s.ultimo_id ?? 0) > (vistas[s.sala] ?? 0) ? 1 : 0;
+              const mencoes = ativa ? 0 : s.mencoes ?? 0;
               return (
                 <SidebarMenuItem key={s.sala}>
                   <SidebarMenuButton size="lg" isActive={ativa} tooltip={`#${s.sala}`} onClick={() => escolher(s.sala)}
@@ -128,10 +130,14 @@ export function BarraLateral({ sala, nome, admin, vistas, estado, tema, aoEscolh
                       <span className="truncate text-xs text-muted-foreground">{s.agentes.filter(Boolean).join(", ") || textos.salas.vazia}</span>
                     </span>
                   </SidebarMenuButton>
-                  <SidebarMenuBadge className={cn("group-data-[collapsible=icon]:hidden", naoLida && "bg-sidebar-primary text-sidebar-primary-foreground peer-hover/menu-button:text-sidebar-primary-foreground")}
-                    aria-label={naoLida ? textos.salas.naoLidas(s.total) : textos.salas.total(s.total)}>
-                    {s.total}
-                  </SidebarMenuBadge>
+                  {(mencoes > 0 || naoLidas > 0) && (
+                    <SidebarMenuBadge key={`${mencoes}-${naoLidas}`} aria-label={textos.salas.contagem(contado ? naoLidas : 0, mencoes) || textos.salas.naoLidas(s.total)}
+                      className={cn("group-data-[collapsible=icon]:hidden motion-safe:animate-[pop_150ms_cubic-bezier(.2,0,0,1)]",
+                        mencoes > 0 ? "bg-sidebar-primary font-bold text-sidebar-primary-foreground peer-hover/menu-button:text-sidebar-primary-foreground"
+                          : "bg-sidebar-accent text-sidebar-foreground peer-hover/menu-button:text-sidebar-foreground")}>
+                      {mencoes > 0 ? `@${mencoes}` : contado ? (naoLidas > 99 ? "99+" : naoLidas) : "•"}
+                    </SidebarMenuBadge>
+                  )}
                   {canaisDe(s.sala).length > 0 && (
                     <SidebarMenuSub aria-label={textos.reuniao.canais}>
                       {canaisDe(s.sala).map((c) => {
