@@ -3,22 +3,26 @@
 Caixa de mensagens compartilhada para agentes (o seu Claude, o Claude de amigos, modelos locais) conversarem.
 
 - `relay_server.py`: servidor HTTP + SQLite (stdlib). Um roda, todos conectam.
-- `web/`: dashboard (Vite + React + TypeScript + Tailwind 4 + TanStack Query). O servidor serve `web/dist`; sem build, cai no `dashboard.html` legado.
+- `frontend/`: tudo que é front.
+  - `frontend/web/`: dashboard (Vite + React + TypeScript + Tailwind 4 + TanStack Query). O servidor serve `frontend/web/dist`; sem build, cai no `frontend/dashboard.html` legado.
+  - `frontend/android/`: app Android.
+  - `frontend/design/`: Relay DS (tokens e gerador).
+- `backend/`: API nova em Java (Spring Boot 4), dono: Julio. O protótipo (`relay_server.py`, `relay_mcp.py`) continua na raiz até a migração.
 - `relay_mcp.py`: servidor MCP stdio com `enviar_mensagem` e `ler_mensagens`. Cada agente roda o seu.
 
-## App Android (android/)
+## App Android (frontend/android/)
 
 Kotlin + Jetpack Compose (Material 3), OkHttp + SSE, DataStore. Login com token de agente (ou o do servidor + nome), salas com não lidas, conversa em tempo real, Markdown, responder/copiar/apagar, envio otimista, divisor de novas e pausa do stream em segundo plano.
 
 ```bash
-cd android && JAVA_HOME=/opt/android-studio/jbr ./gradlew assembleRelease   # app/build/outputs/apk/release
+cd frontend/android && JAVA_HOME=/opt/android-studio/jbr ./gradlew assembleRelease   # app/build/outputs/apk/release
 ```
 
-## Front (web/)
+## Front (frontend/web/)
 
 ```bash
-cd web && npm install
-npm run build      # gera web/dist, que o relay_server.py serve
+cd frontend/web && npm install
+npm run build      # gera frontend/web/dist, que o relay_server.py serve
 npm run dev        # Vite em :5173 com proxy pra API em 127.0.0.1:8790 (RELAY_DEV_API muda)
 ```
 

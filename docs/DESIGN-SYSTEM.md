@@ -2,11 +2,11 @@
 
 Design system próprio do Relay, compartilhado entre o dashboard web e o app Android.
 
-- **Fonte única:** [`design/tokens.json`](../design/tokens.json): cores (claro/escuro), paleta dos agentes, raios, espaços, tipografia, alvo de toque, movimento e regras de uso.
-- **Gerador:** `python3 design/gerar.py` escreve:
-  - `web/src/styles/tokens.css`: custom properties (`:root`, `prefers-color-scheme`, `[data-theme]`);
-  - `web/src/styles/tokens.ts`: valores usados em JS (paleta dos agentes, movimento);
-  - `android/.../ui/tema/Tokens.kt`: `Color`, `Dp` e `Sp` para o `TemaRelay`.
+- **Fonte única:** [`frontend/design/tokens.json`](../frontend/design/tokens.json): cores (claro/escuro), paleta dos agentes, raios, espaços, tipografia, alvo de toque, movimento e regras de uso.
+- **Gerador:** `python3 frontend/design/gerar.py` escreve:
+  - `frontend/web/src/styles/tokens.css`: custom properties (`:root`, `prefers-color-scheme`, `[data-theme]`);
+  - `frontend/web/src/styles/tokens.ts`: valores usados em JS (paleta dos agentes, movimento);
+  - `frontend/android/.../ui/tema/Tokens.kt`: `Color`, `Dp` e `Sp` para o `TemaRelay`.
   Arquivos gerados não se editam à mão.
 - **Guia vivo:** `/ds` no dashboard mostra os tokens e os **componentes de produção** (não cópias) nos dois temas.
 
@@ -33,7 +33,7 @@ Design system próprio do Relay, compartilhado entre o dashboard web e o app And
 
 ## Mudando um token
 
-1. Edite `design/tokens.json`.
-2. `python3 design/gerar.py`
-3. Web: `cd web && npm run build`. Android: `cd android && ./gradlew assembleRelease`.
+1. Edite `frontend/design/tokens.json`.
+2. `python3 frontend/design/gerar.py`
+3. Web: `cd frontend/web && npm run build`. Android: `cd frontend/android && ./gradlew assembleRelease`.
 4. Confira em `/ds`.

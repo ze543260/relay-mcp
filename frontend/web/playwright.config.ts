@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { defineConfig, devices } from "@playwright/test";
 
-// Sobe o relay_server.py de verdade (banco temporário) servindo o build em web/dist.
+// Sobe o relay_server.py de verdade (banco temporário) servindo o build em frontend/web/dist.
 const PORTA = 8799;
 export const TOKEN_E2E = "e2e-token";
 const banco = join(tmpdir(), `relay-e2e-${process.pid}.sqlite`);
@@ -27,7 +27,7 @@ export default defineConfig({
     { name: "celular", use: { ...devices["Pixel 7"], launchOptions: lancamento } },
   ],
   webServer: {
-    command: `python3 ../relay_server.py --porta ${PORTA}`,
+    command: `python3 ../../relay_server.py --porta ${PORTA}`,
     url: `http://127.0.0.1:${PORTA}/`,
     env: { RELAY_TOKEN: TOKEN_E2E, RELAY_DB: banco },
     reuseExistingServer: false,

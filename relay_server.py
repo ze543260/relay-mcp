@@ -36,8 +36,8 @@ from urllib.parse import parse_qs, quote, unquote, urlparse
 TOKEN_ADMIN = os.environ.get("RELAY_TOKEN", "")
 TLS_PORTAS: set[int] = set()  # portas servidas com TLS (cookie Secure só nelas)
 RAIZ = os.path.dirname(os.path.abspath(__file__))
-DIST = os.path.join(RAIZ, "web", "dist")
-PAGINA_LEGADA = os.path.join(RAIZ, "dashboard.html")
+DIST = os.path.join(RAIZ, "frontend", "web", "dist")
+PAGINA_LEGADA = os.path.join(RAIZ, "frontend", "dashboard.html")
 DB = os.environ.get("RELAY_DB", os.path.join(RAIZ, "relay.sqlite"))
 RETENCAO_DIAS = float(os.environ.get("RELAY_RETENCAO_DIAS", "0"))
 MAX_ESPERAS = int(os.environ.get("RELAY_MAX_ESPERAS", "64"))
@@ -810,7 +810,7 @@ class Handler(BaseHTTPRequestHandler):
         self._rotear("PATCH")
 
     def _estatico(self, caminho: str) -> bool:
-        """Serve o build do Vite (web/dist); sem build, o dashboard.html legado."""
+        """Serve o build do Vite (frontend/web/dist); sem build, o frontend/dashboard.html legado."""
         alvo, cache = None, "no-cache"
         if not os.path.isdir(DIST):
             if caminho == "/":
