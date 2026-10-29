@@ -200,6 +200,11 @@ MIGRACOES = [
          canonico_norm TEXT NOT NULL, estado TEXT NOT NULL DEFAULT 'vigente', criado_por TEXT NOT NULL,
          confirmado_por TEXT, origem_tipo TEXT, origem_id TEXT, criado REAL NOT NULL,
          PRIMARY KEY (sala, nome_norm));""",
+    # 16: perfil (docs/PLANO-PERFIL.md): dono humano do agente e ficha de persona (editável só pelo dono).
+    """ALTER TABLE agente ADD COLUMN dono TEXT;
+       CREATE TABLE IF NOT EXISTS persona (
+         nome TEXT PRIMARY KEY, equipe TEXT, papel TEXT, foco TEXT, tom TEXT, limites TEXT,
+         editado_por TEXT NOT NULL, quando REAL NOT NULL);""",
 ]
 
 STATUS_TAREFA = ("a_fazer", "fazendo", "revisao", "feito")
@@ -558,6 +563,7 @@ def titulo_seguro(titulo: str) -> str:
     return re.sub(r"([\\`*_~\[\]<>|#])", r"\\\1", t)
 
 
+
 def artefato_para_json(r: tuple) -> dict:
     i, sala, titulo, tipo, versao, estado, por, criado, atual, msg, _fato = r
     return {"id": i, "sala": sala, "titulo": titulo, "tipo": tipo, "versao": versao, "estado": estado,
@@ -849,6 +855,11 @@ class Handler(BaseHTTPRequestHandler):
             m = re.fullmatch(r"/agentes/([^/]+)", caminho)
             if m and metodo == "DELETE":
                 return self.revogar_agente(unquote(m.group(1)))
+            if m and metodo == "GET":
+                return self.perfil(unquote(m.group(1)), q)
+            m = re.fullmatch(r"/agentes/([^/]+)/(persona|dono)", caminho)
+            if m and metodo == "PUT":
+                return (self.editar_persona if m.group(2) == "persona" else self.definir_dono)(unquote(m.group(1)))
             m = re.fullmatch(r"/arquivos/([\w-]{16,64})", caminho)
             if m and metodo == "GET":
                 return self.baixar_arquivo(m.group(1), q)
@@ -2227,6 +2238,91 @@ class Handler(BaseHTTPRequestHandler):
                     centros.add(aliases.get(normalizar(apelido[0]), normalizar(apelido[0])))
             g = montar_grafo(con, sala, centros, autor, profundidade)
         self._json(200, {"centro": sorted(centros)[0], "centros": sorted(centros), **g})
+
+    # perfil (docs/PLANO-PERFIL.md)
+
+    CAMPOS_PERSONA = (("equipe", 60), ("papel", 160), ("foco", 160), ("tom", 80), ("limites", 240))
+
+    def _pode_editar_perfil(self, con: sqlite3.Connection, quem: "Quem", nome: str) -> bool:
+        """Dono (humano com identidade forte) ou admin. O próprio humano edita a própria ficha."""
+        if quem.admin:
+            return True
+        eu = humano_confirmado(con, quem)
+        if not eu:
+            return False
+        dono = con.execute("SELECT dono FROM agente WHERE nome=?", (nome,)).fetchone()
+        return eu == nome or bool(dono and dono[0] == eu)
+
+    def perfil(self, nome: str, q: dict) -> None:
+        if not NOME_RE.match(nome):
+            raise ErroHttp(400, "nome_invalido", "Nome inválido.")
+        with conectar() as con:
+            quem = self._quem(con)
+            ag = con.execute("SELECT tipo, dono, criado, revogado, token_hash IS NOT NULL FROM agente WHERE nome=?", (nome,)).fetchone()
+            visto = con.execute("SELECT visto FROM presenca WHERE nome=?", (nome,)).fetchone()
+            escreveu = con.execute("SELECT MAX(criado) FROM msg WHERE de=?", (nome,)).fetchone()[0]
+            if not ag and not visto and not escreveu:
+                raise ErroHttp(404, "participante_inexistente", "Ninguém com esse nome por aqui.")
+            apelido = con.execute("SELECT apelido FROM apelido WHERE nome=?", (nome,)).fetchone()
+            pers = con.execute("SELECT equipe, papel, foco, tom, limites, editado_por, quando FROM persona WHERE nome=?",
+                               (nome,)).fetchone()
+            tarefas = con.execute("SELECT id, sala, titulo, status, prioridade FROM tarefa WHERE responsavel=? AND status!='feito' "
+                                  "ORDER BY atualizado DESC LIMIT 20", (nome,)).fetchall()
+            fatos = con.execute("SELECT COUNT(*) FROM fato WHERE autor=? AND estado='vigente'", (nome,)).fetchone()[0]
+            salas = [r[0] for r in con.execute("SELECT sala FROM msg WHERE de=? GROUP BY sala ORDER BY MAX(id) DESC LIMIT 10", (nome,))]
+            pode = self._pode_editar_perfil(con, quem, nome)
+            tipo = ag[0] if ag else ("ia" if re.match(r"^(claude|gemma|qwen|llama|gpt)", nome) else "humano")
+        v = visto[0] if visto else None
+        perfil = {
+            "nome": nome, "apelido": apelido[0] if apelido else None, "tipo": tipo, "dono": ag[1] if ag else None,
+            "online": bool(v and time.time() - v < ONLINE_S), "visto_em": iso(v) if v else None,
+            "ultima_mensagem_em": iso(escreveu) if escreveu else None, "salas": salas,
+            "persona": dict(zip(("equipe", "papel", "foco", "tom", "limites", "editado_por"), pers[:6]),
+                            editado_em=iso(pers[6])) if pers else None,
+            "tarefas": [{"id": i, "sala": sl, "titulo": t, "status": st, "prioridade": pr} for i, sl, t, st, pr in tarefas],
+            "fatos_registrados": fatos, "pode_editar": pode,
+        }
+        if pode and ag:  # acesso: só dono/admin
+            perfil["acesso"] = {"token_ativo": bool(ag[4] and not ag[3]), "criado_em": iso(ag[2]),
+                                "revogado_em": iso(ag[3]) if ag[3] else None}
+        self._json(200, perfil)
+
+    def editar_persona(self, nome: str) -> None:
+        c = self._corpo()
+        campos = {}
+        for campo, maximo in self.CAMPOS_PERSONA:
+            valor = " ".join(str(c.get(campo) or "").split())
+            if len(valor) > maximo:
+                raise ErroHttp(400, f"{campo}_invalido", f"{campo}: até {maximo} caracteres.")
+            if CREDENCIAL_RE.search(valor):
+                raise ErroHttp(422, "credencial_detectada", "A ficha parece conter uma credencial. Não foi salva.")
+            campos[campo] = valor or None
+        with conectar() as con:
+            quem = self._quem(con)
+            if not self._pode_editar_perfil(con, quem, nome):
+                raise ErroHttp(403, "requer_dono", "Só o dono (com token humano próprio) ou o admin editam a ficha.")
+            autor = humano_confirmado(con, quem) or quem.nome or "admin"
+            con.execute("INSERT INTO persona VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(nome) DO UPDATE SET equipe=excluded.equipe, "
+                        "papel=excluded.papel, foco=excluded.foco, tom=excluded.tom, limites=excluded.limites, "
+                        "editado_por=excluded.editado_por, quando=excluded.quando",
+                        (nome, *campos.values(), autor, time.time()))
+            registrar_evento(con, "perfil", "geral", 0)
+        notificar()
+        self._vazio()
+
+    def definir_dono(self, nome: str) -> None:
+        c = self._corpo()
+        dono = c.get("dono") or None
+        if dono is not None and (not isinstance(dono, str) or not NOME_RE.match(dono)):
+            raise ErroHttp(400, "dono_invalido", "Dono inválido.")
+        with conectar() as con:
+            if not self._quem(con).admin:
+                raise ErroHttp(403, "proibido", "Só o admin define o dono de um agente.")
+            if not con.execute("UPDATE agente SET dono=? WHERE nome=?", (dono, nome)).rowcount:
+                raise ErroHttp(404, "agente_inexistente", "Esse agente não tem cadastro (token).")
+            registrar_evento(con, "perfil", "geral", 0)
+        notificar()
+        self._vazio()
 
     # artefatos (docs/PLANO-ARTEFATOS.md)
 

@@ -1,4 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
+import { useContext } from "react";
+import { AbrirPerfilContexto } from "@/features/perfil/api";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { api, ErroApi } from "@/shared/api/cliente";
@@ -16,6 +18,7 @@ export function Participantes({ autores }: { autores: string[] }) {
     retry: (n, e) => !(e instanceof ErroApi && e.status === 404) && n < 2,
   });
   const porNome = new Map((agentes ?? []).map((a) => [a.nome, a]));
+  const abrirPerfil = useContext(AbrirPerfilContexto);
   // Na sala: quem escreveu nela + quem está online agora.
   const nomes = [...new Set([...autores, ...(agentes ?? []).filter((a) => a.online).map((a) => a.nome)])].sort();
 
@@ -33,7 +36,10 @@ export function Participantes({ autores }: { autores: string[] }) {
           </Badge>
         );
         const dica = visto === undefined ? undefined : off ? textos.conversa.vistoAs(horaDe(visto)) : textos.conversa.online;
-        return <span key={nome} title={dica}>{chip}</span>;
+        return (
+          <button key={nome} type="button" title={dica} onClick={() => abrirPerfil(nome)} aria-label={textos.perfil.abrir(porNome.get(nome)?.apelido ?? nome)}
+            className="flex-none rounded-full focus-visible:outline-2 focus-visible:outline-ring">{chip}</button>
+        );
       })}
     </div>
   );
