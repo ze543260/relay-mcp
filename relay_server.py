@@ -234,6 +234,9 @@ MIGRACOES = [
     """CREATE TABLE IF NOT EXISTS dispositivo (
          nome TEXT NOT NULL, chave TEXT NOT NULL, rotulo TEXT NOT NULL, ua TEXT NOT NULL, via TEXT NOT NULL,
          ip TEXT, primeiro REAL NOT NULL, ultimo REAL NOT NULL, PRIMARY KEY (nome, chave));""",
+    # 21: admin vira papel da conta. O token pessoal de um admin tem os poderes de admin E identidade forte;
+    # o token mestre (RELAY_TOKEN) fica pra emergência.
+    "ALTER TABLE agente ADD COLUMN admin INTEGER NOT NULL DEFAULT 0;",
 ]
 
 STATUS_TAREFA = ("a_fazer", "fazendo", "revisao", "feito")
@@ -581,7 +584,7 @@ def superar(con: sqlite3.Connection, novo: int, supera: int | None) -> None:
 def humano_confirmado(con: sqlite3.Connection, quem: "Quem") -> str | None:
     """Nome de quem é humano com identidade forte: token (ou sessão dele) cujo tipo é 'humano'.
     O token de admin nunca conta, nem a sessão aberta com ele: ali o nome é escolhido livremente."""
-    if quem.admin or not quem.nome:
+    if quem.mestre or not quem.nome:
         return None
     linha = con.execute("SELECT 1 FROM agente WHERE nome=? AND tipo='humano' AND revogado IS NULL", (quem.nome,)).fetchone()
     return quem.nome if linha else None
@@ -678,8 +681,9 @@ FATOS = Balde(capacidade=20, por_segundo=1 / 3)   # rajada de 20, depois 20/min
 @dataclass
 class Quem:
     nome: str | None      # None = admin sem nome (cliente antigo)
-    admin: bool
+    admin: bool           # tem poderes de admin (token mestre ou conta com papel de admin)
     via_cookie: bool = False
+    mestre: bool = False  # token mestre (ou sessão aberta com ele): nome escolhido livremente, identidade fraca
 
 
 def identificar(headers, con: sqlite3.Connection, metodo: str) -> Quem:
@@ -687,12 +691,12 @@ def identificar(headers, con: sqlite3.Connection, metodo: str) -> Quem:
     if auth.startswith("Bearer "):
         token = auth[7:].strip()
         if TOKEN_ADMIN and hmac.compare_digest(token, TOKEN_ADMIN):
-            return Quem(None, True)
+            return Quem(None, True, mestre=True)
         linha = con.execute(
-            "SELECT nome FROM agente WHERE token_hash=? AND revogado IS NULL", (hash_token(token),)
+            "SELECT nome, admin FROM agente WHERE token_hash=? AND revogado IS NULL", (hash_token(token),)
         ).fetchone()
         if linha:
-            return Quem(linha[0], False)
+            return Quem(linha[0], bool(linha[1]))
         raise ErroHttp(401, "token_invalido", "Token inválido ou revogado.")
     cookie = SimpleCookie(headers.get("Cookie", ""))
     if COOKIE in cookie:
@@ -705,10 +709,13 @@ def identificar(headers, con: sqlite3.Connection, metodo: str) -> Quem:
             # header) fica protegida pelo SameSite=Strict do cookie.
             if metodo != "GET" and headers.get("X-Relay") != "1":
                 raise ErroHttp(403, "csrf", "Header X-Relay ausente.")
-            return Quem(linha[0], bool(linha[1]), via_cookie=True)
+            if linha[1]:  # sessão aberta com o token mestre
+                return Quem(linha[0], True, via_cookie=True, mestre=True)
+            papel = con.execute("SELECT admin FROM agente WHERE nome=? AND revogado IS NULL", (linha[0],)).fetchone()
+            return Quem(linha[0], bool(papel and papel[0]), via_cookie=True)
         raise ErroHttp(401, "sessao_expirada", "Sessão expirada. Entre de novo.")
     if not TOKEN_ADMIN:  # modo local sem token: tudo liberado
-        return Quem(None, True)
+        return Quem(None, True, mestre=True)
     raise ErroHttp(401, "token_invalido", "Envie Authorization: Bearer <token>.")
 
 
@@ -742,7 +749,7 @@ def registrar_dispositivo(con: sqlite3.Connection, quem: "Quem", headers, ip: st
     """Auditoria: anota o aparelho de quem tem nome (token de agente ou sessão). No máximo 1 escrita a cada 2 min.
     Token de admin direto (app/MCP antigos) entra pelo nome que o cliente declara em X-Relay-Nome."""
     nome = quem.nome
-    if quem.admin and not quem.via_cookie:
+    if quem.mestre and not quem.via_cookie:
         nome = (headers.get("X-Relay-Nome") or "").strip()
         if not NOME_RE.match(nome):
             return
@@ -754,7 +761,7 @@ def registrar_dispositivo(con: sqlite3.Connection, quem: "Quem", headers, ip: st
     if agora - _dispositivos_vistos.get((nome, chave), 0) < 120:
         return
     _dispositivos_vistos[(nome, chave)] = agora
-    via = ("sessao_admin" if quem.via_cookie else "token_admin") if quem.admin else ("sessao" if quem.via_cookie else "token")
+    via = ("sessao_admin" if quem.via_cookie else "token_admin") if quem.mestre else ("sessao" if quem.via_cookie else "token")
     con.execute(
         """INSERT INTO dispositivo (nome, chave, rotulo, ua, via, ip, primeiro, ultimo) VALUES (?,?,?,?,?,?,?,?)
            ON CONFLICT(nome, chave) DO UPDATE SET ultimo=excluded.ultimo, ip=excluded.ip, via=excluded.via""",
@@ -954,6 +961,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self.revogar_agente(unquote(m.group(1)))
             if m and metodo == "GET":
                 return self.perfil(unquote(m.group(1)), q)
+            m = re.fullmatch(r"/agentes/([^/]+)/admin", caminho)
+            if m and metodo == "PUT":
+                return self.definir_admin(unquote(m.group(1)))
             m = re.fullmatch(r"/agentes/([^/]+)/(persona|dono)", caminho)
             if m and metodo == "PUT":
                 return (self.editar_persona if m.group(2) == "persona" else self.definir_dono)(unquote(m.group(1)))
@@ -1127,7 +1137,7 @@ class Handler(BaseHTTPRequestHandler):
             ).fetchall()
             canais = {c: (i, t, e, p) for i, t, e, p, c in con.execute(
                 "SELECT id, titulo, estado, sala, canal FROM reuniao WHERE canal IS NOT NULL")}
-            eu = quem.nome if (quem.nome and not quem.admin) else (q.get("eu") or quem.nome)
+            eu = quem.nome if (quem.nome and not quem.mestre) else (q.get("eu") or quem.nome)
             contagem = self._nao_lidas(con, quem, eu) if eu else {}
         saida = []
         for s_, n, u, ult, a in linhas:
@@ -1243,7 +1253,7 @@ class Handler(BaseHTTPRequestHandler):
         with conectar() as con:
             quem = self._quem(con)
             # Agente e sessão: o servidor define o `de`. Só o token de admin (clientes antigos) escolhe.
-            if quem.admin and not quem.via_cookie:
+            if quem.mestre and not quem.via_cookie:
                 de = str(corpo.get("de") or quem.nome or "").strip()
             else:
                 de = quem.nome or ""
@@ -1309,7 +1319,7 @@ class Handler(BaseHTTPRequestHandler):
                 raise ErroHttp(404, "mensagem_inexistente", "Mensagem não existe.")
             sala, autor, texto_antigo = linha
             # Como no envio: só o token de admin (sem cookie) diz em nome de quem fala.
-            eu = str(self._corpo_cache.get("de") or quem.nome or "") if (quem.admin and not quem.via_cookie) else quem.nome
+            eu = str(self._corpo_cache.get("de") or quem.nome or "") if (quem.mestre and not quem.via_cookie) else quem.nome
             if eu != autor:
                 raise ErroHttp(403, "proibido", "Só o autor edita.")
             con.execute("UPDATE msg SET texto=?, editado=? WHERE id=?", (texto, time.time(), msg_id))
@@ -1341,7 +1351,7 @@ class Handler(BaseHTTPRequestHandler):
         espera = min(max(float(q.get("espera", 0) or 0), 0), ESPERA_MAX)
         with conectar() as con:
             quem = self._quem(con)
-        eu = quem.nome if (quem.nome and not quem.admin) else (q.get("eu") or quem.nome)
+        eu = quem.nome if (quem.nome and not quem.mestre) else (q.get("eu") or quem.nome)
         marcar_visto_sem_con(eu)
         todas = q.get("todas") == "1"
         usa_cursor = "depois" not in q and eu is not None
@@ -1389,7 +1399,7 @@ class Handler(BaseHTTPRequestHandler):
         antes = int(q["antes"]) if q.get("antes") else None
         with conectar() as con:
             quem = self._quem(con)
-            eu = quem.nome if (quem.nome and not quem.admin) else (q.get("eu") or quem.nome)
+            eu = quem.nome if (quem.nome and not quem.mestre) else (q.get("eu") or quem.nome)
             filtro, args = filtro_visiveis(quem, eu, q.get("todas") == "1")
             cond = " AND id<?" if antes else ""
             linhas = con.execute(
@@ -1412,7 +1422,7 @@ class Handler(BaseHTTPRequestHandler):
         antes = int(q["antes"]) if q.get("antes") else None
         with conectar() as con:
             quem = self._quem(con)
-            eu = quem.nome if (quem.nome and not quem.admin) else (q.get("eu") or quem.nome)
+            eu = quem.nome if (quem.nome and not quem.mestre) else (q.get("eu") or quem.nome)
             filtro, args = filtro_visiveis(quem, eu, q.get("todas") == "1", "m.")
             conds, extra = [filtro], list(args)
             if sala:
@@ -1434,7 +1444,7 @@ class Handler(BaseHTTPRequestHandler):
         n = min(max(int(q.get("n", 20) or 20), 1), 50)
         with conectar() as con:
             quem = self._quem(con)
-            eu = quem.nome if (quem.nome and not quem.admin) else (q.get("eu") or quem.nome)
+            eu = quem.nome if (quem.nome and not quem.mestre) else (q.get("eu") or quem.nome)
             filtro, args = filtro_visiveis(quem, eu, q.get("todas") == "1")
             alvo = con.execute(f"SELECT sala FROM msg WHERE id=? AND {filtro}", [mid, *args]).fetchone()
             if not alvo:
@@ -1459,7 +1469,7 @@ class Handler(BaseHTTPRequestHandler):
         so_sala, args_sala = (" AND sala=?", [sala]) if sala else ("", [])
         with conectar() as con:
             quem = self._quem(con)
-            eu = quem.nome if (quem.nome and not quem.admin) else (q.get("eu") or quem.nome)
+            eu = quem.nome if (quem.nome and not quem.mestre) else (q.get("eu") or quem.nome)
             filtro_m, args = filtro_visiveis(quem, eu, False, "m.")
             salas = [s for (s,) in con.execute(
                 "SELECT sala FROM msg WHERE sala LIKE ? ESCAPE '\\' GROUP BY sala ORDER BY MAX(id) DESC LIMIT ?",
@@ -1498,7 +1508,7 @@ class Handler(BaseHTTPRequestHandler):
             quem = self._quem(con)
             ultimo_evento = con.execute("SELECT COALESCE(MAX(seq),0) FROM evento").fetchone()[0]
             maior = con.execute("SELECT COALESCE(MAX(id),0) FROM msg").fetchone()[0]
-        eu = quem.nome if (quem.nome and not quem.admin) else (q.get("eu") or quem.nome)
+        eu = quem.nome if (quem.nome and not quem.mestre) else (q.get("eu") or quem.nome)
         todas = q.get("todas") == "1"
         depois = int(self.headers.get("Last-Event-ID") or q.get("depois") or 0) or (maior if geral else 0)
         if not ESPERAS.acquire(blocking=False):
@@ -1704,7 +1714,7 @@ class Handler(BaseHTTPRequestHandler):
     # identidade em ações de equipe: agente/sessão pelo servidor; token de admin pode dizer quem é
 
     def _nome(self, quem: Quem, pedido: dict) -> str:
-        if quem.admin and not quem.via_cookie:
+        if quem.mestre and not quem.via_cookie:
             nome = str(pedido.get("de") or pedido.get("eu") or quem.nome or "").strip()
         else:
             nome = quem.nome or ""
@@ -2508,6 +2518,7 @@ class Handler(BaseHTTPRequestHandler):
             salas = [r[0] for r in con.execute("SELECT sala FROM msg WHERE de=? GROUP BY sala ORDER BY MAX(id) DESC LIMIT 10", (nome,))]
             pode = self._pode_editar_perfil(con, quem, nome)
             foto = con.execute("SELECT versao FROM foto WHERE nome=?", (nome,)).fetchone()
+            papel_admin = con.execute("SELECT admin FROM agente WHERE nome=? AND revogado IS NULL", (nome,)).fetchone()
             aparelhos = con.execute("SELECT rotulo, via, ip, primeiro, ultimo FROM dispositivo WHERE nome=? "
                                     "ORDER BY ultimo DESC LIMIT 30", (nome,)).fetchall()
             eu = humano_confirmado(con, quem)
@@ -2521,7 +2532,7 @@ class Handler(BaseHTTPRequestHandler):
             "persona": dict(zip(("equipe", "papel", "foco", "tom", "limites", "editado_por"), pers[:6]),
                             editado_em=iso(pers[6])) if pers else None,
             "tarefas": [{"id": i, "sala": sl, "titulo": t, "status": st, "prioridade": pr} for i, sl, t, st, pr in tarefas],
-            "fatos_registrados": fatos, "pode_editar": pode, "foto": foto[0] if foto else None,
+            "fatos_registrados": fatos, "pode_editar": pode, "admin": bool(papel_admin and papel_admin[0]), "foto": foto[0] if foto else None,
             "pode_trocar_foto": troca,
         }
         if pode and not ag and aparelhos:  # sem token próprio (entra com o de admin): mostra só os aparelhos
@@ -2535,6 +2546,23 @@ class Handler(BaseHTTPRequestHandler):
                                 "dispositivos": [{"rotulo": r, "via": v_, "ip": ip, "primeiro_em": iso(p), "ultimo_em": iso(u)}
                                                  for r, v_, ip, p, u in aparelhos]}
         self._json(200, perfil)
+
+    def definir_admin(self, nome: str) -> None:
+        """Dá ou tira o papel de admin de uma conta humana. Só admin; ninguém tira o próprio papel (evita ficar sem admin)."""
+        valor = bool(self._corpo().get("admin"))
+        with conectar() as con:
+            quem = self._quem(con)
+            if not quem.admin:
+                raise ErroHttp(403, "proibido", "Só um admin muda o papel de admin.")
+            if not quem.mestre and quem.nome == nome and not valor:
+                raise ErroHttp(400, "proprio_papel", "Você não pode tirar o próprio papel de admin.")
+            linha = con.execute("SELECT tipo FROM agente WHERE nome=? AND revogado IS NULL", (nome,)).fetchone()
+            if not linha:
+                raise ErroHttp(404, "agente_inexistente", "Essa conta não tem token ativo.")
+            if linha[0] != "humano":
+                raise ErroHttp(400, "so_humano", "Só contas humanas podem ser admin (agentes nunca).")
+            con.execute("UPDATE agente SET admin=? WHERE nome=?", (int(valor), nome))
+        self._json(200, {"nome": nome, "admin": valor})
 
     def editar_persona(self, nome: str) -> None:
         c = self._corpo()
