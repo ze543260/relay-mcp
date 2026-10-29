@@ -1,4 +1,4 @@
-// Gerado por design/gerar.py a partir de design/tokens.json (Relay DS 1.0.0). Não edite à mão.
+// Gerado por design/gerar.py a partir de design/tokens.json (Relay DS 1.1.0). Não edite à mão.
 package dev.josev.relay.ui.tema
 
 import androidx.compose.ui.graphics.Color
@@ -14,13 +14,14 @@ object Tokens {
         val codigo = Color(0xFFF6F6F4)
         val borda = Color(0xFFE6E5E1)
         val bordaForte = Color(0xFFD6D5D0)
+        val bordaCampo = Color(0xFF8A8882)
         val texto = Color(0xFF1D1C1A)
-        val suave = Color(0xFF6F6D68)
-        val acento = Color(0xFFC96442)
+        val suave = Color(0xFF6A6863)
+        val acento = Color(0xFFA64E2D)
         val acentoTexto = Color(0xFFFFFFFF)
         val acentoFundo = Color(0xFFF5E6DF)
-        val ok = Color(0xFF2F8F5B)
-        val erro = Color(0xFFD0453A)
+        val ok = Color(0xFF27794C)
+        val erro = Color(0xFFC03B31)
     }
     object Escuro {
         val fundo = Color(0xFF141413)
@@ -30,15 +31,16 @@ object Tokens {
         val codigo = Color(0xFF141413)
         val borda = Color(0xFF2C2B28)
         val bordaForte = Color(0xFF3A3935)
+        val bordaCampo = Color(0xFF75736C)
         val texto = Color(0xFFECEBE6)
         val suave = Color(0xFF93918A)
         val acento = Color(0xFFD97757)
-        val acentoTexto = Color(0xFFFFFFFF)
+        val acentoTexto = Color(0xFF1D1C1A)
         val acentoFundo = Color(0xFF33241E)
         val ok = Color(0xFF4FBF82)
         val erro = Color(0xFFE5675D)
     }
-    val agentes = listOf(Color(0xFFC96442), Color(0xFF3B7DD8), Color(0xFF2F8F5B), Color(0xFF8B5CF6), Color(0xFFD4A017), Color(0xFFD0453A), Color(0xFF0E9AA7), Color(0xFFB4529B))
+    val agentes = listOf(Color(0xFFB4593B), Color(0xFF3775CB), Color(0xFF2B8353), Color(0xFF8256E7), Color(0xFF946F10), Color(0xFFCB4338), Color(0xFF0B818C), Color(0xFFB05097))
     object Raio {
         val sm = 6.dp
         val md = 8.dp

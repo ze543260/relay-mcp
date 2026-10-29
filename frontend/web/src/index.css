@@ -30,7 +30,7 @@
   --accent-foreground: var(--texto);
   --destructive: var(--erro);
   --border: var(--borda);
-  --input: var(--borda-forte);
+  --input: var(--borda-campo);
   --ring: var(--acento);
   --radius: var(--raio-lg);
   --sidebar: var(--painel);
@@ -127,3 +127,16 @@
 .texto :is(th, td) { border: 1px solid var(--borda); padding: 5px 10px; text-align: left; }
 .texto th { background: var(--codigo); font-weight: 600; }
 .texto .katex-display { overflow-x: auto; overflow-y: hidden; padding: 2px 0; }
+
+/* --- Acessibilidade (WCAG 2.2 AA) ---------------------------------------- */
+/* Foco visível em tudo que é interativo e não traz anel próprio (links, abas, botões nativos). */
+a:focus-visible, [role="tab"]:focus-visible, button:not([data-slot]):focus-visible, summary:focus-visible, [tabindex]:not([tabindex="-1"]):focus-visible {
+  outline: 2px solid var(--ring); outline-offset: 2px; border-radius: 4px;
+}
+/* "Reduzir movimento": animações viram troca instantânea (nada some, só não se mexe). */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 1ms !important; animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important; scroll-behavior: auto !important;
+  }
+}

@@ -30,7 +30,7 @@ export function Participantes({ autores }: { autores: string[] }) {
         const visto = a?.visto_em ? Date.parse(a.visto_em) : undefined;
         const off = agentes !== undefined && !a?.online;
         const chip = (
-          <Badge variant="outline" className={cn("h-6 flex-none gap-1.5 font-normal", off && "opacity-55")}>
+          <Badge variant="outline" className={cn("h-6 flex-none gap-1.5 font-normal", off && "border-dashed text-muted-foreground")}>
             <i className={cn("size-2 rounded-full", off && "grayscale")} style={{ background: corDe(nome) }} />
             {porNome.get(nome)?.apelido ?? nome}
           </Badge>
