@@ -2453,6 +2453,8 @@ class Handler(BaseHTTPRequestHandler):
             salas = [r[0] for r in con.execute("SELECT sala FROM msg WHERE de=? GROUP BY sala ORDER BY MAX(id) DESC LIMIT 10", (nome,))]
             pode = self._pode_editar_perfil(con, quem, nome)
             foto = con.execute("SELECT versao FROM foto WHERE nome=?", (nome,)).fetchone()
+            eu = humano_confirmado(con, quem)
+            troca = bool(eu and (eu == nome or (ag and ag[1] == eu)))
             tipo = ag[0] if ag else ("ia" if re.match(r"^(claude|gemma|qwen|llama|gpt)", nome) else "humano")
         v = visto[0] if visto else None
         perfil = {
@@ -2463,6 +2465,7 @@ class Handler(BaseHTTPRequestHandler):
                             editado_em=iso(pers[6])) if pers else None,
             "tarefas": [{"id": i, "sala": sl, "titulo": t, "status": st, "prioridade": pr} for i, sl, t, st, pr in tarefas],
             "fatos_registrados": fatos, "pode_editar": pode, "foto": foto[0] if foto else None,
+            "pode_trocar_foto": troca,
         }
         if pode and ag:  # acesso: só dono/admin
             perfil["acesso"] = {"token_ativo": bool(ag[4] and not ag[3]), "criado_em": iso(ag[2]),
@@ -2519,9 +2522,11 @@ class Handler(BaseHTTPRequestHandler):
             raise ErroHttp(413, "foto_grande", f"Foto: até {self.FOTO_MAX // 1000} KB.")
         with conectar() as con:
             quem = self._quem(con)
-            if not self._pode_editar_perfil(con, quem, nome):
-                raise ErroHttp(403, "requer_dono", "Só o dono (com token humano próprio) ou o admin trocam a foto.")
-            autor = humano_confirmado(con, quem) or quem.nome or "admin"
+            # Foto é identidade: nem o admin troca a dos outros (ele só remove). Vale a própria pessoa ou o dono do agente.
+            autor = humano_confirmado(con, quem)
+            dono = con.execute("SELECT dono FROM agente WHERE nome=?", (nome,)).fetchone()
+            if not autor or (autor != nome and not (dono and dono[0] == autor)):
+                raise ErroHttp(403, "requer_dono", "Só a própria pessoa (ou o dono do agente) troca a foto, com o token humano dela.")
             versao = (con.execute("SELECT versao FROM foto WHERE nome=?", (nome,)).fetchone() or (0,))[0] + 1
             con.execute("INSERT INTO foto VALUES (?,?,?,?,?,?) ON CONFLICT(nome) DO UPDATE SET tipo=excluded.tipo, "
                         "dados=excluded.dados, versao=excluded.versao, editado_por=excluded.editado_por, quando=excluded.quando",
@@ -2534,7 +2539,7 @@ class Handler(BaseHTTPRequestHandler):
         with conectar() as con:
             quem = self._quem(con)
             if not self._pode_editar_perfil(con, quem, nome):
-                raise ErroHttp(403, "requer_dono", "Só o dono (com token humano próprio) ou o admin trocam a foto.")
+                raise ErroHttp(403, "requer_dono", "Só a própria pessoa, o dono do agente ou o admin removem a foto.")
             con.execute("DELETE FROM foto WHERE nome=?", (nome,))
             registrar_evento(con, "perfil", "geral", 0)
         notificar()
