@@ -1,6 +1,6 @@
 # Plano: memória da equipe (banco de contexto em grafo)
 
-Status: proposta, aguardando aprovação do José · Autores: claude-joao (plano), Lume/claude-jose (desenho original, mensagens [125], [130], [132]) · Pedido por: João Vitor ([154], [160])
+Status: fases 1–3 no ar (PRs #1 e #2, deploy em [270]); fase 4 com o Lume; próximas fases na seção 11 · Autores: claude-joao (plano), Lume/claude-jose (desenho original, mensagens [125], [130], [132]) · Pedido por: João Vitor ([154], [160], [282])
 
 ## 1. Objetivo
 
@@ -95,12 +95,13 @@ Aba **Memória** ao lado de **Quadro**: busca, lista dos vigentes agrupada por s
 
 | Fase | Entrega | Quem |
 |---|---|---|
-| 0 | Aprovação deste plano pelo José; tokens próprios para claude-joao e joao-vitor (pré-requisito do Lume, msg [159]) | José |
-| 1 | Migração 9 + rotas `/fatos` + testes no `relay_server.py` | claude-joao, revisão do Lume |
-| 2 | Ferramentas no `relay_mcp.py` | claude-joao |
-| 3 | `fatos` no `encerrar_reuniao` + candidatos | claude-joao |
-| 4 | Aba Memória no `web/` | José / Lume |
-| 5 | Porta para o `api/` em Rust | Julio |
+| 0 | Aprovação deste plano pelo José; tokens próprios para claude-joao e joao-vitor (pré-requisito do Lume, msg [159]) | José · tokens ainda pendentes |
+| 1 | ✅ Migração 10 + rotas `/fatos` + testes no `relay_server.py` (PR #1) | claude-joao, revisão do Lume |
+| 2 | ✅ Ferramentas `buscar_memoria` e `registrar_fato` (PR #1) | claude-joao |
+| 3 | ✅ `fatos` no `encerrar_reuniao` + candidatos confirmados só por humano (PR #2, migração 11) | claude-joao |
+| 4 | Aba Memória no `web/` e no app | Lume |
+| 5–10 | Ver seção 11 | claude-joao (back), Lume (telas) |
+| — | Porta para o `api/` em Rust | Julio |
 
 Cada fase é um PR pequeno, revisado no relay antes de entrar no servidor do José.
 
@@ -117,3 +118,75 @@ Cada fase é um PR pequeno, revisado no relay antes de entrar no servidor do Jos
 1. Quem pode registrar fato direto (sem passar por candidato): qualquer agente da sala, ou só humanos e admins?
 2. Normalizar sujeitos (`relay` vs `Relay` vs `o relay`)? Proposta: comparação `COLLATE NOCASE` agora, aliases depois se doer.
 3. Retenção: fatos superados ficam para sempre ou seguem a mesma retenção das mensagens?
+
+## 11. Próximas fases (5 em diante)
+
+Pedido do João em [282]. O que está no ar hoje: fatos com origem obrigatória, busca sem acento, cadeia de versões (o novo supera o antigo, nada se apaga) e fatos propostos em atas, que só viram memória quando um humano participante confirma. A ordem abaixo vai do que destrava mais para o que depende de outros planos. Cada fase é um PR pequeno; as migrações começam depois da 13, que é dos artefatos do Lume ([281]).
+
+### Fase 5 — Autoria e acesso de verdade
+
+Fecha os dois itens que ficaram da revisão do PR #1 ([237]).
+
+- **Autor pelo token**: com token de agente ou sessão, o servidor define o `autor`; o `de` do corpo só vale com o token de admin e passa a ser registrado como `autor_declarado` (auditoria). Quando os tokens próprios existirem, o admin+`de` deixa de registrar fato.
+- **Quem registra direto**: humano registra vigente; **agente registra como candidato**, igual à ata. Um humano da sala confirma. Responde o item 1 da seção 10.
+- **Acesso por sala**: `GET /fatos` e `GET /fatos/{id}` passam a respeitar os papéis do `PLANO-PAPEIS.md` (observador lê, membro propõe). Enquanto os papéis não existirem, fica como hoje.
+- Depende de: tokens próprios (fase 0) e papéis (fase 3 do PLANO-PAPEIS).
+
+### Fase 6 — O grafo de verdade: aliases e vizinhança
+
+Hoje é uma lista de triplas; aqui ela vira navegável.
+
+```sql
+CREATE TABLE alias (sala TEXT NOT NULL, nome TEXT NOT NULL COLLATE NOCASE, canonico TEXT NOT NULL,
+                    criado_por TEXT NOT NULL, criado REAL NOT NULL, PRIMARY KEY (sala, nome));
+```
+
+- **Aliases**: "o relay", "Relay" e "relay-mcp" apontam para `relay`. O registro e a busca normalizam o sujeito (e o objeto, quando ele também é uma entidade conhecida). Responde o item 2 da seção 10.
+- **Vizinhança**: `GET /memoria/grafo?sala&sujeito&profundidade=1..2` devolve nós e arestas vigentes a partir de um sujeito (o que ele usa, quem cuida dele, o que depende dele), no máximo 50 arestas.
+- **MCP**: `vizinhanca(sujeito)` em texto enxuto (`relay → usa → SSE (ata 3)`), para o agente explorar sem buscar palavra por palavra.
+- **Web** (Lume): o grafo como mapa simples na aba Memória, clicando num nó para expandir.
+
+### Fase 7 — Memória do agente (privada, do dono)
+
+É o que o João pediu em [271]: o dono vê a memória da IA dele.
+
+- Coluna `escopo` em `fato`: `sala` (como hoje) ou `agente`, com `dono_agente`.
+- Fato de escopo `agente` só é lido pelo próprio agente e pelo humano dono dele (`agente.dono`, do PLANO-PAPEIS). Nunca aparece para a sala, nem na busca de outros.
+- **Promover**: o agente ou o dono pode propor um fato privado para a sala; ele vira candidato e passa pela confirmação humana.
+- Origem continua obrigatória (pode ser uma mensagem privada com o dono, já que não sai do escopo).
+- Entra no perfil (PLANO-PERFIL do Lume): aba "Memória" visível só para o dono.
+- Depende de: `agente.dono` (fase 1 do PLANO-PAPEIS).
+
+### Fase 8 — Contexto ao conectar, com orçamento de tokens
+
+A memória só ajuda se o agente a usar sem gastar contexto.
+
+- Colunas `usos` e `usado_em` em `fato`, atualizadas quando o fato aparece num resultado de `buscar_memoria` que o agente usou (o MCP manda um `POST /fatos/usados` com os ids citados).
+- Ao conectar, o MCP entrega junto da persona um **resumo da memória da sala**: os fatos vigentes mais usados e mais recentes, até ~300 tokens, com os ids para o agente abrir o resto sob demanda.
+- Fato vigente sem uso há 90 dias vira "frio": continua na busca, mas sai do resumo.
+
+### Fase 9 — Mais origens
+
+- `decisao` (PLANO-PAPEIS): decisão aprovada vira fato vigente automaticamente, com os votos como prova.
+- `repo` (PLANO-REPOS): PR mergeado pode ser origem de um fato ("relay usa FTS5", origem PR #1).
+- Tarefa concluída **sugere** um candidato ("o que ficou decidido aqui?"), nunca grava sozinha.
+
+### Fase 10 — Retenção e limpeza
+
+- Fatos superados ficam para sempre por padrão (são o histórico); a retenção da sala pode valer para eles com `RELAY_RETENCAO_FATOS_DIAS`.
+- Se a mensagem de origem for apagada, o fato **não** some: ganha `origem_apagada=1` e o selo de origem mostra "mensagem apagada", para não sumir uma decisão por causa de uma limpeza de chat.
+- Toda remoção ou edição de texto passa pelo `'delete'` do FTS (nota na migração 10).
+- Responde o item 3 da seção 10.
+
+### Ordem sugerida
+
+| Fase | Por que agora | Depende de |
+|---|---|---|
+| 6 | Não depende de ninguém e deixa a memória navegável já | — |
+| 8 | Faz os agentes realmente usarem a memória | — |
+| 5 | Fecha a autoria e o acesso | tokens próprios + papéis |
+| 7 | Memória privada do agente (pedido do João) | `agente.dono` |
+| 9 | Mais fontes de fato | PLANO-PAPEIS e PLANO-REPOS |
+| 10 | Limpeza | — |
+
+Nada começa sem o ok do José, e as migrações esperam a 13 dos artefatos entrar.
