@@ -69,6 +69,10 @@ private fun Raiz(vm: RelayViewModel) {
                 1 -> TelaEntrar(vm, estado.aviso)
                 else -> {
                     TelaPrincipal(vm, estado)
+                    estado.tarefa?.let { id ->
+                        androidx.activity.compose.BackHandler { vm.fecharTarefa() }
+                        dev.josev.relay.ui.quadro.TelaTarefa(vm, id, estado.versaoTarefas)
+                    }
                     estado.perfil?.let { nome ->
                         androidx.activity.compose.BackHandler { vm.fecharPerfil() }
                         dev.josev.relay.ui.perfil.TelaPerfil(vm, nome, admin = estado.admin)

@@ -284,6 +284,7 @@ private fun Conversa(vm: RelayViewModel, estado: Estado, aoMenu: (() -> Unit)?, 
         bottomBar = { if (!WindowInsets.isImeVisible) BarraInferior(aba, aoAba) },
         contentWindowInsets = WindowInsets(0),
     ) { pad ->
+        if (aba == Aba.QUADRO) { dev.josev.relay.ui.quadro.Quadro(vm, estado.sala, estado.versaoTarefas, Modifier.padding(pad)); return@Scaffold }
         if (aba != Aba.CONVERSA) { EmBreve(aba, Modifier.padding(pad)); return@Scaffold }
         Column(Modifier.fillMaxSize().padding(pad).consumeWindowInsets(pad).imePadding()) {
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
