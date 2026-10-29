@@ -66,6 +66,13 @@ object Atualizador {
 
     private fun prefs(ctx: Context) = ctx.getSharedPreferences("atualizacao", Context.MODE_PRIVATE)
 
+    /**
+     * Tentativa sem toque que não concluiu (HyperOS/MIUI seguram a sessão em segundo plano esperando o
+     * verificador). Se a versão ainda é mais nova que a instalada, a próxima abertura cai no diálogo.
+     */
+    fun marcarTentativa(ctx: Context, codigo: Int) = prefs(ctx).edit().putInt("tentou", codigo).apply()
+    fun silenciosoFalhou(ctx: Context, codigo: Int) = prefs(ctx).getInt("tentou", -1) >= codigo
+
     /** Guarda as notas antes de instalar: a 1ª abertura da versão nova mostra "o que mudou". */
     fun lembrarNotas(ctx: Context, v: Versao) = prefs(ctx).edit().putInt("codigo", v.codigo).putString("nome", v.nome).putString("notas", v.notas).apply()
 
@@ -73,6 +80,7 @@ object Atualizador {
     fun novidades(ctx: Context): Versao? {
         val p = prefs(ctx)
         if (p.getInt("codigo", -1) != BuildConfig.VERSION_CODE) return null
+        p.edit().remove("tentou").apply()
         val v = Versao(BuildConfig.VERSION_CODE, p.getString("nome", "").orEmpty(), p.getString("notas", "").orEmpty(), "", 0)
         p.edit().clear().apply()
         return v
@@ -102,6 +110,8 @@ object Atualizador {
     /** Baixa o APK direto numa sessão do PackageInstaller; o sistema pede confirmação. */
     suspend fun instalar(ctx: Context, v: Versao, progresso: (Float) -> Unit) = withContext(Dispatchers.IO) {
         val instalador = ctx.packageManager.packageInstaller
+        // Sessões antigas presas (o sistema não as termina sozinho) seguram a nova: limpa antes.
+        instalador.mySessions.forEach { runCatching { instalador.abandonSession(it.sessionId) } }
         val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL).apply {
             setAppPackageName(ctx.packageName)
             if (v.tamanho > 0) setSize(v.tamanho)
@@ -146,7 +156,9 @@ class AtualizarSozinho(ctx: Context, params: androidx.work.WorkerParameters) : a
         }
         if (naTela) return Result.success()  // não derruba o app no meio do uso; tenta quando sair da tela
         val v = runCatching { Atualizador.verificar() }.getOrElse { return Result.retry() } ?: return Result.success()
+        if (Atualizador.silenciosoFalhou(ctx, v.codigo)) return Result.success()  // já travou uma vez: espera o diálogo
         Atualizador.lembrarNotas(ctx, v)
+        Atualizador.marcarTentativa(ctx, v.codigo)
         return runCatching { Atualizador.instalar(ctx, v) {} }.fold({ Result.success() }, { Result.retry() })
     }
 }
@@ -157,8 +169,11 @@ class ResultadoInstalacao : BroadcastReceiver() {
         when (intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)) {
             PackageInstaller.STATUS_PENDING_USER_ACTION -> {
                 @Suppress("DEPRECATION")
-                val confirmar = intent.getParcelableExtra<Intent>(Intent.EXTRA_INTENT) ?: return
-                ctx.startActivity(confirmar.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                val confirmar = intent.getParcelableExtra<Intent>(Intent.EXTRA_INTENT)?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) ?: return
+                val naTela = androidx.lifecycle.ProcessLifecycleOwner.get().lifecycle.currentState
+                    .isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)
+                // Em segundo plano o Android bloqueia abrir tela: vira notificação "toque pra atualizar".
+                if (naTela) ctx.startActivity(confirmar) else avisarConfirmacao(ctx, confirmar)
             }
             PackageInstaller.STATUS_SUCCESS -> Unit
             else -> android.widget.Toast.makeText(ctx,
@@ -166,4 +181,16 @@ class ResultadoInstalacao : BroadcastReceiver() {
                 android.widget.Toast.LENGTH_LONG).show()
         }
     }
+}
+
+private fun avisarConfirmacao(ctx: Context, confirmar: Intent) {
+    val nm = ctx.getSystemService(android.app.NotificationManager::class.java)
+    nm.createNotificationChannel(android.app.NotificationChannel("atualizacao", "Atualizações do app",
+        android.app.NotificationManager.IMPORTANCE_DEFAULT))
+    val pi = PendingIntent.getActivity(ctx, 7, confirmar, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+    nm.notify(7, android.app.Notification.Builder(ctx, "atualizacao")
+        .setSmallIcon(android.R.drawable.stat_sys_download_done)
+        .setContentTitle("Nova versão do Relay pronta")
+        .setContentText("Toque para atualizar")
+        .setContentIntent(pi).setAutoCancel(true).build())
 }
