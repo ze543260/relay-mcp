@@ -68,6 +68,8 @@ data class Estado(
     /** Sobe a cada evento "tarefa" do SSE: quadro e tela da tarefa recarregam. */
     val versaoTarefas: Int = 0,
     val toast: Toast? = null,
+    /** Artefato aberto em tela cheia, ou null. */
+    val artefato: Long? = null,
     /** Mensagem pra qual a conversa deve rolar e destacar (citação, busca); a tela zera ao chegar. */
     val irPara: Long? = null,
     /** Buscando páginas antigas atrás do alvo de "ir para": a tela não rola pro fim nesse meio-tempo. */
@@ -496,6 +498,15 @@ class RelayViewModel(app: Application) : AndroidViewModel(app) {
     suspend fun marcarItem(id: Long, item: Long, feito: Boolean) = api!!.marcarItem(id, item, feito)
     suspend fun apagarItem(id: Long, item: Long) = api!!.apagarItem(id, item)
     val eu: String get() = _estado.value.conexao?.nome.orEmpty()
+
+    // --- memória e artefatos --------------------------------------------------
+    suspend fun fatos(q: String?) = api!!.fatos(_estado.value.sala, q)
+    suspend fun candidatos() = api!!.candidatos(_estado.value.sala)
+    suspend fun decidirFato(id: Long, confirmar: Boolean) = api!!.decidirFato(id, if (confirmar) "confirmar" else "rejeitar")
+    suspend fun artefatos() = api!!.artefatos(_estado.value.sala)
+    suspend fun artefato(id: Long) = api!!.artefato(id)
+    fun abrirArtefato(id: Long) = _estado.update { it.copy(artefato = id) }
+    fun fecharArtefato() = _estado.update { it.copy(artefato = null) }
 
     // --- perfil --------------------------------------------------------------
     fun abrirPerfil(nome: String) { if (nome != "relay") _estado.update { it.copy(perfil = nome) } }

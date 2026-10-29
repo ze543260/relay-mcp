@@ -111,6 +111,10 @@ private fun Raiz(vm: RelayViewModel) {
                         androidx.activity.compose.BackHandler { vm.fecharTarefa() }
                         dev.josev.relay.ui.quadro.TelaTarefa(vm, id, estado.versaoTarefas)
                     }
+                    estado.artefato?.let { id ->
+                        androidx.activity.compose.BackHandler { vm.fecharArtefato() }
+                        dev.josev.relay.ui.artefatos.TelaArtefato(vm, id, estado.conexao?.nome.orEmpty()) { vm.fecharArtefato() }
+                    }
                     estado.perfil?.let { nome ->
                         androidx.activity.compose.BackHandler { vm.fecharPerfil() }
                         dev.josev.relay.ui.perfil.TelaPerfil(vm, nome, admin = estado.admin)

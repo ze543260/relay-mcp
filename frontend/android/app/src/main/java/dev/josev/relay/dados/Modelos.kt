@@ -166,3 +166,25 @@ data class Tarefa(
     val itens: List<ItemChecklist> = emptyList(),
     val atividade: List<Atividade> = emptyList(),
 )
+
+@Serializable
+data class OrigemFatoMemoria(val tipo: String, val id: String)
+
+@Serializable
+data class Fato(
+    val id: Long, val sala: String, val sujeito: String, val predicado: String, val objeto: String,
+    val origem: OrigemFatoMemoria, val estado: String, val autor: String,
+    @SerialName("confirmado_por") val confirmadoPor: String? = null,
+    @SerialName("criado_em") val criadoEm: String,
+)
+
+@Serializable
+data class Artefato(
+    val id: Long, val sala: String, val titulo: String, val tipo: String, val versao: Int, val estado: String,
+    @SerialName("criado_por") val criadoPor: String,
+    @SerialName("atualizado_em") val atualizadoEm: String,
+    @SerialName("autor_versao") val autorVersao: String? = null,
+    val resumo: String? = null,
+    val conteudo: String? = null,
+    @SerialName("msg_id") val msgId: Long? = null,
+)

@@ -180,6 +180,14 @@ class RelayApi(private val conexao: Conexao) {
         url("memoria/grafo", "sala" to sala, "profundidade" to 1,
             "centro" to agente?.let { "agente:$it" }, "sujeito" to sujeito)).build()))
 
+    // memória e artefatos
+    suspend fun fatos(sala: String, q: String?): List<Fato> =
+        json.decodeFromString(executar(pedido(url("fatos", "sala" to sala, "limite" to 50, "q" to q?.takeIf { it.isNotBlank() })).build()))
+    suspend fun candidatos(sala: String): List<Fato> = json.decodeFromString(executar(pedido(url("fatos/candidatos", "sala" to sala)).build()))
+    suspend fun decidirFato(id: Long, acao: String) { executar(pedido(url("fatos/$id/$acao")).post(corpo(emptyMap())).build()) }
+    suspend fun artefatos(sala: String): List<Artefato> = json.decodeFromString(executar(pedido(url("artefatos", "sala" to sala)).build()))
+    suspend fun artefato(id: Long): Artefato = json.decodeFromString(executar(pedido(url("artefatos/$id")).build()))
+
     suspend fun apagar(id: Long) {
         executar(pedido(url("mensagens/$id")).delete().build())
     }
