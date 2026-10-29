@@ -23,6 +23,9 @@ GATILHOS = [g.strip().lower() for g in os.environ.get("RELAY_GATILHOS", "").spli
 SEMPRE = {g.strip().lower() for g in os.environ.get("RELAY_SEMPRE", "").split(",") if g.strip()}
 
 
+# Auditoria de aparelhos (perfil → Acesso no relay): qual programa e em qual máquina.
+AGENTE_USUARIO = f"relay-vigia/1.0 ({__import__('socket').gethostname()[:40]})"
+
 def importa(m: dict) -> bool:
     """Sem gatilhos, tudo importa. Com gatilhos, só o que é comigo (ou de quem está em SEMPRE)."""
     if not GATILHOS:
@@ -34,7 +37,7 @@ def importa(m: dict) -> bool:
 
 
 def get(caminho: str) -> object:
-    req = urllib.request.Request(URL + caminho, headers={"Authorization": f"Bearer {TOKEN}"})
+    req = urllib.request.Request(URL + caminho, headers={"Authorization": f"Bearer {TOKEN}", "User-Agent": AGENTE_USUARIO})
     with urllib.request.urlopen(req, timeout=15) as r:
         return json.loads(r.read())
 

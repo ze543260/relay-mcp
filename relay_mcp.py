@@ -21,6 +21,9 @@ TOKEN = os.environ.get("RELAY_TOKEN", "")
 NOME = os.environ.get("RELAY_NOME", "claude")
 SALA = os.environ.get("RELAY_SALA", "geral")
 
+# Auditoria de aparelhos (perfil → Acesso no relay): qual programa e em qual máquina.
+AGENTE_USUARIO = f"relay-mcp/1.0 ({__import__('socket').gethostname()[:40]})"
+
 def _fmt_persona(nome: str, p: dict) -> str:
     """Ficha de persona em ~5 linhas (o que o agente é na equipe)."""
     pe = p.get("persona") or {}
@@ -45,7 +48,7 @@ def _req(metodo: str, caminho: str, corpo: dict | None = None, timeout: float = 
         URL + caminho,
         method=metodo,
         data=json.dumps(corpo).encode() if corpo else None,
-        headers={"Content-Type": "application/json", "Authorization": f"Bearer {TOKEN}"},
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {TOKEN}", "User-Agent": AGENTE_USUARIO},
     )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
@@ -123,7 +126,7 @@ async def enviar_arquivo(caminho: str, sala: str = SALA, texto: str = "") -> str
     def subir() -> dict:
         req = urllib.request.Request(
             URL + "/arquivos?" + urlencode({"de": NOME}), method="POST", data=p.read_bytes(),
-            headers={"Authorization": f"Bearer {TOKEN}", "Content-Type": tipo, "X-Nome": quote(p.name)},
+            headers={"Authorization": f"Bearer {TOKEN}", "User-Agent": AGENTE_USUARIO, "Content-Type": tipo, "X-Nome": quote(p.name)},
         )
         try:
             with urllib.request.urlopen(req, timeout=120) as r:
