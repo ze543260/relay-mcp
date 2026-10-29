@@ -275,6 +275,21 @@ private fun Acesso(vm: RelayViewModel, p: Perfil, ativo: Boolean, criado: String
     var confirmar by remember { mutableStateOf(false) }
     val escopo = rememberCoroutineScope()
     Text(if (ativo) "Token ativo desde ${criado.take(10).split('-').reversed().joinToString("/")}." else "Sem token ativo.")
+    // Auditoria: onde esse nome entrou (app, navegador, MCP), do mais recente pro mais antigo.
+    val aparelhos = p.acesso?.dispositivos.orEmpty()
+    if (aparelhos.isNotEmpty()) {
+        Text("Dispositivos", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 8.dp))
+        aparelhos.forEach { d ->
+            Column(Modifier.padding(vertical = 4.dp)) {
+                Text(d.rotulo, fontWeight = androidx.compose.ui.text.font.FontWeight.Medium)
+                Text(listOfNotNull(
+                    "visto ${quando(d.ultimoEm)}", "desde ${quando(d.primeiroEm)}", d.ip,
+                    when (d.via) { "sessao" -> "login no web"; "sessao_admin" -> "login com token de admin"; else -> "token" },
+                ).joinToString(" · "), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
     if (admin && ativo) OutlinedButton({ confirmar = true }) { Text("Revogar token", color = MaterialTheme.colorScheme.error) }
     if (confirmar) AlertDialog(
         onDismissRequest = { confirmar = false },

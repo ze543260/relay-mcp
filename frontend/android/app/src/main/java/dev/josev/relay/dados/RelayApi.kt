@@ -42,6 +42,12 @@ sealed interface Evento {
 
 /** `todas=1`: com token de admin, vê também as privadas (igual ao dashboard); para agentes o servidor ignora. */
 class RelayApi(private val conexao: Conexao) {
+    private companion object {
+        /** Auditoria de aparelhos (perfil → Acesso): versão do app, modelo e Android. */
+        val AGENTE_USUARIO = "Relay-Android/${dev.josev.relay.BuildConfig.VERSION_NAME} " +
+            "(${android.os.Build.MODEL.replace(Regex("[;()]"), " ").trim()}; Android ${android.os.Build.VERSION.RELEASE})"
+    }
+
     private val json = Json { ignoreUnknownKeys = true; explicitNulls = false }
     private val base: HttpUrl = conexao.url.trimEnd('/').toHttpUrl()
     private val http = OkHttpClient.Builder()
@@ -59,6 +65,7 @@ class RelayApi(private val conexao: Conexao) {
 
     private fun pedido(u: HttpUrl) = Request.Builder().url(u)
         .header("Authorization", "Bearer ${conexao.token}")
+        .header("User-Agent", AGENTE_USUARIO)
         .header("X-Relay", "1")
 
     private suspend fun executar(req: Request): String = withContext(Dispatchers.IO) {

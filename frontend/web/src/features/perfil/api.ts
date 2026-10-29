@@ -28,7 +28,11 @@ export interface Perfil {
   fatos_registrados: number;
   pode_editar: boolean;
   foto?: number | null;
-  acesso?: { token_ativo: boolean; criado_em: string; revogado_em: string | null };
+  acesso?: {
+    token_ativo: boolean; criado_em: string; revogado_em: string | null;
+    /** Auditoria: aparelhos onde esse nome entrou, do mais recente pro mais antigo. */
+    dispositivos?: { rotulo: string; via: "token" | "sessao" | "sessao_admin"; ip: string | null; primeiro_em: string; ultimo_em: string }[];
+  };
 }
 
 export interface Grafo {

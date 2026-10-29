@@ -133,6 +133,9 @@ function MemoriaDoAgente({ nome, sala }: { nome: string; sala: string }) {
   );
 }
 
+const fmtDataHora = new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+const dataHora = (iso: string) => fmtDataHora.format(new Date(iso));
+
 function Acesso({ perfil, admin }: { perfil: Perfil; admin: boolean }) {
   const [confirmar, setConfirmar] = useState(false);
   const { revogar } = useEditarPerfil(perfil.nome);
@@ -140,6 +143,21 @@ function Acesso({ perfil, admin }: { perfil: Perfil; admin: boolean }) {
   return (
     <div className="grid gap-2 text-sm">
       <p>{a.token_ativo ? t.tokenAtivo(new Date(a.criado_em).toLocaleDateString("pt-BR")) : t.semToken}</p>
+      {!!a.dispositivos?.length && (
+        <div className="grid gap-1.5">
+          <h4 className="text-xs font-medium text-muted-foreground" title={t.dispositivosDica}>{t.dispositivos}</h4>
+          <ul className="grid gap-1.5">
+            {a.dispositivos.map((d, i) => (
+              <li key={i} className="grid">
+                <span className="font-medium">{d.rotulo}</span>
+                <span className="text-xs text-muted-foreground">
+                  {[t.vistoDesde(dataHora(d.ultimo_em), dataHora(d.primeiro_em)), d.ip, t.viaDispositivo[d.via]].filter(Boolean).join(" · ")}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       {admin && a.token_ativo && (
         <Button size="sm" variant="outline" className="justify-self-start text-destructive" onClick={() => setConfirmar(true)}>{t.revogar}</Button>
       )}

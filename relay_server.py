@@ -229,6 +229,11 @@ MIGRACOES = [
     """CREATE TABLE IF NOT EXISTS foto (
          nome TEXT PRIMARY KEY, tipo TEXT NOT NULL, dados BLOB NOT NULL, versao INTEGER NOT NULL,
          editado_por TEXT NOT NULL, quando REAL NOT NULL);""",
+    # 20: dispositivos (auditoria): onde cada nome/token foi usado. Um por (nome, aparelho); o aparelho é o
+    # hash do User-Agent; guarda o rótulo legível, o último IP e quando foi visto pela 1ª e última vez.
+    """CREATE TABLE IF NOT EXISTS dispositivo (
+         nome TEXT NOT NULL, chave TEXT NOT NULL, rotulo TEXT NOT NULL, ua TEXT NOT NULL, via TEXT NOT NULL,
+         ip TEXT, primeiro REAL NOT NULL, ultimo REAL NOT NULL, PRIMARY KEY (nome, chave));""",
 ]
 
 STATUS_TAREFA = ("a_fazer", "fazendo", "revisao", "feito")
@@ -707,6 +712,49 @@ def identificar(headers, con: sqlite3.Connection, metodo: str) -> Quem:
     raise ErroHttp(401, "token_invalido", "Envie Authorization: Bearer <token>.")
 
 
+def rotulo_dispositivo(ua: str) -> str:
+    """Nome legível do aparelho a partir do User-Agent (sem guardar nada além do próprio UA)."""
+    m = re.match(r"Relay-Android/([\w.]+) \(([^;]*); Android ([\w.]+)\)", ua)
+    if m:
+        return f"App Android {m.group(1)} · {m.group(2)} · Android {m.group(3)}"
+    m = re.match(r"relay-(mcp|vigia|mascote)/[\w.]+ \(([^)]*)\)", ua)
+    if m:
+        return f"{ {'mcp': 'MCP', 'vigia': 'Vigia', 'mascote': 'Mascote'}[m.group(1)]} · {m.group(2)}"
+    if ua.startswith("okhttp"):
+        return "App Android (versão antiga)"
+    if ua.startswith("Python-urllib") or ua.startswith("python-"):
+        return "Script Python (MCP antigo)"
+    if ua.startswith("curl/"):
+        return "curl"
+    so = next((n for chave, n in (("Android", "Android"), ("iPhone", "iPhone"), ("iPad", "iPad"), ("Windows", "Windows"),
+                                  ("Mac OS", "macOS"), ("CrOS", "ChromeOS"), ("Linux", "Linux")) if chave in ua), None)
+    nav = next((n for chave, n in (("Edg/", "Edge"), ("OPR/", "Opera"), ("Firefox/", "Firefox"), ("Chrome/", "Chrome"),
+                                   ("Safari/", "Safari")) if chave in ua), None)
+    if nav or so:
+        return " · ".join(x for x in (f"Navegador {nav}" if nav else "Navegador", so) if x)
+    return (ua[:60] or "desconhecido")
+
+
+_dispositivos_vistos: dict[tuple[str, str], float] = {}
+
+
+def registrar_dispositivo(con: sqlite3.Connection, quem: "Quem", headers, ip: str | None) -> None:
+    """Auditoria: anota o aparelho de quem tem nome (token de agente ou sessão). No máximo 1 escrita a cada 2 min."""
+    if not quem.nome or (quem.admin and not quem.via_cookie):
+        return
+    ua = (headers.get("User-Agent") or "")[:300]
+    chave = hashlib.sha256(ua.encode()).hexdigest()[:16]
+    agora = time.time()
+    if agora - _dispositivos_vistos.get((quem.nome, chave), 0) < 120:
+        return
+    _dispositivos_vistos[(quem.nome, chave)] = agora
+    via = "sessao_admin" if quem.admin else ("sessao" if quem.via_cookie else "token")
+    con.execute(
+        """INSERT INTO dispositivo (nome, chave, rotulo, ua, via, ip, primeiro, ultimo) VALUES (?,?,?,?,?,?,?,?)
+           ON CONFLICT(nome, chave) DO UPDATE SET ultimo=excluded.ultimo, ip=excluded.ip, via=excluded.via""",
+        (quem.nome, chave, rotulo_dispositivo(ua), ua, via, ip, agora, agora))
+
+
 def marcar_visto(con: sqlite3.Connection, nome: str | None) -> None:
     if nome and NOME_RE.match(nome):
         con.execute(
@@ -1021,6 +1069,7 @@ class Handler(BaseHTTPRequestHandler):
     def _quem(self, con: sqlite3.Connection) -> Quem:
         quem = identificar(self.headers, con, self.command)
         marcar_visto(con, quem.nome)
+        registrar_dispositivo(con, quem, self.headers, self.client_address[0] if self.client_address else None)
         return quem
 
     def criar_sessao(self, _q: dict) -> None:
@@ -2453,6 +2502,8 @@ class Handler(BaseHTTPRequestHandler):
             salas = [r[0] for r in con.execute("SELECT sala FROM msg WHERE de=? GROUP BY sala ORDER BY MAX(id) DESC LIMIT 10", (nome,))]
             pode = self._pode_editar_perfil(con, quem, nome)
             foto = con.execute("SELECT versao FROM foto WHERE nome=?", (nome,)).fetchone()
+            aparelhos = con.execute("SELECT rotulo, via, ip, primeiro, ultimo FROM dispositivo WHERE nome=? "
+                                    "ORDER BY ultimo DESC LIMIT 30", (nome,)).fetchall()
             tipo = ag[0] if ag else ("ia" if re.match(r"^(claude|gemma|qwen|llama|gpt)", nome) else "humano")
         v = visto[0] if visto else None
         perfil = {
@@ -2466,7 +2517,10 @@ class Handler(BaseHTTPRequestHandler):
         }
         if pode and ag:  # acesso: só dono/admin
             perfil["acesso"] = {"token_ativo": bool(ag[4] and not ag[3]), "criado_em": iso(ag[2]),
-                                "revogado_em": iso(ag[3]) if ag[3] else None}
+                                "revogado_em": iso(ag[3]) if ag[3] else None,
+                                # Auditoria: aparelhos onde esse nome entrou, do mais recente pro mais antigo.
+                                "dispositivos": [{"rotulo": r, "via": v_, "ip": ip, "primeiro_em": iso(p), "ultimo_em": iso(u)}
+                                                 for r, v_, ip, p, u in aparelhos]}
         self._json(200, perfil)
 
     def editar_persona(self, nome: str) -> None:
