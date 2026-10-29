@@ -177,6 +177,17 @@ MIGRACOES = [
          id INTEGER PRIMARY KEY, tarefa_id INTEGER NOT NULL, de TEXT NOT NULL, campo TEXT NOT NULL,
          antes TEXT, depois TEXT, quando REAL NOT NULL);
        CREATE INDEX IF NOT EXISTS atividade_tarefa ON atividade(tarefa_id, id);""",
+    # 13: artefatos versionados (docs/PLANO-ARTEFATOS.md); nada se apaga, cada edição é uma versão nova.
+    """CREATE TABLE IF NOT EXISTS artefato (
+         id INTEGER PRIMARY KEY, sala TEXT NOT NULL, titulo TEXT NOT NULL, tipo TEXT NOT NULL,
+         versao_atual INTEGER NOT NULL DEFAULT 1, estado TEXT NOT NULL DEFAULT 'rascunho',
+         criado_por TEXT NOT NULL, criado REAL NOT NULL, atualizado REAL NOT NULL, msg_id INTEGER);
+       CREATE INDEX IF NOT EXISTS artefato_sala ON artefato(sala, atualizado);
+       CREATE TABLE IF NOT EXISTS artefato_versao (
+         artefato_id INTEGER NOT NULL, versao INTEGER NOT NULL, conteudo TEXT NOT NULL, resumo TEXT,
+         autor TEXT NOT NULL, criado REAL NOT NULL, PRIMARY KEY (artefato_id, versao));""",
+    # 14: fato gerado pela aprovação do artefato (a próxima aprovação supera este; arquivar encerra)
+    "ALTER TABLE artefato ADD COLUMN fato_id INTEGER;",
 ]
 
 STATUS_TAREFA = ("a_fazer", "fazendo", "revisao", "feito")
@@ -429,6 +440,39 @@ def humano_confirmado(con: sqlite3.Connection, quem: "Quem") -> str | None:
     return quem.nome if linha else None
 
 
+TIPOS_ARTEFATO = ("markdown", "mermaid", "html", "svg")
+ARTEFATO_MAX = 200 * 1024
+COLS_ARTEFATO = "id, sala, titulo, tipo, versao_atual, estado, criado_por, criado, atualizado, msg_id, fato_id"
+ICONE_ARTEFATO = {"markdown": "📄", "mermaid": "🔀", "html": "🖼️", "svg": "✏️"}
+VERSOES_MAX = 200
+ARTEFATO_TOTAL_MAX = 20 * 1024 * 1024
+
+
+def titulo_seguro(titulo: str) -> str:
+    """Título dentro da mensagem de sistema: sem marcador de cartão, sem menção e sem Markdown."""
+    t = titulo.replace("[[", "").replace("]]", "").replace("@", "@\u200b")
+    return re.sub(r"([\\`*_~\[\]<>|#])", r"\\\1", t)
+
+
+def artefato_para_json(r: tuple) -> dict:
+    i, sala, titulo, tipo, versao, estado, por, criado, atual, msg, _fato = r
+    return {"id": i, "sala": sala, "titulo": titulo, "tipo": tipo, "versao": versao, "estado": estado,
+            "criado_por": por, "criado_em": iso(criado), "atualizado_em": iso(atual), "msg_id": msg}
+
+
+def conteudo_artefato(c: dict) -> tuple[str, str | None]:
+    conteudo = c.get("conteudo")
+    if not isinstance(conteudo, str) or not conteudo.strip():
+        raise ErroHttp(400, "conteudo_invalido", "Mande o conteúdo do artefato.")
+    if len(conteudo.encode()) > ARTEFATO_MAX:
+        raise ErroHttp(413, "artefato_grande", "Artefato grande demais (máx. 200 KB por versão).")
+    if CREDENCIAL_RE.search(conteudo):
+        raise ErroHttp(422, "credencial_detectada", "O artefato parece conter uma credencial. Não foi salvo.")
+    resumo = " ".join(str(c.get("resumo") or "").split())[:200] or None
+    return conteudo, resumo
+
+
+
 def consulta_fts(termo: str) -> str:
     """Termo livre -> expressão FTS5 segura: cada palavra entre aspas, com prefixo (`reun` acha `reunião`)."""
     palavras = re.findall(r"\w+", termo)[:8]
@@ -628,7 +672,7 @@ class Handler(BaseHTTPRequestHandler):
         self._enviar(e.status, json.dumps(corpo, ensure_ascii=False).encode(),
                      "application/problem+json; charset=utf-8", extras)
 
-    def _corpo(self) -> dict:
+    def _corpo(self, maximo: int | None = None) -> dict:
         bruto = self.headers.get("Content-Length")
         if bruto is None:
             raise ErroHttp(411, "tamanho_obrigatorio", "Content-Length obrigatório.")
@@ -638,8 +682,8 @@ class Handler(BaseHTTPRequestHandler):
             raise ErroHttp(400, "tamanho_invalido", "Content-Length inválido.") from None
         if tam < 0:
             raise ErroHttp(400, "tamanho_invalido", "Content-Length inválido.")
-        if tam > TAM_MAX:
-            raise ErroHttp(413, "mensagem_grande", "Mensagem grande demais (máx. 64 KB).")
+        if tam > (maximo or TAM_MAX):
+            raise ErroHttp(413, "mensagem_grande", f"Pedido grande demais (máx. {(maximo or TAM_MAX) // 1024} KB).")
         try:
             dados = json.loads(self.rfile.read(tam) or b"{}")
         except ValueError:
@@ -682,6 +726,8 @@ class Handler(BaseHTTPRequestHandler):
                 ("GET", "/fatos"): self.fatos,
                 ("POST", "/fatos"): self.registrar_fato,
                 ("GET", "/fatos/candidatos"): self.candidatos,
+                ("GET", "/artefatos"): self.artefatos,
+                ("POST", "/artefatos"): self.criar_artefato,
             }
             if (metodo, caminho) in rotas:
                 return rotas[(metodo, caminho)](q)
@@ -717,6 +763,17 @@ class Handler(BaseHTTPRequestHandler):
                 return self.ver_fato(int(m.group(1)))
             if m and metodo == "POST" and m.group(2):
                 return self.decidir_fato(int(m.group(1)), m.group(2))
+            m = re.fullmatch(r"/artefatos/(\d+)(?:/(versoes|aprovar|arquivar))?", caminho)
+            if m:
+                aid, acao = int(m.group(1)), m.group(2)
+                if metodo == "GET" and acao is None:
+                    return self.ver_artefato(aid, q)
+                if metodo == "GET" and acao == "versoes":
+                    return self.versoes_artefato(aid)
+                if metodo == "PUT" and acao is None:
+                    return self.atualizar_artefato(aid)
+                if metodo == "POST" and acao in ("aprovar", "arquivar"):
+                    return self.decidir_artefato(aid, acao)
             m = re.fullmatch(r"/sprints/(\d+)", caminho)
             if m and metodo == "PATCH":
                 return self.alterar_sprint(int(m.group(1)))
@@ -1900,6 +1957,148 @@ class Handler(BaseHTTPRequestHandler):
             linha = con.execute(f"SELECT {COLS_FATO} FROM fato WHERE id=?", (fid,)).fetchone()
         notificar()
         self._json(200, fato_para_json(linha))
+
+
+    # artefatos (docs/PLANO-ARTEFATOS.md)
+
+    def _artefato(self, con: sqlite3.Connection, aid: int) -> dict:
+        linha = con.execute(f"SELECT {COLS_ARTEFATO} FROM artefato WHERE id=?", (aid,)).fetchone()
+        if not linha:
+            raise ErroHttp(404, "artefato_inexistente", "Artefato não existe.")
+        return artefato_para_json(linha)
+
+    def artefatos(self, q: dict) -> None:
+        sala = validar_sala(q.get("sala"))
+        with conectar() as con:
+            self._quem(con)
+            cols = ", ".join(f"a.{c}" for c in COLS_ARTEFATO.split(", "))
+            linhas = con.execute(
+                f"SELECT {cols}, v.autor, v.resumo FROM artefato a LEFT JOIN artefato_versao v "
+                "ON v.artefato_id=a.id AND v.versao=a.versao_atual WHERE a.sala=? ORDER BY a.atualizado DESC LIMIT 100",
+                (sala,)).fetchall()
+        a = []
+        for r in linhas:  # + quem mexeu por último e o resumo da versão atual
+            x = artefato_para_json(r[:-2])
+            x["autor_versao"], x["resumo"] = r[-2], r[-1]
+            a.append(x)
+        self._json(200, a)
+
+    def ver_artefato(self, aid: int, q: dict) -> None:
+        with conectar() as con:
+            self._quem(con)
+            a = self._artefato(con, aid)
+            try:
+                versao = int(q.get("versao") or a["versao"])
+            except ValueError:
+                raise ErroHttp(400, "versao_invalida", "versao deve ser inteiro.") from None
+            v = con.execute("SELECT conteudo, resumo, autor, criado FROM artefato_versao WHERE artefato_id=? AND versao=?",
+                            (aid, versao)).fetchone()
+            if not v:
+                raise ErroHttp(404, "versao_inexistente", "Essa versão não existe.")
+        a.update({"versao_vista": versao, "conteudo": v[0], "resumo": v[1], "autor_versao": v[2], "versao_em": iso(v[3])})
+        self._json(200, a)
+
+    def versoes_artefato(self, aid: int) -> None:
+        with conectar() as con:
+            self._quem(con)
+            self._artefato(con, aid)
+            linhas = con.execute("SELECT versao, resumo, autor, criado, length(conteudo) FROM artefato_versao "
+                                 "WHERE artefato_id=? ORDER BY versao DESC", (aid,)).fetchall()
+        self._json(200, [{"versao": v, "resumo": r, "autor": a, "criado_em": iso(c), "tamanho": t} for v, r, a, c, t in linhas])
+
+    def criar_artefato(self, _q: dict) -> None:
+        c = self._corpo(ARTEFATO_MAX * 2 + 16 * 1024)  # folga pro escape do JSON; o limite real é no conteúdo
+        sala = validar_sala(c.get("sala"))
+        titulo = " ".join(str(c.get("titulo") or "").split())
+        tipo = c.get("tipo")
+        if not 1 <= len(titulo) <= 120:
+            raise ErroHttp(400, "titulo_invalido", "Título: 1–120 caracteres.")
+        if tipo not in TIPOS_ARTEFATO:
+            raise ErroHttp(400, "tipo_invalido", f"Tipo: {', '.join(TIPOS_ARTEFATO)}.")
+        conteudo, resumo = conteudo_artefato(c)
+        with conectar() as con:
+            autor = self._nome(self._quem(con), c)
+            espera = ENVIOS.consumir(autor)
+            if espera:
+                raise ErroHttp(429, "limite_excedido", "Devagar: limite de envio atingido.", espera)
+            agora = time.time()
+            cur = con.execute("INSERT INTO artefato (sala, titulo, tipo, criado_por, criado, atualizado) VALUES (?,?,?,?,?,?)",
+                              (sala, titulo, tipo, autor, agora, agora))
+            aid = cur.lastrowid
+            con.execute("INSERT INTO artefato_versao VALUES (?,1,?,?,?,?)", (aid, conteudo, resumo, autor, agora))
+            # Cartão na conversa: mensagem de sistema com o marcador que o web/app transformam em cartão.
+            mid = mensagem_sistema(con, sala, f"{ICONE_ARTEFATO[tipo]} **{autor}** criou o artefato [[artefato:{aid}]] "
+                                              f"**{titulo_seguro(titulo)}** ({tipo}, v1)")
+            con.execute("UPDATE artefato SET msg_id=? WHERE id=?", (mid, aid))
+            registrar_evento(con, "artefato", sala, aid)
+            a = self._artefato(con, aid)
+        notificar()
+        self._json(201, a)
+
+    def atualizar_artefato(self, aid: int) -> None:
+        c = self._corpo(ARTEFATO_MAX * 2 + 16 * 1024)
+        conteudo, resumo = conteudo_artefato(c)
+        base = c.get("base")
+        if not isinstance(base, int) or isinstance(base, bool):
+            raise ErroHttp(400, "base_obrigatoria", "Mande `base`: a versão que você leu antes de editar.")
+        with conectar() as con:
+            autor = self._nome(self._quem(con), c)
+            espera = ENVIOS.consumir(autor)
+            if espera:
+                raise ErroHttp(429, "limite_excedido", "Devagar: limite de envio atingido.", espera)
+            a = self._artefato(con, aid)
+            n, total = con.execute("SELECT COUNT(*), COALESCE(SUM(length(conteudo)),0) FROM artefato_versao WHERE artefato_id=?",
+                                   (aid,)).fetchone()
+            if n >= VERSOES_MAX or total + len(conteudo.encode()) > ARTEFATO_TOTAL_MAX:
+                raise ErroHttp(409, "artefato_cheio", "Esse artefato chegou ao limite de versões; crie um novo a partir dele.")
+            if a["estado"] == "arquivado":
+                raise ErroHttp(409, "artefato_arquivado", "Artefato arquivado não recebe versões novas.")
+            nova = a["versao"] + 1
+            # Condicional na versão: quem leu uma versão velha não sobrescreve a edição de outra pessoa.
+            agora = time.time()
+            if con.execute("UPDATE artefato SET versao_atual=?, atualizado=?, estado='rascunho' WHERE id=? AND versao_atual=?",
+                           (nova, agora, aid, base)).rowcount == 0:
+                raise ErroHttp(409, "conflito", f"O artefato já está na v{a['versao']}; leia de novo e reaplique a sua mudança.")
+            con.execute("INSERT INTO artefato_versao VALUES (?,?,?,?,?,?)", (aid, nova, conteudo, resumo, autor, agora))
+            registrar_evento(con, "artefato", a["sala"], aid)
+            a = self._artefato(con, aid)
+        notificar()
+        self._json(200, a)
+
+    def decidir_artefato(self, aid: int, acao: str) -> None:
+        """Aprovar (vira fato na memória) ou arquivar. Só humano com identidade forte."""
+        with conectar() as con:
+            quem = self._quem(con)
+            eu = humano_confirmado(con, quem)
+            if not eu:
+                raise ErroHttp(403, "requer_humano",
+                               "Só um humano com token próprio (tipo humano) aprova ou arquiva artefatos.")
+            a = self._artefato(con, aid)
+            estado = "aprovado" if acao == "aprovar" else "arquivado"
+            if a["estado"] == estado:
+                raise ErroHttp(409, "artefato_decidido", f"O artefato já está {estado}.")
+            con.execute("UPDATE artefato SET estado=?, atualizado=? WHERE id=?", (estado, time.time(), aid))
+            anterior = con.execute("SELECT f.id FROM artefato a JOIN fato f ON f.id=a.fato_id "
+                                   "WHERE a.id=? AND f.estado='vigente'", (aid,)).fetchone()
+            if estado == "aprovado" and a["msg_id"]:
+                # Reaprovação depois de editar: o fato novo supera o da aprovação anterior (um vigente só).
+                campos = {"sujeito": a["titulo"][:120], "predicado": "segue o artefato",
+                          "objeto": f"#{aid} v{a['versao']} ({a['tipo']})", "supera": anterior[0] if anterior else None}
+                fid = inserir_fato(con, a["sala"], campos, "msg", str(a["msg_id"]), "vigente", eu)
+                superar(con, fid, campos["supera"])
+                con.execute("UPDATE fato SET confirmado_por=? WHERE id=?", (eu, fid))
+                con.execute("UPDATE artefato SET fato_id=? WHERE id=?", (fid, aid))
+                registrar_evento(con, "fato", a["sala"], fid)
+            elif estado == "arquivado" and anterior:  # arquivado não é mais referência
+                con.execute("UPDATE fato SET estado='superado' WHERE id=? AND estado='vigente'", (anterior[0],))
+                registrar_evento(con, "fato", a["sala"], anterior[0])
+            mensagem_sistema(con, a["sala"], f"{'✅' if estado == 'aprovado' else '🗄️'} **{eu}** "
+                                             f"{'aprovou' if estado == 'aprovado' else 'arquivou'} o artefato "
+                                             f"[[artefato:{aid}]] **{titulo_seguro(a['titulo'])}** (v{a['versao']})")
+            registrar_evento(con, "artefato", a["sala"], aid)
+            a = self._artefato(con, aid)
+        notificar()
+        self._json(200, a)
 
 
 def marcar_visto_sem_con(nome: str | None) -> None:

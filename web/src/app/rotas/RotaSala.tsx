@@ -4,6 +4,9 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react
 
 // cmdk + Dialog só quando a paleta abre pela primeira vez.
 const Quadro = lazy(() => import("@/features/equipe/Quadro"));
+const Memoria = lazy(() => import("@/features/memoria/Memoria"));
+const Artefatos = lazy(() => import("@/features/artefatos/Artefatos"));
+const PainelArtefato = lazy(() => import("@/features/artefatos/PainelArtefato"));
 const FaixaReuniao = lazy(() => import("@/features/equipe/FaixaReuniao").then((m) => ({ default: m.FaixaReuniao })));
 const NovaReuniao = lazy(() => import("@/features/equipe/FaixaReuniao").then((m) => ({ default: m.NovaReuniao })));
 const PaletaSalas = lazy(() => import("@/features/salas/PaletaSalas").then((m) => ({ default: m.PaletaSalas })));
@@ -15,7 +18,7 @@ import { useConversa } from "@/features/mensagens/useConversa";
 import { useAgentes } from "@/features/agentes/useAgentes";
 import { useReunioes } from "@/features/equipe/api";
 import { useDigitando, useLeituras, useMarcarLeitura } from "@/features/mensagens/presenca";
-import { CalendarPlusIcon, KanbanIcon, MessagesSquareIcon } from "lucide-react";
+import { BrainIcon, CalendarPlusIcon, FileCodeIcon, KanbanIcon, MessagesSquareIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { Participantes } from "@/features/presenca/Participantes";
@@ -26,6 +29,7 @@ import { useTema } from "@/shared/lib/tema";
 import { textos } from "@/shared/lib/textos";
 import { gravar, lerJson } from "@/shared/lib/armazenamento";
 import { rotaSala } from "../router";
+import { AbrirArtefatoContexto } from "@/features/artefatos/api";
 
 export function RotaSala() {
   const { sala } = rotaSala.useParams();
@@ -75,7 +79,15 @@ export function RotaSala() {
   }, [paletaUsada, setPaletaAberta]);
   const [respondendo, setRespondendo] = useState<Mensagem | null>(null);
   // Tarefas e reuniões mudaram (SSE): recarrega só o que for daquela sala.
-  const aoEvento = useCallback((tipo: "tarefa" | "reuniao" | "leitura" | "apelido") => {
+  const aoEvento = useCallback((tipo: "tarefa" | "reuniao" | "leitura" | "apelido" | "fato" | "artefato") => {
+    if (tipo === "artefato") {
+      void qc.invalidateQueries({ queryKey: ["artefatos", sala] });
+      return void qc.invalidateQueries({ queryKey: ["artefato"] });
+    }
+    if (tipo === "fato") {
+      void qc.invalidateQueries({ queryKey: ["fatos", sala] });
+      return void qc.invalidateQueries({ queryKey: ["candidatos", sala] });
+    }
     if (tipo === "leitura") return void qc.invalidateQueries({ queryKey: ["leituras", sala] });
     if (tipo === "apelido") return void qc.invalidateQueries({ queryKey: ["agentes"] });
     void qc.invalidateQueries({ queryKey: [tipo === "tarefa" ? "tarefas" : "reunioes", sala] });
@@ -99,7 +111,10 @@ export function RotaSala() {
     return [...nomes].map((n) => ({ nome: n, online: porNome.get(n)?.online ?? false, apelido: porNome.get(n)?.apelido }));
   }, [agentes, autores.join("|")]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const [aba, setAba] = useState<"conversa" | "quadro">("conversa");
+  const [aba, setAba] = useState<"conversa" | "quadro" | "memoria" | "artefatos">("conversa");
+  const [artefatoAberto, setArtefatoAberto] = useState<number | null>(null);
+  const abrirArtefato = useCallback((id: number) => setArtefatoAberto(id), []);
+  const [irPara, setIrPara] = useState<number | null>(null);
   const [novaReuniao, setNovaReuniao] = useState(false);
   const { data: reunioes } = useReunioes(sala);
   const reuniaoAtiva = reunioes?.some((r) => r.estado !== "encerrada") ?? false;
@@ -112,6 +127,7 @@ export function RotaSala() {
   const escolher = (s: string) => void navegar({ to: "/s/$sala", params: { sala: s } });
 
   return (
+    <AbrirArtefatoContexto.Provider value={abrirArtefato}>
     <SidebarProvider className="h-dvh min-h-0">
       <BarraLateral sala={sala} nome={nome} admin={admin} vistas={vistas} estado={conversa.estado} tema={tema}
         aoEscolher={escolher} aoBuscar={() => setPaletaAberta(true)} aoTema={escolherTema}
@@ -136,11 +152,11 @@ export function RotaSala() {
             <h1 className="min-w-0 flex-1 truncate text-base font-semibold md:flex-none">#{sala}</h1>
           )}
           <div role="tablist" aria-label={te.conversa} className="order-2 flex rounded-lg bg-superficie p-0.5 md:order-none">
-            {([["conversa", MessagesSquareIcon, te.conversa], ["quadro", KanbanIcon, te.quadro]] as const).map(([id, Icone, rotulo]) => (
-              <button key={id} role="tab" aria-selected={aba === id} onClick={() => setAba(id)}
+            {([["conversa", MessagesSquareIcon, te.conversa], ["quadro", KanbanIcon, te.quadro], ["memoria", BrainIcon, textos.memoria.aba], ["artefatos", FileCodeIcon, textos.artefatos.aba]] as const).map(([id, Icone, rotulo]) => (
+              <button key={id} role="tab" aria-selected={aba === id} aria-label={rotulo} onClick={() => setAba(id)}
                 className={cn("flex min-h-9 items-center gap-1.5 rounded-md px-3 text-sm transition-colors md:min-h-7",
                   aba === id ? "bg-card font-medium text-foreground shadow-xs" : "text-muted-foreground hover:text-foreground")}>
-                <Icone className="size-3.5" aria-hidden />{rotulo}
+                <Icone className="size-3.5" aria-hidden /><span className="hidden sm:inline">{rotulo}</span>
               </button>
             ))}
           </div>
@@ -157,18 +173,33 @@ export function RotaSala() {
             <NovaReuniao sala={sala} eu={nome} candidatos={candidatos} aberto={novaReuniao} setAberto={setNovaReuniao} />
           </Suspense>
         )}
-        {aba === "quadro" ? (
+        {aba === "artefatos" ? (
+          <Suspense fallback={<div className="flex-1" />}><Artefatos sala={doCanal?.sala ?? sala} /></Suspense>
+        ) : aba === "memoria" ? (
+          <Suspense fallback={<div className="flex-1" />}>
+            <Memoria sala={doCanal?.sala ?? sala} admin={admin} abrirMensagem={(id) => {
+              if (doCanal) escolher(doCanal.sala);
+              setIrPara(id); setAba("conversa");
+            }} />
+          </Suspense>
+        ) : aba === "quadro" ? (
           <Suspense fallback={<div className="flex-1" />}><Quadro sala={doCanal?.sala ?? sala} eu={nome} admin={admin} /></Suspense>
         ) : (
           <>
             <Conversa key={sala} sala={sala} eu={nome} carregando={conversa.estado.tipo === "carregando"}
-              ultimaLida={ultimaLida.id} aoLer={aoLer} admin={admin} aoResponder={setRespondendo} leituras={leituras} apelidos={apelidos} {...conversa} />
+              ultimaLida={ultimaLida.id} aoLer={aoLer} admin={admin} aoResponder={setRespondendo} leituras={leituras} apelidos={apelidos} {...conversa}
+              irPara={irPara} aoChegarEm={() => setIrPara(null)} />
             <Composer key={`c-${sala}`} sala={sala} rotuloSala={doCanal ? `🗓 ${doCanal.titulo}` : undefined} nome={nome} respondendo={respondendo} candidatos={candidatos} aoCancelarResposta={() => setRespondendo(null)}
               aoEnviar={(texto, replyTo, anexos) => conversa.enviar(texto, nome, replyTo, anexos)}
               aoDigitar={(d) => (d ? digitar.avisar() : digitar.parar())} />
           </>
         )}
       </SidebarInset>
+      {/* Sempre montado (só alterna `open`): montar o Sheet no próprio clique fazia ele fechar na hora. */}
+      <Suspense fallback={null}>
+        <PainelArtefato id={artefatoAberto} admin={admin} fechar={() => setArtefatoAberto(null)} />
+      </Suspense>
     </SidebarProvider>
+    </AbrirArtefatoContexto.Provider>
   );
 }

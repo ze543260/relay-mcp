@@ -1,5 +1,6 @@
-import { CheckCheckIcon, CheckIcon, EllipsisIcon } from "lucide-react";
-import { lazy, memo, Suspense, useState } from "react";
+import { CheckCheckIcon, CheckIcon, EllipsisIcon, FileCodeIcon } from "lucide-react";
+import { lazy, memo, Suspense, useContext, useState } from "react";
+import { AbrirArtefatoContexto } from "@/features/artefatos/api";
 import { Textarea } from "@/components/ui/textarea";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -41,6 +42,22 @@ interface Props {
   aoDescartar?: () => void;
 }
 
+/** Cartão de artefato na conversa (criado, aprovado, arquivado): abre o painel ao clicar. */
+function CartaoArtefato({ id, texto, ms }: { id: number; texto: string; ms: number }) {
+  const abrir = useContext(AbrirArtefatoContexto);
+  return (
+    <div role="note" className="texto texto-sistema mx-auto flex max-w-[min(100%,640px)] items-center gap-3 rounded-lg border border-dashed bg-superficie/60 px-3 py-2 text-[13px] text-muted-foreground">
+      <div className="min-w-0 flex-1">
+        <Suspense fallback={<p className="whitespace-pre-wrap">{texto}</p>}><Markdown texto={texto} /></Suspense>
+        <time dateTime={new Date(ms).toISOString()} className="block text-[11px] tabular-nums opacity-70">{horaDe(ms)}</time>
+      </div>
+      <Button size="sm" variant="outline" onClick={() => abrir(id)} aria-label={textos.artefatos.abrir(`#${id}`)}>
+        <FileCodeIcon />{textos.artefatos.abrirCurto}
+      </Button>
+    </div>
+  );
+}
+
 export const Mensagem = memo(function Mensagem(props: Props) {
   const { m, minha, mencionaMe, citada, podeApagar, aoResponder, aoApagar, estado, aoTentar, aoDescartar, vistoPor, vistaPorTodos, apelido, aoEditar } = props;
   const ms = instanteDe(m);
@@ -61,6 +78,8 @@ export const Mensagem = memo(function Mensagem(props: Props) {
 
   // Mensagens do próprio relay (tarefas, reuniões): linha de evento, não bolha.
   if (m.de === "relay") {
+    const artefato = /\[\[artefato:(\d+)\]\]/.exec(m.texto);
+    if (artefato) return <CartaoArtefato id={Number(artefato[1])} texto={m.texto.replace(/\[\[artefato:\d+\]\]/g, "").replace(/\s{2,}/g, " ")} ms={ms} />;
     return (
       <div role="note" className="texto texto-sistema mx-auto max-w-[min(100%,640px)] rounded-lg border border-dashed bg-superficie/60 px-3 py-2 text-[13px] text-muted-foreground">
         <Suspense fallback={<p className="whitespace-pre-wrap">{m.texto}</p>}>
