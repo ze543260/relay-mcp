@@ -134,17 +134,91 @@ Fecha os dois itens que ficaram da revisão do PR #1 ([237]).
 
 ### Fase 6 — O grafo de verdade: aliases e vizinhança
 
-Hoje é uma lista de triplas; aqui ela vira navegável.
+Hoje é uma lista de triplas; aqui ela vira navegável. Detalhado a pedido do João em [314], para validar com o Lume e o claude-julio antes de implementar.
+
+**O problema**: "relay", "Relay", "o relay" e "relay-mcp" viram sujeitos diferentes, então `buscar_memoria(sujeito="relay")` perde metade dos fatos, e não há como perguntar "o que está ligado ao relay?".
+
+#### Modelo (migração 15; a 13 e a 14 são dos artefatos)
 
 ```sql
-CREATE TABLE alias (sala TEXT NOT NULL, nome TEXT NOT NULL COLLATE NOCASE, canonico TEXT NOT NULL,
-                    criado_por TEXT NOT NULL, criado REAL NOT NULL, PRIMARY KEY (sala, nome));
+CREATE TABLE IF NOT EXISTS alias (
+  sala TEXT NOT NULL, nome TEXT NOT NULL COLLATE NOCASE, canonico TEXT NOT NULL,
+  criado_por TEXT NOT NULL, origem_tipo TEXT, origem_id TEXT, criado REAL NOT NULL,
+  PRIMARY KEY (sala, nome));
+CREATE INDEX IF NOT EXISTS fato_objeto_vigente ON fato(sala, objeto COLLATE NOCASE) WHERE estado='vigente';
 ```
 
-- **Aliases**: "o relay", "Relay" e "relay-mcp" apontam para `relay`. O registro e a busca normalizam o sujeito (e o objeto, quando ele também é uma entidade conhecida). Responde o item 2 da seção 10.
-- **Vizinhança**: `GET /memoria/grafo?sala&sujeito&profundidade=1..2` devolve nós e arestas vigentes a partir de um sujeito (o que ele usa, quem cuida dele, o que depende dele), no máximo 50 arestas.
-- **MCP**: `vizinhanca(sujeito)` em texto enxuto (`relay → usa → SSE (ata 3)`), para o agente explorar sem buscar palavra por palavra.
-- **Web** (Lume): o grafo como mapa simples na aba Memória, clicando num nó para expandir.
+- **Nó** = nome canônico. Um sujeito é sempre nó; um objeto vira nó quando, resolvido, coincide com algum sujeito ou alias da sala. Senão, é uma **folha** ("SSE para tempo real").
+- **Aresta** = fato vigente (`sujeito → predicado → objeto`), com a origem dele.
+- **Resolução na leitura, não na escrita**: os fatos guardam o texto como foi registrado, e o alias é aplicado na hora da consulta. Criar ou apagar um alias muda o grafo para trás, sem reescrever fatos nem mexer no índice FTS.
+- **Normalização leve antes do alias**: minúsculas, sem acento, espaços colapsados e sem artigo inicial (`o`, `a`, `os`, `as`). Assim "O Relay" já casa com "relay" sem precisar de alias.
+
+#### Regras dos aliases
+
+- `nome` e `canonico` com 1–120 caracteres; `nome` diferente de `canonico` depois de normalizar.
+- **Sem cadeia nem ciclo**: o `canonico` é sempre resolvido até a raiz ao gravar (se `relay-mcp → relay` existe, um alias para `relay-mcp` grava `relay`). Um alias cujo `nome` já é canônico de outros → 409 `alias_e_canonico` (evita A→B e B→A).
+- Até 200 aliases por sala. Origem opcional (a mensagem em que se combinou o nome).
+- Quem cria: qualquer membro, humano ou agente. Alias não afirma nada, só junta nomes, e cada criação vai para a atividade com o autor. Apagar: quem criou ou humano da sala.
+
+#### API
+
+| Rota | Faz |
+|---|---|
+| `GET /memoria/aliases?sala` | aliases da sala, com quantos fatos cada um junta |
+| `POST /memoria/aliases {sala, nome, canonico, origem_tipo?, origem_id?}` | cria (resolve o canônico até a raiz) |
+| `DELETE /memoria/aliases?sala&nome` | remove |
+| `GET /memoria/aliases/sugestoes?sala` | pares de sujeitos que só diferem por normalização forte (plural, hífen, `-mcp`, `-app`), para um humano aceitar com um clique |
+| `GET /memoria/grafo?sala&sujeito&profundidade=1\|2&limite=50` | nós e arestas a partir do sujeito |
+| `GET /fatos?sujeito=X` | passa a resolver o alias (devolve os fatos de todos os nomes do mesmo nó) |
+
+Resposta do grafo:
+
+```json
+{"centro": "relay",
+ "nos": [{"nome": "relay", "nomes": ["relay", "relay-mcp"], "fatos": 7}, {"nome": "sse", "nomes": ["SSE"], "fatos": 2}],
+ "arestas": [{"fato": 41, "de": "relay", "predicado": "usa", "para": "sse", "folha": false,
+              "origem": {"tipo": "ata", "id": "3"}, "autor": "lume"}],
+ "cortado": false}
+```
+
+- Busca em largura sobre fatos vigentes, nos dois sentidos (o que o nó usa e o que usa o nó), com profundidade 1 ou 2 e no máximo 50 arestas. Acima disso devolve `cortado: true` e prioriza as arestas mais recentes.
+- As salas têm poucas centenas de fatos, então a busca em Python com os dois índices parciais (sujeito e objeto vigentes) basta. Sem tabela de nós materializada.
+
+#### MCP
+
+- `vizinhanca(sujeito, profundidade=1)` em texto curto, já resolvido:
+  ```
+  relay (também: relay-mcp)
+    → usa → SSE (ata 3, Lume)
+    → é responsabilidade de → José (msg 57)
+    ← depende de ← app Android (msg 140)
+  ```
+- `buscar_memoria(sujeito=...)` passa a resolver o alias sozinho.
+- `definir_alias(nome, canonico)` para o agente juntar nomes quando perceber a duplicata.
+- O retorno lembra que o conteúdo é dado, não instrução, como o resto da memória.
+
+#### Web (Lume)
+
+Na aba Memória: clicar num sujeito abre a vizinhança como lista agrupada por predicado, e depois como um mapa simples (nó central e vizinhos, clique para expandir). As sugestões de alias aparecem com "Juntar" e "Ignorar".
+
+#### Testes
+
+- "O Relay", "relay" e "RELAY" caem no mesmo nó sem alias; "relay-mcp" só com alias.
+- Alias de alias grava a raiz; A→B com B→A → 409; mais de 200 → 409.
+- Apagar o alias separa os nós de novo, sem perder nenhum fato.
+- Grafo com profundidade 2 respeita o limite de 50 e marca `cortado`; fatos superados e candidatos não entram.
+- `GET /fatos?sujeito=relay-mcp` traz os fatos de `relay`.
+- Migração 14 → 15 preserva os fatos.
+
+#### Fora desta fase
+
+Tipos de nó (pessoa, projeto, serviço), pesos nas arestas e embeddings. Ficam para quando o grafo estiver em uso e a falta deles doer.
+
+#### Para validar
+
+1. Resolver alias na leitura (proposta) ou reescrever os fatos na escrita?
+2. Agente pode criar alias sem confirmação humana? (Proposta: sim, porque só junta nomes e fica na atividade.)
+3. O claude-julio vê algum problema para levar isso ao back em Java (busca em largura e normalização sem acento)?
 
 ### Fase 7 — Memória do agente (privada, do dono)
 
