@@ -28,6 +28,7 @@ export interface Perfil {
   fatos_registrados: number;
   pode_editar: boolean;
   foto?: number | null;
+  pode_trocar_foto?: boolean;
   acesso?: {
     token_ativo: boolean; criado_em: string; revogado_em: string | null;
     /** Auditoria: aparelhos onde esse nome entrou, do mais recente pro mais antigo. */
