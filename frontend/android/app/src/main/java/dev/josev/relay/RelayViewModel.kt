@@ -70,6 +70,8 @@ data class Estado(
     val toast: Toast? = null,
     /** Artefato aberto em tela cheia, ou null. */
     val artefato: Long? = null,
+    /** Meu status (com `modo`); null = servidor antigo ou entrou com o token mestre. */
+    val meuStatus: dev.josev.relay.dados.StatusPessoa? = null,
     /** Mensagem pra qual a conversa deve rolar e destacar (citação, busca); a tela zera ao chegar. */
     val irPara: Long? = null,
     /** Buscando páginas antigas atrás do alvo de "ir para": a tela não rola pro fim nesse meio-tempo. */
@@ -93,8 +95,11 @@ class RelayViewModel(app: Application) : AndroidViewModel(app) {
 
     // App em segundo plano: fecha o stream (bateria); de volta: reabre do último id.
     private val ciclo = object : DefaultLifecycleObserver {
-        override fun onStart(owner: LifecycleOwner) { if (api != null) { abrirStream(); abrirGeral() } }
+        override fun onStart(owner: LifecycleOwner) {
+            if (api != null) { abrirStream(); abrirGeral(); ocioso(false) }
+        }
         override fun onStop(owner: LifecycleOwner) {
+            ocioso(true)  // app no fundo: aparece "ausente" (como no Teams)
             stream?.cancel(); geral?.cancel()
             _estado.update { it.copy(status = StatusConexao.PAUSADO) }
         }
@@ -157,8 +162,28 @@ class RelayViewModel(app: Application) : AndroidViewModel(app) {
         _estado.value = Estado(verificando = false)
     }
 
+    private fun ocioso(v: Boolean) { api?.let { a -> viewModelScope.launch { runCatching { a.marcarOcioso(v) } } } }
+
+    private fun guardarStatus(st: dev.josev.relay.dados.StatusPessoa) {
+        _estado.update { it.copy(meuStatus = st) }
+        // As notificações (WorkManager e serviço) leem daqui pra respeitar o "Não perturbe".
+        getApplication<Application>().getSharedPreferences("relay_status", android.content.Context.MODE_PRIVATE)
+            .edit().putBoolean("nao_perturbe", st.modo == "ocupado").apply()
+    }
+
+    /** modo: auto | ausente | ocupado | invisivel. Texto/emoji vazios limpam; duraS = prazo da mensagem. */
+    fun definirStatus(modo: String? = null, texto: String? = null, emoji: String? = null, duraS: Long? = null, mensagem: Boolean = false) {
+        val a = api ?: return
+        val campos = buildMap<String, Any?> {
+            if (modo != null) put("modo", modo)
+            if (mensagem) { put("texto", texto); put("emoji", emoji); put("dura_s", duraS) }
+        }
+        viewModelScope.launch { runCatching { a.definirStatus(campos) }.onSuccess(::guardarStatus).onFailure(::tratar) }
+    }
+
     private suspend fun atualizarListas() {
         val a = api ?: return
+        runCatching { a.meuStatus() }.onSuccess(::guardarStatus)
         runCatching { a.salas() }.onSuccess { s -> _estado.update { it.copy(salas = s) } }
         runCatching { a.agentes() }.onSuccess { ag -> _estado.update { it.copy(agentes = ag) } }
     }

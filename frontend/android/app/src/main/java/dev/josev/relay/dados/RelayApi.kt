@@ -188,6 +188,12 @@ class RelayApi(private val conexao: Conexao) {
         url("memoria/grafo", "sala" to sala, "profundidade" to 1,
             "centro" to agente?.let { "agente:$it" }, "sujeito" to sujeito)).build()))
 
+    // status
+    suspend fun meuStatus(): StatusPessoa = json.decodeFromString(executar(pedido(url("status/eu")).build()))
+    suspend fun definirStatus(campos: Map<String, Any?>): StatusPessoa =
+        json.decodeFromString(executar(pedido(url("status")).put(corpo(campos)).build()))
+    suspend fun marcarOcioso(ocioso: Boolean) { executar(pedido(url("status/ocioso")).put(corpo(mapOf("ocioso" to ocioso))).build()) }
+
     // memória e artefatos
     suspend fun fatos(sala: String, q: String?): List<Fato> =
         json.decodeFromString(executar(pedido(url("fatos", "sala" to sala, "limite" to 50, "q" to q?.takeIf { it.isNotBlank() })).build()))
