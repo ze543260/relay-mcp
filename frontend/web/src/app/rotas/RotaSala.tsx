@@ -35,6 +35,7 @@ import { textos } from "@/shared/lib/textos";
 import { gravar, lerJson } from "@/shared/lib/armazenamento";
 import { rotaSala } from "../router";
 import { AbrirArtefatoContexto } from "@/features/artefatos/api";
+import { useMeuStatus, useOcioso } from "@/features/presenca/status";
 import { AbrirPerfilContexto } from "@/features/perfil/api";
 
 export function RotaSala() {
@@ -47,8 +48,12 @@ export function RotaSala() {
   useEffect(() => { gravar("relay-sala", sala); }, [sala]);
 
   const avisos = useAvisos(nome, sala);
+  // Status: ausente sozinho depois de 10 min parado; "Não perturbe" silencia os avisos do navegador.
+  useOcioso(logado);
+  const { data: meuStatus } = useMeuStatus(logado);
+  const naoPerturbe = meuStatus?.modo === "ocupado";
   // Chegar não é ler: só atualiza contagens (e avisa se a aba está escondida). "Lida" vem da Conversa.
-  const avisar = avisos.aoChegar;
+  const avisar = naoPerturbe ? () => undefined : avisos.aoChegar;
   const aoChegar = useCallback((novas: Mensagem[]) => {
     void qc.invalidateQueries({ queryKey: ["salas"] });
     avisar(novas);

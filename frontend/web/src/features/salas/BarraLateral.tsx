@@ -12,6 +12,7 @@ import { corDe, siglaDe } from "@/shared/lib/formato";
 import type { Tema } from "@/shared/lib/tema";
 import { textos } from "@/shared/lib/textos";
 import { useSalas } from "./useSalas";
+import { MeuStatus } from "@/features/presenca/MeuStatus";
 import { FotoPerfil } from "@/features/perfil/FotoPerfil";
 
 interface Props {
@@ -167,6 +168,9 @@ export function BarraLateral({ sala, nome, admin, vistas, estado, tema, aoEscolh
 
       <SidebarFooter>
         <SidebarMenu>
+          <SidebarMenuItem className="group-data-[collapsible=icon]:hidden">
+            <MeuStatus ativo={Boolean(nome)} />
+          </SidebarMenuItem>
           <SidebarMenuItem>
             {menuCarregado ? (
               <Suspense fallback={<SidebarMenuButton size="lg">{cabecalho}</SidebarMenuButton>}>

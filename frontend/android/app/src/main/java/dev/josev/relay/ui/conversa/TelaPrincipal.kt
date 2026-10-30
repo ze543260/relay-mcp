@@ -157,7 +157,7 @@ private fun TelaPrincipalConteudo(vm: RelayViewModel, estado: Estado) {
     val conteudoGaveta = @Composable {
         val tempoReal by vm.tempoReal.collectAsStateWithLifecycle()
         Gaveta(estado, aoEscolher = { vm.abrirSala(it); escopo.launch { gaveta.close() } }, aoSair = vm::sair,
-            tempoReal = tempoReal, aoTempoReal = vm::alternarTempoReal)
+            tempoReal = tempoReal, aoTempoReal = vm::alternarTempoReal, vm = vm)
     }
     Box(Modifier.fillMaxSize()) {
         if (largo) {
@@ -216,8 +216,9 @@ private fun ToastSala(toast: dev.josev.relay.Toast?, modifier: Modifier, aoFecha
 }
 
 @Composable
-private fun Gaveta(estado: Estado, aoEscolher: (String) -> Unit, aoSair: () -> Unit, tempoReal: Boolean, aoTempoReal: (Boolean) -> Unit) {
+private fun Gaveta(estado: Estado, aoEscolher: (String) -> Unit, aoSair: () -> Unit, tempoReal: Boolean, aoTempoReal: (Boolean) -> Unit, vm: RelayViewModel) {
     var criando by remember { mutableStateOf(false) }
+    var escolhendoStatus by remember { mutableStateOf(false) }
     val salas = estado.salas.let { s -> if (s.any { it.sala == estado.sala }) s else listOf(dev.josev.relay.dados.Sala(estado.sala, 0)) + s }
     Column(Modifier.fillMaxHeight().statusBarsPadding().navigationBarsPadding()) {
         Row(Modifier.padding(horizontal = 20.dp, vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -274,6 +275,24 @@ private fun Gaveta(estado: Estado, aoEscolher: (String) -> Unit, aoSair: () -> U
             androidx.compose.material3.Switch(tempoReal, aoTempoReal)
         }
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        // Status (estilo Discord/Teams): toque escolhe o modo e a mensagem.
+        estado.meuStatus?.let { st ->
+            val estadoVisivel = if (st.modo == "invisivel") "offline" else st.estado
+            Row(Modifier.fillMaxWidth().clickable(onClickLabel = "Mudar status") { escolhendoStatus = true }.padding(horizontal = 20.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                dev.josev.relay.ui.comum.PontoStatus(estadoVisivel, comRotulo = false)
+                Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                    Text(dev.josev.relay.ui.comum.ROTULO_MODO[st.modo ?: "auto"] ?: "Disponível", fontWeight = FontWeight.Medium)
+                    val msg = listOfNotNull(st.emoji, st.texto).joinToString(" ")
+                    if (msg.isNotEmpty()) Text(msg, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
+            if (escolhendoStatus) dev.josev.relay.ui.comum.SeletorStatus(st, aoFechar = { escolhendoStatus = false },
+                aoModo = { m -> vm.definirStatus(modo = m); escolhendoStatus = false },
+                aoMensagem = { t, e, d -> vm.definirStatus(texto = t, emoji = e, duraS = d, mensagem = true); escolhendoStatus = false })
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        }
         val nome = estado.conexao?.nome.orEmpty()
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
             Avatar(nome, 34.dp)
@@ -593,7 +612,7 @@ private fun Participantes(estado: Estado, aoAbrir: (String) -> Unit) {
             // Anel na cor do fundo separa os avatares sobrepostos.
             Box(Modifier.size(30.dp).background(MaterialTheme.colorScheme.background, CircleShape)
                 .clickable(onClickLabel = "Abrir perfil de ${a.apelido ?: a.nome}") { aoAbrir(a.nome) }, contentAlignment = Alignment.Center) {
-                Avatar(a.nome, 26.dp)
+                dev.josev.relay.ui.comum.AvatarComStatus(a.nome, 26.dp, a.status)
             }
         }
     }

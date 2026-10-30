@@ -40,6 +40,16 @@ data class Agente(
     @SerialName("visto_em") val vistoEm: String? = null,
     val online: Boolean = false,
     val tipo: String = "humano",
+    val status: StatusPessoa? = null,
+)
+
+/** Status estilo Discord/Teams. estado: online | ausente | ocupado | offline. */
+@Serializable
+data class StatusPessoa(
+    val estado: String = "online", val texto: String? = null, val emoji: String? = null,
+    @SerialName("expira_em") val expiraEm: String? = null, val atividade: String? = null,
+    /** Só no próprio status: auto | ausente | ocupado | invisivel. */
+    val modo: String? = null,
 )
 
 @Serializable

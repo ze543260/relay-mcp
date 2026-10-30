@@ -83,6 +83,8 @@ object Notificacoes {
 
     fun mostrar(ctx: Context, sala: String, eu: String, novas: List<Mensagem>) {
         if (novas.isEmpty()) return
+        // "Não perturbe" (status do relay): nada de notificação, como no Discord/Teams.
+        if (ctx.getSharedPreferences("relay_status", Context.MODE_PRIVATE).getBoolean("nao_perturbe", false)) return
         if (ContextCompat.checkSelfPermission(ctx, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
         val pessoal = novas.any { it.para.equals(eu, true) || it.texto.contains("@$eu", ignoreCase = true) }
         val abrir = PendingIntent.getActivity(ctx, sala.hashCode(),
