@@ -97,6 +97,9 @@
   * { @apply border-border outline-ring/50; }
   [data-theme] { color: var(--foreground); }
   html, body { height: 100%; overflow: hidden; }
+  /* Tailwind 4 tirou o cursor de mãozinha dos botões; tudo que é clicável volta a ter. */
+  button:not(:disabled), [role="button"]:not([aria-disabled="true"]), [role="tab"], [role="menuitem"], [role="option"],
+  summary, label[for], select, a[href] { cursor: pointer; }
   body { @apply bg-background font-sans text-[15px] leading-normal text-foreground md:text-sm; }
 }
 
