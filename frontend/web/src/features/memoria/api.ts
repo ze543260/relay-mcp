@@ -20,6 +20,12 @@ export interface Fato {
   criado_em: string;
 }
 
+/**
+ * Assunto que parece um arquivo: nome com extensão (`spec-v2.pdf`) ou caminho (`docs/PLANO.md`), sem espaços.
+ * A memória guarda texto livre; isso é só para desenhar e destacar.
+ */
+export const ehArquivo = (nome: string): boolean => /^[^\s]+\.[a-z0-9]{1,8}$/i.test(nome.trim()) || /^[^\s]*\/[^\s]+$/.test(nome.trim());
+
 /** Máximo que o servidor devolve por consulta (/fatos limita em 50). */
 export const LIMITE = 50;
 

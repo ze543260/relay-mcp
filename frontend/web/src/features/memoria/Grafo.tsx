@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { corDe } from "@/shared/lib/formato";
 import { textos } from "@/shared/lib/textos";
-import type { Fato } from "./api";
+import { ehArquivo, type Fato } from "./api";
 
 const t = textos.memoria;
 
@@ -13,6 +13,7 @@ interface NoG extends SimulationNodeDatum {
   id: string;        // chave sem diferenciar maiúsculas
   rotulo: string;
   grau: number;
+  arquivo: boolean;
 }
 interface ArestaG extends SimulationLinkDatum<NoG> {
   fato: Fato;
@@ -28,7 +29,7 @@ function montar(fatos: Fato[]): { nos: NoG[]; arestas: ArestaG[] } {
   const nos = new Map<string, NoG>();
   const no = (nome: string) => {
     const k = chave(nome);
-    const n = nos.get(k) ?? { id: k, rotulo: nome, grau: 0 };
+    const n = nos.get(k) ?? { id: k, rotulo: nome, grau: 0, arquivo: ehArquivo(nome) };
     n.grau++;
     nos.set(k, n);
     return k;
@@ -43,6 +44,16 @@ function montar(fatos: Fato[]): { nos: NoG[]; arestas: ArestaG[] } {
   });
   return { nos: [...nos.values()], arestas };
 }
+
+/** Folha de papel centrada em 0,0 com meia-altura `r` e a ponta superior direita dobrada. */
+const folha = (r: number) => {
+  const w = r * 0.8, d = r * 0.45;
+  return `M${-w},${-r} H${w - d} L${w},${-r + d} V${r} H${-w} Z M${w - d},${-r} V${-r + d} H${w}`;
+};
+const linhas = (r: number) => {
+  const w = r * 0.45;
+  return [-0.15, 0.2, 0.55].map((f) => `M${-w},${r * f} H${w}`).join(" ");
+};
 
 const caminhoAresta = (a: ArestaG) => {
   const s = a.source as NoG, o = a.target as NoG;
@@ -191,7 +202,15 @@ export default function GrafoMemoria({ fatos, selecionado, aoSelecionar }: {
                 className="cursor-pointer" role="button" tabIndex={0} aria-label={t.abrirNo(n.rotulo, n.grau)} aria-pressed={sel}
                 onPointerDown={(e) => descerNo(e, n)} onPointerEnter={() => setFoco(n.id)} onPointerLeave={() => setFoco(null)}
                 onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); aoSelecionar(sel ? null : n.rotulo); } }}>
-                <circle r={raio(n.grau)} fill={corDe(n.id)} stroke={sel ? "var(--foreground)" : "var(--background)"} strokeWidth={sel ? 2.5 : 1.5} />
+                {n.arquivo ? (
+                  // Arquivo: folha com a ponta dobrada, para separar de pessoas e conceitos.
+                  <g>
+                    <path d={folha(raio(n.grau) + 2)} fill="var(--card)" stroke={sel ? "var(--foreground)" : "var(--primary)"} strokeWidth={sel ? 2.5 : 1.5} strokeLinejoin="round" />
+                    <path d={linhas(raio(n.grau) + 2)} stroke="var(--primary)" strokeWidth={1.2} strokeLinecap="round" />
+                  </g>
+                ) : (
+                  <circle r={raio(n.grau)} fill={corDe(n.id)} stroke={sel ? "var(--foreground)" : "var(--background)"} strokeWidth={sel ? 2.5 : 1.5} />
+                )}
                 {mostrarRotulo(n) && (
                   <text y={raio(n.grau) + 12} textAnchor="middle" fontSize={11}
                     className={cn("fill-foreground [paint-order:stroke] [stroke:var(--background)] [stroke-width:3px]", sel && "font-semibold")}>

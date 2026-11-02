@@ -326,6 +326,8 @@ export const textos = {
     supera: (id: number) => `substitui #${id}`,
     superadoPor: (id: number) => `substituído por #${id}`,
     abrirOrigem: "Ver a origem na conversa",
+    abrirArquivo: "Abrir o arquivo de origem",
+    ehArquivo: "Arquivo",
     visao: "Como mostrar",
     lista: "Lista",
     grafo: "Grafo",

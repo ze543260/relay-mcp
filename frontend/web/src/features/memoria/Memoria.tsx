@@ -1,4 +1,4 @@
-import { BrainIcon, CheckIcon, ListIcon, NetworkIcon, SearchIcon, XIcon } from "lucide-react";
+import { BrainIcon, CheckIcon, FileTextIcon, ListIcon, NetworkIcon, PaperclipIcon, SearchIcon, XIcon } from "lucide-react";
 import { lazy, Suspense, useDeferredValue, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -8,7 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { textos } from "@/shared/lib/textos";
 import { gravar, ler } from "@/shared/lib/armazenamento";
-import { LIMITE, useCandidatos, useDecidirFato, useFatos, type Fato } from "./api";
+import { ehArquivo, LIMITE, useCandidatos, useDecidirFato, useFatos, type Fato } from "./api";
 
 const lerVisao = (): "lista" | "grafo" => ler("relay-memoria-visao") === "grafo" ? "grafo" : "lista";
 
@@ -22,6 +22,14 @@ const dataCurta = (iso: string) => new Date(iso).toLocaleDateString("pt-BR", { d
 function Origem({ fato, abrir }: { fato: Fato; abrir: (msgId: number) => void }) {
   const rotulo = t.deOrigem(t.origem[fato.origem.tipo] ?? fato.origem.tipo, fato.origem.id);
   const classe = "inline-flex items-center rounded-full border px-1.5 py-px font-mono text-[10.5px] leading-4";
+  // Anexo enviado no relay: abre o arquivo (a sessão vai no cookie).
+  if (fato.origem.tipo === "arquivo")
+    return (
+      <a href={`/arquivos/${encodeURIComponent(fato.origem.id)}`} target="_blank" rel="noopener" title={t.abrirArquivo}
+        className={cn(classe, "gap-1 text-primary hover:bg-primary/10 focus-visible:outline-2 focus-visible:outline-ring")}>
+        <PaperclipIcon className="size-3" aria-hidden />{t.deOrigem(t.origem.arquivo!, fato.origem.id.slice(0, 8))}
+      </a>
+    );
   if (fato.origem.tipo !== "msg") return <span className={classe}>{rotulo}</span>;
   return (
     <button type="button" onClick={() => abrir(Number(fato.origem.id))} title={t.abrirOrigem}
@@ -139,7 +147,10 @@ export default function Memoria({ sala, admin, abrirMensagem }: { sala: string; 
           {noAberto && (
             <aside aria-label={noAberto} className="max-h-[45dvh] flex-none overflow-y-auto border-t bg-card px-4 py-3 md:max-h-none md:w-80 md:border-t-0 md:border-l">
               <div className="flex items-center justify-between gap-2">
-                <h2 className="truncate text-sm font-semibold">{noAberto}</h2>
+                <h2 className="flex min-w-0 items-center gap-1.5 text-sm font-semibold">
+                  {ehArquivo(noAberto) && <FileTextIcon className="size-4 flex-none text-primary" aria-label={t.ehArquivo} />}
+                  <span className="truncate">{noAberto}</span>
+                </h2>
                 <Button size="icon" variant="ghost" className="size-7" aria-label={t.fecharNo} onClick={() => setNoAberto(null)}><XIcon /></Button>
               </div>
               <p className="text-xs text-muted-foreground">{t.ligacoes(doNo.length)}</p>
