@@ -53,6 +53,7 @@ PASTA_ARQUIVOS = os.environ.get("RELAY_ARQUIVOS", os.path.join(RAIZ, "arquivos")
 TIPOS_EXIBIVEIS = {"image/png", "image/jpeg", "image/gif", "image/webp", "image/avif", "application/pdf",
                    "audio/mpeg", "audio/ogg", "audio/wav", "video/mp4", "video/webm", "text/plain"}
 ESPERA_MAX = 300
+FATOS_LIMITE_MAX = 500     # GET /fatos: a visão em grafo do web pede várias centenas de uma vez
 SESSAO_DIAS = 30
 ONLINE_S = 120
 LIMITE_PAGINA = 100
@@ -958,6 +959,7 @@ class Handler(BaseHTTPRequestHandler):
                 ("PUT", "/status/atividade"): self.marcar_atividade,
                 ("POST", "/agentes"): self.criar_agente,
                 ("POST", "/arquivos"): self.subir_arquivo,
+                ("GET", "/arquivos"): self.arquivos_da_sala,
                 ("POST", "/digitando"): self.marcar_digitando,
                 ("GET", "/leituras"): self.leituras,
                 ("POST", "/leituras"): self.marcar_leitura,
@@ -1008,9 +1010,9 @@ class Handler(BaseHTTPRequestHandler):
             m = re.fullmatch(r"/agentes/([^/]+)/foto", caminho)
             if m and metodo in ("GET", "PUT", "DELETE"):
                 return {"GET": self.ver_foto, "PUT": self.trocar_foto, "DELETE": self.apagar_foto}[metodo](unquote(m.group(1)))
-            m = re.fullmatch(r"/arquivos/([\w-]{16,64})", caminho)
+            m = re.fullmatch(r"/arquivos/([\w-]{16,64})(/info)?", caminho)
             if m and metodo == "GET":
-                return self.baixar_arquivo(m.group(1), q)
+                return self.info_arquivo(m.group(1)) if m.group(2) else self.baixar_arquivo(m.group(1), q)
             m = re.fullmatch(r"/apelidos/([^/]+)", caminho)
             if m and metodo == "PUT":
                 return self.definir_apelido(unquote(m.group(1)))
@@ -1795,18 +1797,42 @@ class Handler(BaseHTTPRequestHandler):
             con.execute("INSERT INTO arquivo VALUES (?,?,?,?,?,?,?,NULL)", (aid, nome, tipo, tam, h.hexdigest(), de, time.time()))
         self._json(201, {"id": aid, "nome": nome, "tipo": tipo, "tamanho": tam, "url": f"/arquivos/{aid}"})
 
+    def _arquivo_visivel(self, con: sqlite3.Connection, quem: Quem, aid: str) -> tuple:
+        """Linha do anexo se quem pede pode vê-lo (anexo de mensagem privada segue a regra da mensagem)."""
+        linha = con.execute(
+            "SELECT a.nome, a.tipo, a.tamanho, a.de, m.para, m.de, a.criado, a.msg_id, m.sala FROM arquivo a "
+            "LEFT JOIN msg m ON m.id = a.msg_id WHERE a.id=?", (aid,)).fetchone()
+        if not linha or (linha[4] and not quem.admin and quem.nome not in (linha[4], linha[5])):
+            raise ErroHttp(404, "arquivo_inexistente", "Arquivo não existe.")
+        return linha
+
+    def info_arquivo(self, aid: str) -> None:
+        """Metadados do anexo sem baixar o conteúdo (nome, tipo, tamanho, de onde veio)."""
+        with conectar() as con:
+            nome, tipo, tam, dono, _para, _autor, criado, msg_id, sala = self._arquivo_visivel(con, self._quem(con), aid)
+        self._json(200, {"id": aid, "nome": nome, "tipo": tipo, "tamanho": tam, "de": dono, "criado_em": iso(criado),
+                         "msg_id": msg_id, "sala": sala, "url": f"/arquivos/{aid}"})
+
+    def arquivos_da_sala(self, q: dict) -> None:
+        """Anexos públicos de uma sala, do mais novo; `q` filtra pelo nome (sem diferenciar maiúsculas)."""
+        sala = validar_sala(q.get("sala"))
+        limite = min(max(int(q.get("limite") or 50), 1), 200)
+        filtro, args = ["m.sala=?", "m.para IS NULL"], [sala]
+        termo = (q.get("q") or "").strip().lower()
+        if termo:
+            filtro.append("instr(lower(a.nome), ?) > 0")
+            args.append(termo[:200])
+        with conectar() as con:
+            self._quem(con)
+            linhas = con.execute(
+                "SELECT a.id, a.nome, a.tipo, a.tamanho, a.de, a.criado, a.msg_id FROM arquivo a JOIN msg m ON m.id = a.msg_id "
+                f"WHERE {' AND '.join(filtro)} ORDER BY a.criado DESC LIMIT ?", [*args, limite]).fetchall()
+        self._json(200, [{"id": i, "nome": n, "tipo": t, "tamanho": tam, "de": de, "criado_em": iso(c), "msg_id": mid,
+                          "url": f"/arquivos/{i}"} for i, n, t, tam, de, c, mid in linhas])
+
     def baixar_arquivo(self, aid: str, q: dict) -> None:
         with conectar() as con:
-            quem = self._quem(con)
-            linha = con.execute(
-                "SELECT a.nome, a.tipo, a.tamanho, a.de, m.para, m.de FROM arquivo a LEFT JOIN msg m ON m.id = a.msg_id WHERE a.id=?",
-                (aid,)).fetchone()
-        if not linha:
-            raise ErroHttp(404, "arquivo_inexistente", "Arquivo não existe.")
-        nome, tipo, tam, dono, para, autor = linha
-        # Anexo de mensagem privada segue a mesma regra da mensagem.
-        if para and not quem.admin and quem.nome not in (para, autor):
-            raise ErroHttp(404, "arquivo_inexistente", "Arquivo não existe.")
+            nome, tipo, tam = self._arquivo_visivel(con, self._quem(con), aid)[:3]
         caminho = os.path.join(PASTA_ARQUIVOS, aid)
         if not os.path.isfile(caminho):
             raise ErroHttp(404, "arquivo_inexistente", "Arquivo não existe.")
@@ -2316,7 +2342,7 @@ class Handler(BaseHTTPRequestHandler):
     def fatos(self, q: dict) -> None:
         """Busca nos fatos da sala: `q` (texto livre, FTS), `sujeito` (exato), `historico=1` inclui superados."""
         sala = validar_sala(q.get("sala"))
-        limite = min(max(int(q.get("limite") or 10), 1), 50)
+        limite = min(max(int(q.get("limite") or 10), 1), FATOS_LIMITE_MAX)
         filtro, args = ["f.sala=?"], [sala]
         if q.get("historico") != "1":
             filtro.append("f.estado='vigente'")

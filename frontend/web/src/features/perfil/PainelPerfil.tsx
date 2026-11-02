@@ -1,5 +1,5 @@
 import { CameraIcon, ChevronRightIcon, KeyRoundIcon, LoaderIcon, ListTodoIcon, NetworkIcon, PencilIcon, UserRoundIcon } from "lucide-react";
-import { useRef, useState, type FormEvent } from "react";
+import { lazy, Suspense, useMemo, useRef, useState, type FormEvent } from "react";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -15,8 +15,11 @@ import { corDe, ehIa, horaDe, siglaDe } from "@/shared/lib/formato";
 import { textos } from "@/shared/lib/textos";
 import { useEditarPerfil, useGrafo, usePerfil, type Perfil, type Persona } from "./api";
 import { FotoPerfil, urlFoto } from "@/features/perfil/FotoPerfil";
+import type { Fato } from "@/features/memoria/api";
 
 const t = textos.perfil;
+// d3-force só carrega quando a memória do agente aparece.
+const GrafoMemoria = lazy(() => import("@/features/memoria/Grafo"));
 const CAMPOS = [["equipe", 60], ["papel", 160], ["foco", 160], ["tom", 80], ["limites", 240]] as const;
 
 function Secao({ icone: Icone, titulo, children }: { icone: typeof UserRoundIcon; titulo: string; children: React.ReactNode }) {
@@ -77,17 +80,30 @@ function FichaPersona({ perfil }: { perfil: Perfil }) {
 }
 
 /** Memória da IA: assuntos ligados a ela; clicar num assunto destrincha (migalhas pra voltar). */
+/**
+ * Memória do agente em grafo (o mesmo desenho da aba Memória): o agente no centro, com o que ele registrou e o que
+ * se sabe dele. Clicar num nó recentra nele; a trilha volta pelos passos.
+ */
 function MemoriaDoAgente({ nome, sala }: { nome: string; sala: string }) {
   const [trilha, setTrilha] = useState<string[]>([]);
   const rotulos = useRef(new Map<string, string>());
   const atual = trilha.at(-1);
   const { data: g, isPending, isError } = useGrafo(sala, atual ? { sujeito: atual } : { agente: nome });
-  if (isError) return <p className="text-sm text-muted-foreground">{t.semGrafo}</p>;
   for (const n of g?.nos ?? []) rotulos.current.set(n.nome, n.rotulo);
-  if (isPending || !g) return <Skeleton className="h-24" />;
-  const porPredicado = new Map<string, typeof g.arestas>();
-  for (const a of g.arestas) porPredicado.set(a.predicado, [...(porPredicado.get(a.predicado) ?? []), a]);
-  const rotulo = new Map(g.nos.map((n) => [n.nome, n.rotulo]));
+  // O grafo da aba Memória desenha fatos; as arestas da vizinhança viram fatos com os rótulos de exibição.
+  const fatos = useMemo<Fato[]>(() => {
+    if (!g) return [];
+    const r = new Map(g.nos.map((n) => [n.nome, n.rotulo]));
+    return g.arestas.map((a) => ({
+      id: a.fato, sala, sujeito: r.get(a.de) ?? a.de, predicado: a.predicado, objeto: r.get(a.para) ?? a.para,
+      origem: a.origem as Fato["origem"], estado: "vigente", supera: null, superado_por: null, autor: a.autor,
+      confirmado_por: null, criado_em: "",
+    }));
+  }, [g, sala]);
+  const centros = useMemo(() => (g?.centros ?? []).map((c) => rotulos.current.get(c) ?? c), [g]);
+  if (isError) return <p className="text-sm text-muted-foreground">{t.semGrafo}</p>;
+  if (isPending || !g) return <Skeleton className="h-72" />;
+  const porRotulo = new Map(g.nos.map((n) => [n.rotulo.toLowerCase(), n.nome]));
   return (
     <div className="grid gap-2">
       <nav aria-label={t.trilha} className="flex flex-wrap items-center gap-1 text-xs">
@@ -100,34 +116,18 @@ function MemoriaDoAgente({ nome, sala }: { nome: string; sala: string }) {
           </span>
         ))}
       </nav>
-      {g.arestas.length === 0 ? <p className="text-sm text-muted-foreground">{t.semFatos}</p> : (
-        <ul key={trilha.join("/")} className="grid gap-2">
-          {[...porPredicado].map(([pred, arestas]) => (
-            <li key={pred} className="grid gap-1">
-              <span className="text-xs text-muted-foreground">{pred}</span>
-              <div className="flex flex-wrap gap-1.5">
-                {arestas.map((a, i) => {
-                  // Cascata: cada chip do nível entra 20 ms depois do anterior.
-                  const cascata = { animationDelay: `${Math.min(i, 15) * 20}ms` };
-                  // Sobre o centro: mostra o outro lado. Só registrado por ele: mostra a relação inteira.
-                  const r = (n: string) => rotulo.get(n) ?? n;
-                  const sai = g.centros.includes(a.de), entra = g.centros.includes(a.para);
-                  const outro = sai ? a.para : a.de;
-                  const navegavel = rotulo.has(outro) && (entra || !a.folha || !sai);
-                  const texto = sai ? r(a.para) : entra ? `← ${r(a.de)}` : `${r(a.de)} → ${r(a.para)}`;
-                  return navegavel ? (
-                    <button key={a.fato} type="button" onClick={() => setTrilha([...trilha, outro])} title={t.origemDe(a.origem.tipo, a.origem.id, a.autor)} style={cascata}
-                      className="motion-safe:animate-[entra_var(--mov-padrao)_var(--mov-curva)_both] rounded-full border border-primary/40 bg-primary/5 px-2 py-0.5 text-xs text-primary hover:bg-primary/10">{texto}</button>
-                  ) : (
-                    <span key={a.fato} title={t.origemDe(a.origem.tipo, a.origem.id, a.autor)} style={cascata}
-                      className="motion-safe:animate-[entra_var(--mov-padrao)_var(--mov-curva)_both] rounded-full border px-2 py-0.5 text-xs [overflow-wrap:anywhere]">{texto}</span>
-                  );
-                })}
-              </div>
-            </li>
-          ))}
-        </ul>
+      {fatos.length === 0 ? <p className="text-sm text-muted-foreground">{t.semFatos}</p> : (
+        <div className="flex h-72 flex-col overflow-hidden rounded-[var(--raio-lg)] border">
+          <Suspense fallback={<Skeleton className="flex-1" />}>
+            <GrafoMemoria key={trilha.join("/")} fatos={fatos} selecionado={null} centros={centros}
+              aoSelecionar={(rotulo) => {
+                const alvo = rotulo ? porRotulo.get(rotulo.toLowerCase()) : undefined;
+                if (alvo && !g.centros.includes(alvo)) setTrilha([...trilha, alvo]);
+              }} />
+          </Suspense>
+        </div>
       )}
+      <p className="text-[11px] text-muted-foreground">{t.dicaGrafo}</p>
       {g.cortado && <p className="text-[11px] text-muted-foreground">{t.cortado}</p>}
     </div>
   );

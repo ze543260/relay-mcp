@@ -20,10 +20,20 @@ export interface Fato {
   criado_em: string;
 }
 
-export const useFatos = (sala: string, termo: string, historico: boolean) => useQuery({
-  queryKey: ["fatos", sala, termo, historico],
+/**
+ * Assunto que parece um arquivo: nome com extensão (`spec-v2.pdf`) ou caminho (`docs/PLANO.md`), sem espaços.
+ * A memória guarda texto livre; isso é só para desenhar e destacar.
+ */
+export const ehArquivo = (nome: string): boolean => /^[^\s]+\.[a-z0-9]{1,8}$/i.test(nome.trim()) || /^[^\s]*\/[^\s]+$/.test(nome.trim());
+
+/** Fatos por consulta na lista; o grafo pede mais (o servidor aceita até 500). */
+export const LIMITE = 50;
+export const LIMITE_GRAFO = 300;
+
+export const useFatos = (sala: string, termo: string, historico: boolean, limite = LIMITE) => useQuery({
+  queryKey: ["fatos", sala, termo, historico, limite],
   queryFn: ({ signal }) => api<Fato[]>(`/fatos?${new URLSearchParams({
-    sala, limite: "50", ...(termo ? { q: termo } : {}), ...(historico ? { historico: "1" } : {}),
+    sala, limite: String(limite), ...(termo ? { q: termo } : {}), ...(historico ? { historico: "1" } : {}),
   })}`, { sinal: signal }),
   placeholderData: (anterior) => anterior,
 });
