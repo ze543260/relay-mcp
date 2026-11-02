@@ -8,6 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { textos } from "@/shared/lib/textos";
 import { gravar, ler } from "@/shared/lib/armazenamento";
+import { anexoDoNo, useAnexosPorNome } from "./anexo";
 import { ehArquivo, LIMITE, useCandidatos, useDecidirFato, useFatos, type Fato } from "./api";
 
 const lerVisao = (): "lista" | "grafo" => ler("relay-memoria-visao") === "grafo" ? "grafo" : "lista";
@@ -15,14 +16,23 @@ const lerVisao = (): "lista" | "grafo" => ler("relay-memoria-visao") === "grafo"
 const t = textos.memoria;
 // d3-force só carrega quando o grafo abre.
 const GrafoMemoria = lazy(() => import("./Grafo"));
+const PreviaAnexo = lazy(() => import("./PreviaAnexo"));
 
 const dataCurta = (iso: string) => new Date(iso).toLocaleDateString("pt-BR", { day: "2-digit", month: "short" });
 
 /** Selo da origem; mensagem é clicável e leva até ela na conversa. */
-function Origem({ fato, abrir }: { fato: Fato; abrir: (msgId: number) => void }) {
+function Origem({ fato, abrir, abrirArquivo }: { fato: Fato; abrir: (msgId: number) => void; abrirArquivo?: (id: string) => void }) {
   const rotulo = t.deOrigem(t.origem[fato.origem.tipo] ?? fato.origem.tipo, fato.origem.id);
   const classe = "inline-flex items-center rounded-full border px-1.5 py-px font-mono text-[10.5px] leading-4";
   // Anexo enviado no relay: abre o arquivo (a sessão vai no cookie).
+  // No grafo, o anexo abre na prévia do painel; na lista, numa aba nova.
+  if (fato.origem.tipo === "arquivo" && abrirArquivo)
+    return (
+      <button type="button" onClick={() => abrirArquivo(fato.origem.id)} title={t.verPrevia}
+        className={cn(classe, "gap-1 text-primary hover:bg-primary/10 focus-visible:outline-2 focus-visible:outline-ring")}>
+        <PaperclipIcon className="size-3" aria-hidden />{t.deOrigem(t.origem.arquivo!, fato.origem.id.slice(0, 8))}
+      </button>
+    );
   if (fato.origem.tipo === "arquivo")
     return (
       <a href={`/arquivos/${encodeURIComponent(fato.origem.id)}`} target="_blank" rel="noopener" title={t.abrirArquivo}
@@ -39,7 +49,7 @@ function Origem({ fato, abrir }: { fato: Fato; abrir: (msgId: number) => void })
   );
 }
 
-function LinhaFato({ fato, abrir, comSujeito = false }: { fato: Fato; abrir: (msgId: number) => void; comSujeito?: boolean }) {
+function LinhaFato({ fato, abrir, abrirArquivo, comSujeito = false }: { fato: Fato; abrir: (msgId: number) => void; abrirArquivo?: (id: string) => void; comSujeito?: boolean }) {
   const antigo = fato.estado === "superado" || fato.estado === "rejeitado";
   return (
     <li className={cn("grid gap-1 py-2", antigo && "opacity-60")}>
@@ -49,7 +59,7 @@ function LinhaFato({ fato, abrir, comSujeito = false }: { fato: Fato; abrir: (ms
       </p>
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
         <span className="font-mono">#{fato.id}</span>
-        <Origem fato={fato} abrir={abrir} />
+        <Origem fato={fato} abrir={abrir} abrirArquivo={abrirArquivo} />
         <span>{t.por(fato.autor)}</span>
         {fato.confirmado_por && <span>· {t.confirmadoPor(fato.confirmado_por)}</span>}
         <time dateTime={fato.criado_em} className="tabular-nums">· {dataCurta(fato.criado_em)}</time>
@@ -95,8 +105,13 @@ export default function Memoria({ sala, admin, abrirMensagem }: { sala: string; 
   const { data: fatos, isPending } = useFatos(sala, termo, historico);
   const [visao, setVisao] = useState<"lista" | "grafo">(() => lerVisao());
   const [noAberto, setNoAberto] = useState<string | null>(null);
+  const [arquivoAberto, setArquivoAberto] = useState<string | null>(null);
+  const selecionarNo = (n: string | null) => { setNoAberto(n); setArquivoAberto(null); };
   const escolherVisao = (v: "lista" | "grafo") => { setVisao(v); gravar("relay-memoria-visao", v); };
   const visiveis = useMemo(() => (fatos ?? []).filter((x) => historico || x.estado === "vigente"), [fatos, historico]);
+  const porNome = useAnexosPorNome(visao === "grafo" ? visiveis : []);
+  // Prévia: o anexo pedido pela origem ou, sem ele, o anexo com o mesmo nome do nó aberto.
+  const previa = arquivoAberto ?? (noAberto && ehArquivo(noAberto) ? anexoDoNo(noAberto, porNome) : null);
   const doNo = noAberto ? visiveis.filter((f) => [f.sujeito, f.objeto].some((x) => x.trim().toLowerCase() === noAberto.trim().toLowerCase())) : [];
 
   // Agrupa por sujeito (sem diferenciar maiúsculas), na ordem em que o servidor devolveu (relevância/recência).
@@ -141,20 +156,28 @@ export default function Memoria({ sala, admin, abrirMensagem }: { sala: string; 
             <p className="m-auto p-6 text-center text-sm text-muted-foreground">{termo ? t.semResultado(termo) : t.vazio}</p>
           ) : (
             <Suspense fallback={<Skeleton className="m-4 flex-1" />}>
-              <GrafoMemoria fatos={visiveis} selecionado={noAberto} aoSelecionar={setNoAberto} />
+              <GrafoMemoria fatos={visiveis} selecionado={noAberto} aoSelecionar={selecionarNo} />
             </Suspense>
           )}
-          {noAberto && (
-            <aside aria-label={noAberto} className="max-h-[45dvh] flex-none overflow-y-auto border-t bg-card px-4 py-3 md:max-h-none md:w-80 md:border-t-0 md:border-l">
+          {(noAberto || previa) && (
+            <aside aria-label={noAberto ?? t.anexo} className={cn("grid max-h-[50dvh] flex-none content-start gap-3 overflow-y-auto border-t bg-card px-4 py-3 md:max-h-none md:border-t-0 md:border-l",
+              previa ? "md:w-[min(30rem,45%)]" : "md:w-80", "min-w-0")}>
+              {previa && (
+                <Suspense fallback={<Skeleton className="h-60" />}>
+                  <PreviaAnexo key={previa} id={previa} fechar={arquivoAberto ? () => setArquivoAberto(null) : undefined} />
+                </Suspense>
+              )}
+              {noAberto && <div>
               <div className="flex items-center justify-between gap-2">
                 <h2 className="flex min-w-0 items-center gap-1.5 text-sm font-semibold">
                   {ehArquivo(noAberto) && <FileTextIcon className="size-4 flex-none text-primary" aria-label={t.ehArquivo} />}
                   <span className="truncate">{noAberto}</span>
                 </h2>
-                <Button size="icon" variant="ghost" className="size-7" aria-label={t.fecharNo} onClick={() => setNoAberto(null)}><XIcon /></Button>
+                <Button size="icon" variant="ghost" className="size-7" aria-label={t.fecharNo} onClick={() => selecionarNo(null)}><XIcon /></Button>
               </div>
               <p className="text-xs text-muted-foreground">{t.ligacoes(doNo.length)}</p>
-              <ul className="divide-y">{doNo.map((f) => <LinhaFato key={f.id} fato={f} abrir={abrirMensagem} comSujeito />)}</ul>
+              <ul className="divide-y">{doNo.map((f) => <LinhaFato key={f.id} fato={f} abrir={abrirMensagem} abrirArquivo={setArquivoAberto} comSujeito />)}</ul>
+              </div>}
             </aside>
           )}
         </div>
