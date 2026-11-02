@@ -26,13 +26,14 @@ export interface Fato {
  */
 export const ehArquivo = (nome: string): boolean => /^[^\s]+\.[a-z0-9]{1,8}$/i.test(nome.trim()) || /^[^\s]*\/[^\s]+$/.test(nome.trim());
 
-/** Máximo que o servidor devolve por consulta (/fatos limita em 50). */
+/** Fatos por consulta na lista; o grafo pede mais (o servidor aceita até 500). */
 export const LIMITE = 50;
+export const LIMITE_GRAFO = 300;
 
-export const useFatos = (sala: string, termo: string, historico: boolean) => useQuery({
-  queryKey: ["fatos", sala, termo, historico],
+export const useFatos = (sala: string, termo: string, historico: boolean, limite = LIMITE) => useQuery({
+  queryKey: ["fatos", sala, termo, historico, limite],
   queryFn: ({ signal }) => api<Fato[]>(`/fatos?${new URLSearchParams({
-    sala, limite: String(LIMITE), ...(termo ? { q: termo } : {}), ...(historico ? { historico: "1" } : {}),
+    sala, limite: String(limite), ...(termo ? { q: termo } : {}), ...(historico ? { historico: "1" } : {}),
   })}`, { sinal: signal }),
   placeholderData: (anterior) => anterior,
 });

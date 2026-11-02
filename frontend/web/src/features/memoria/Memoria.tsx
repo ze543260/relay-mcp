@@ -8,8 +8,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { textos } from "@/shared/lib/textos";
 import { gravar, ler } from "@/shared/lib/armazenamento";
-import { anexoDoNo, useAnexosPorNome } from "./anexo";
-import { ehArquivo, LIMITE, useCandidatos, useDecidirFato, useFatos, type Fato } from "./api";
+import { useAnexoDoNo } from "./anexo";
+import { ehArquivo, LIMITE, LIMITE_GRAFO, useCandidatos, useDecidirFato, useFatos, type Fato } from "./api";
 
 const lerVisao = (): "lista" | "grafo" => ler("relay-memoria-visao") === "grafo" ? "grafo" : "lista";
 
@@ -102,16 +102,16 @@ export default function Memoria({ sala, admin, abrirMensagem }: { sala: string; 
   const [busca, setBusca] = useState("");
   const [historico, setHistorico] = useState(false);
   const termo = useDeferredValue(busca.trim());
-  const { data: fatos, isPending } = useFatos(sala, termo, historico);
   const [visao, setVisao] = useState<"lista" | "grafo">(() => lerVisao());
+  const { data: fatos, isPending } = useFatos(sala, termo, historico, visao === "grafo" ? LIMITE_GRAFO : LIMITE);
   const [noAberto, setNoAberto] = useState<string | null>(null);
   const [arquivoAberto, setArquivoAberto] = useState<string | null>(null);
   const selecionarNo = (n: string | null) => { setNoAberto(n); setArquivoAberto(null); };
   const escolherVisao = (v: "lista" | "grafo") => { setVisao(v); gravar("relay-memoria-visao", v); };
   const visiveis = useMemo(() => (fatos ?? []).filter((x) => historico || x.estado === "vigente"), [fatos, historico]);
-  const porNome = useAnexosPorNome(visao === "grafo" ? visiveis : []);
-  // Prévia: o anexo pedido pela origem ou, sem ele, o anexo com o mesmo nome do nó aberto.
-  const previa = arquivoAberto ?? (noAberto && ehArquivo(noAberto) ? anexoDoNo(noAberto, porNome) : null);
+  // Prévia: o anexo pedido pela origem ou, sem ele, o anexo da sala com o mesmo nome do nó aberto.
+  const { data: anexoDoNo } = useAnexoDoNo(sala, visao === "grafo" && noAberto && ehArquivo(noAberto) ? noAberto : null);
+  const previa = arquivoAberto ?? anexoDoNo ?? null;
   const doNo = noAberto ? visiveis.filter((f) => [f.sujeito, f.objeto].some((x) => x.trim().toLowerCase() === noAberto.trim().toLowerCase())) : [];
 
   // Agrupa por sujeito (sem diferenciar maiúsculas), na ordem em que o servidor devolveu (relevância/recência).
@@ -205,7 +205,7 @@ export default function Memoria({ sala, admin, abrirMensagem }: { sala: string; 
         </div>
       </div>
       )}
-      {visao === "grafo" && (fatos?.length ?? 0) >= LIMITE && <p className="border-t px-4 py-1.5 text-[11px] text-muted-foreground">{t.limite(LIMITE)}</p>}
+      {visao === "grafo" && (fatos?.length ?? 0) >= LIMITE_GRAFO && <p className="border-t px-4 py-1.5 text-[11px] text-muted-foreground">{t.limite(LIMITE_GRAFO)}</p>}
     </div>
   );
 }

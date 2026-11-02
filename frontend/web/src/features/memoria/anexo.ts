@@ -1,10 +1,9 @@
-import { useQueries, useQuery } from "@tanstack/react-query";
-import { ErroApi } from "@/shared/api/cliente";
-import type { Fato } from "./api";
+import { useQuery } from "@tanstack/react-query";
+import { api, ErroApi } from "@/shared/api/cliente";
 
 /**
  * Anexos do relay vistos da memória. O servidor só exibe direto alguns tipos e manda o resto como
- * octet-stream, então o tipo da prévia sai da extensão do nome (que vem no Content-Disposition).
+ * octet-stream, então o tipo da prévia sai da extensão do nome.
  */
 export type TipoPrevia = "markdown" | "codigo" | "texto" | "imagem" | "pdf" | "audio" | "video" | "outro";
 
@@ -41,27 +40,15 @@ export function previaDe(nome: string): { previa: TipoPrevia; linguagem: string 
   return { previa: "outro", linguagem: "" };
 }
 
-/** `filename*=UTF-8''…` (o servidor manda sempre assim) ou `filename="…"`. */
-function nomeDoCabecalho(cd: string | null): string | null {
-  if (!cd) return null;
-  const estrela = cd.match(/filename\*=UTF-8''([^;]+)/i);
-  if (estrela) { try { return decodeURIComponent(estrela[1]!); } catch { return estrela[1]!; } }
-  return cd.match(/filename="?([^";]+)"?/i)?.[1] ?? null;
-}
-
 const urlDe = (id: string) => `/arquivos/${encodeURIComponent(id)}`;
 
-/** Só os cabeçalhos: o corpo é abortado assim que a resposta chega (não baixa o arquivo inteiro). */
-async function info(id: string, sinal?: AbortSignal): Promise<InfoAnexo> {
-  const ctl = new AbortController();
-  sinal?.addEventListener("abort", () => ctl.abort(), { once: true });
-  const r = await fetch(urlDe(id), { credentials: "same-origin", headers: { "X-Relay": "1" }, signal: ctl.signal });
-  if (!r.ok) throw new ErroApi(r.status, r.status === 404 ? "arquivo_inexistente" : null, null, null);
-  const nome = nomeDoCabecalho(r.headers.get("Content-Disposition")) ?? id;
-  const tamanho = Number(r.headers.get("Content-Length")) || null;
-  ctl.abort();
-  return { id, nome, tamanho, url: urlDe(id), ...previaDe(nome) };
-}
+interface RespostaInfo { id: string; nome: string; tipo: string; tamanho: number }
+
+const comPrevia = (r: RespostaInfo): InfoAnexo => ({ id: r.id, nome: r.nome, tamanho: r.tamanho, url: urlDe(r.id), ...previaDe(r.nome) });
+
+/** Metadados pelo servidor (GET /arquivos/<id>/info), sem baixar o conteúdo. */
+const info = async (id: string, sinal?: AbortSignal): Promise<InfoAnexo> =>
+  comPrevia(await api<RespostaInfo>(`${urlDe(id)}/info`, { sinal }));
 
 export const useInfoAnexo = (id: string | null) => useQuery({
   queryKey: ["anexo", id, "info"],
@@ -84,17 +71,19 @@ export const useTextoAnexo = (a: InfoAnexo | undefined) => useQuery({
   staleTime: Infinity,
 });
 
-/** Nome (minúsculo) -> id do anexo, para os anexos citados como origem nos fatos visíveis. */
-export function useAnexosPorNome(fatos: Fato[]): Map<string, string> {
-  const ids = [...new Set(fatos.filter((f) => f.origem.tipo === "arquivo").map((f) => f.origem.id))];
-  const res = useQueries({
-    queries: ids.map((id) => ({ queryKey: ["anexo", id, "info"], queryFn: ({ signal }: { signal: AbortSignal }) => info(id, signal), staleTime: Infinity, retry: false })),
+/**
+ * Anexo de um nó de arquivo: procura nos anexos públicos da sala pelo nome do arquivo
+ * (`docs/PLANO-FLUXOS.md` casa com o anexo `PLANO-FLUXOS.md`). Mais novo primeiro.
+ */
+export function useAnexoDoNo(sala: string, no: string | null) {
+  const base = no ? (no.trim().split("/").pop() ?? "").toLowerCase() : "";
+  return useQuery({
+    queryKey: ["anexos", sala, base],
+    queryFn: async ({ signal }) => {
+      const lista = await api<RespostaInfo[]>(`/arquivos?${new URLSearchParams({ sala, q: base, limite: "20" })}`, { sinal: signal });
+      return lista.find((a) => a.nome.toLowerCase() === base)?.id ?? null;
+    },
+    enabled: !!base,
+    staleTime: 30_000,
   });
-  const mapa = new Map<string, string>();
-  for (const q of res) if (q.data) mapa.set(q.data.nome.toLowerCase(), q.data.id);
-  return mapa;
 }
-
-/** Acha o anexo de um nó pelo nome do arquivo (`docs/PLANO.md` casa com o anexo `PLANO.md`). */
-export const anexoDoNo = (no: string, porNome: Map<string, string>): string | null =>
-  porNome.get(no.trim().toLowerCase()) ?? porNome.get((no.trim().split("/").pop() ?? "").toLowerCase()) ?? null;
