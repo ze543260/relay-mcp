@@ -6,6 +6,7 @@ import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRe
 const Quadro = lazy(() => import("@/features/equipe/Quadro"));
 const Memoria = lazy(() => import("@/features/memoria/Memoria"));
 const Artefatos = lazy(() => import("@/features/artefatos/Artefatos"));
+const Fluxos = lazy(() => import("@/features/fluxos/Fluxos"));
 const PainelArtefato = lazy(() => import("@/features/artefatos/PainelArtefato"));
 const PainelPerfil = lazy(() => import("@/features/perfil/PainelPerfil"));
 const FaixaReuniao = lazy(() => import("@/features/equipe/FaixaReuniao").then((m) => ({ default: m.FaixaReuniao })));
@@ -21,7 +22,7 @@ import { useConversa } from "@/features/mensagens/useConversa";
 import { useAgentes } from "@/features/agentes/useAgentes";
 import { useReunioes } from "@/features/equipe/api";
 import { useDigitando, useLeituras, useMarcarLeitura } from "@/features/mensagens/presenca";
-import { BrainIcon, CalendarPlusIcon, EllipsisVerticalIcon, FileCodeIcon, KanbanIcon, MessagesSquareIcon, MoonIcon, SearchIcon, SunIcon } from "lucide-react";
+import { BrainIcon, CalendarPlusIcon, EllipsisVerticalIcon, FileCodeIcon, KanbanIcon, MessagesSquareIcon, MoonIcon, SearchIcon, SunIcon, WorkflowIcon } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -95,7 +96,12 @@ export function RotaSala() {
   }, [paletaUsada, setPaletaAberta]);
   const [respondendo, setRespondendo] = useState<Mensagem | null>(null);
   // Tarefas e reuniões mudaram (SSE): recarrega só o que for daquela sala.
-  const aoEvento = useCallback((tipo: "tarefa" | "reuniao" | "leitura" | "apelido" | "fato" | "artefato") => {
+  const aoEvento = useCallback((tipo: "tarefa" | "reuniao" | "leitura" | "apelido" | "fato" | "artefato" | "fluxo" | "pedido") => {
+    if (tipo === "fluxo") {
+      void qc.invalidateQueries({ queryKey: ["fluxos", sala] });
+      return void qc.invalidateQueries({ queryKey: ["fluxo", sala] });
+    }
+    if (tipo === "pedido") return void qc.invalidateQueries({ queryKey: ["pedidos", sala] });
     if (tipo === "artefato") {
       void qc.invalidateQueries({ queryKey: ["artefatos", sala] });
       return void qc.invalidateQueries({ queryKey: ["artefato"] });
@@ -127,7 +133,7 @@ export function RotaSala() {
     return [...nomes].map((n) => ({ nome: n, online: porNome.get(n)?.online ?? false, apelido: porNome.get(n)?.apelido }));
   }, [agentes, autores.join("|")]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const [aba, setAba] = useState<"conversa" | "quadro" | "memoria" | "artefatos">("conversa");
+  const [aba, setAba] = useState<"conversa" | "quadro" | "memoria" | "artefatos" | "fluxos">("conversa");
   const abasRef = useRef<HTMLDivElement>(null);
   const [indicador, setIndicador] = useState({ x: 0, w: 0 });
   useLayoutEffect(() => {
@@ -164,7 +170,7 @@ export function RotaSala() {
   const doCanal = reunioes?.find((r) => r.canal === sala);
   const te = textos.equipe;
   const ABAS = [["conversa", MessagesSquareIcon, te.conversa], ["quadro", KanbanIcon, te.quadro],
-    ["memoria", BrainIcon, textos.memoria.aba], ["artefatos", FileCodeIcon, textos.artefatos.aba]] as const;
+    ["memoria", BrainIcon, textos.memoria.aba], ["artefatos", FileCodeIcon, textos.artefatos.aba], ["fluxos", WorkflowIcon, textos.fluxos.aba]] as const;
 
   if (estadoSessao === "fora") return <Navigate to="/entrar" search={{ volta: sala }} replace />;
 
@@ -275,7 +281,9 @@ export function RotaSala() {
         )}
         {/* Troca de aba: o conteúdo entra com fade + 4 px. */}
         <div key={aba} className="flex min-h-0 flex-1 flex-col motion-safe:animate-[aba_var(--mov-padrao)_var(--mov-curva)]">
-        {aba === "artefatos" ? (
+        {aba === "fluxos" ? (
+          <Suspense fallback={<div className="flex-1" />}><Fluxos sala={doCanal?.sala ?? sala} eu={nome} admin={admin} /></Suspense>
+        ) : aba === "artefatos" ? (
           <Suspense fallback={<div className="flex-1" />}><Artefatos sala={doCanal?.sala ?? sala} /></Suspense>
         ) : aba === "memoria" ? (
           <Suspense fallback={<div className="flex-1" />}>
