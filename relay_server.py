@@ -244,6 +244,12 @@ MIGRACOES = [
          modo TEXT NOT NULL DEFAULT 'auto' CHECK (modo IN ('auto','ausente','ocupado','invisivel')),
          texto TEXT, emoji TEXT, expira REAL, ocioso INTEGER NOT NULL DEFAULT 0,
          atividade TEXT, atividade_ate REAL, quando REAL NOT NULL);""",
+    # 23: pilha por responsável (docs/PLANO-PILHA.md). `pilha` é a posição na fila de quem é o responsável
+    # (independe da `ordem` do quadro); `pedido_id` liga a tarefa ao pedido de fluxo que ela acompanha.
+    """ALTER TABLE tarefa ADD COLUMN pilha REAL;
+       ALTER TABLE tarefa ADD COLUMN pedido_id INTEGER;
+       CREATE UNIQUE INDEX IF NOT EXISTS tarefa_pedido ON tarefa(pedido_id) WHERE pedido_id IS NOT NULL;
+       CREATE INDEX IF NOT EXISTS tarefa_responsavel ON tarefa(responsavel, status);""",
 ]
 
 STATUS_TAREFA = ("a_fazer", "fazendo", "revisao", "feito")
@@ -982,6 +988,9 @@ class Handler(BaseHTTPRequestHandler):
                 ("GET", "/fluxos"): self.fluxos,
                 ("POST", "/fluxos"): self.publicar_fluxo,
                 ("GET", "/fluxos/pedidos"): self.pedidos_fluxo,
+                ("GET", "/pilha"): self.ver_pilha,
+                ("POST", "/pilha/mover"): self.mover_na_pilha,
+                ("POST", "/pilha/proxima"): self.proxima_da_pilha,
                 ("POST", "/fluxos/pedidos"): self.pedir_fluxo,
             }
             if (metodo, caminho) in rotas:
@@ -1019,6 +1028,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self.ver_tarefa(int(m.group(1)))
             if m and metodo in ("PATCH", "DELETE"):
                 return (self.alterar_tarefa if metodo == "PATCH" else self.apagar_tarefa)(int(m.group(1)))
+            m = re.fullmatch(r"/tarefas/(\d+)/fluxo", caminho)
+            if m and metodo == "POST":
+                return self.tarefa_por_fluxo(int(m.group(1)))
             m = re.fullmatch(r"/tarefas/(\d+)/checklist(?:/(\d+))?", caminho)
             if m and metodo == "POST" and m.group(2) is None:
                 return self.criar_item(int(m.group(1)))
@@ -1915,6 +1927,110 @@ class Handler(BaseHTTPRequestHandler):
             con.execute("INSERT OR IGNORE INTO tarefa_etiqueta VALUES (?,?)", (tid, eid))
         return limpos
 
+    # pilha por responsável (docs/PLANO-PILHA.md)
+
+    def _pode_mexer_na_pilha(self, con: sqlite3.Connection, quem: Quem, dono: str) -> None:
+        """O próprio dono da pilha, um humano com identidade forte ou o admin. Uma IA não mexe na pilha de outra."""
+        if quem.admin or quem.nome == dono or humano_confirmado(con, quem):
+            return
+        raise ErroHttp(403, "proibido", "Só o dono da pilha, um humano ou o admin mexem nela.")
+
+    def _itens_da_pilha(self, con: sqlite3.Connection, agente: str, sala: str | None) -> list[dict]:
+        filtro, args = ["t.responsavel=?", "t.status IN ('a_fazer','fazendo','revisao')"], [agente]
+        if sala:
+            filtro.append("t.sala=?")
+            args.append(sala)
+        cols = ", ".join(f"t.{c}" for c in COLS_TAREFA.split(", "))
+        linhas = con.execute(f"SELECT {cols}, t.pilha, t.pedido_id FROM tarefa t WHERE {' AND '.join(filtro)} "
+                             f"ORDER BY {ORDEM_PILHA} LIMIT {LIMITE_PAGINA}", args).fetchall()
+        itens = com_extras(con, [tarefa_para_json(r[:-2]) for r in linhas])
+        pedidos = {r[-1] for r in linhas if r[-1]}
+        por_pedido: dict[int, dict] = {}
+        if pedidos:
+            marcas = ",".join("?" * len(pedidos))
+            por_pedido = {p["id"]: p for p in (pedido_para_json(r) for r in con.execute(
+                f"SELECT {COLS_PEDIDO} FROM fluxo_pedido WHERE id IN ({marcas})", list(pedidos)))}
+        for pos, (item, r) in enumerate(zip(itens, linhas)):
+            item["pilha"] = r[-2]
+            item["posicao"] = pos + 1
+            p = por_pedido.get(r[-1])
+            item["pedido"] = {k: p[k] for k in ("id", "de", "nome", "versao", "estado", "expira_em", "motivo")} if p else None
+        return itens
+
+    def ver_pilha(self, q: dict) -> None:
+        """A pilha de `agente` (todas as salas, ou só `sala`): o que está com ele, na ordem em que vai fazer."""
+        agente = str(q.get("agente") or "")
+        if not NOME_RE.match(agente):
+            raise ErroHttp(400, "agente_invalido", "Diga de quem é a pilha (`agente`).")
+        sala = validar_sala(q["sala"]) if q.get("sala") else None
+        with conectar() as con:
+            self._quem(con)
+            self._expirar_pedidos(con)
+            self._json(200, {"agente": agente, "itens": self._itens_da_pilha(con, agente, sala)})
+
+    def mover_na_pilha(self, _q: dict) -> None:
+        """`{tarefa, topo|fundo|antes_de|depois_de}`: reordena a pilha do responsável da tarefa."""
+        c = self._corpo()
+        tid = c.get("tarefa")
+        if not isinstance(tid, int) or isinstance(tid, bool):
+            raise ErroHttp(400, "tarefa_invalida", "`tarefa`: id da tarefa.")
+        with conectar() as con:
+            quem = self._quem(con)
+            linha = con.execute("SELECT responsavel, status, sala, pilha FROM tarefa WHERE id=?", (tid,)).fetchone()
+            if not linha:
+                raise ErroHttp(404, "tarefa_inexistente", "Tarefa não existe.")
+            dono, status, sala, antes = linha
+            if not dono or status not in STATUS_PILHA:
+                raise ErroHttp(409, "fora_da_pilha", "A tarefa não está na pilha de ninguém (sem responsável ou já feita).")
+            self._pode_mexer_na_pilha(con, quem, dono)
+            ref = c.get("antes_de", c.get("depois_de"))
+            if c.get("topo"):
+                pos = posicao_na_pilha(con, dono, True)
+            elif c.get("fundo"):
+                pos = posicao_na_pilha(con, dono, False)
+            elif isinstance(ref, int) and not isinstance(ref, bool):
+                # Renumera a pilha inteira em passos de 1 e encaixa: simples e sem perder precisão.
+                ordem = [i["id"] for i in self._itens_da_pilha(con, dono, None) if i["id"] != tid]
+                if ref not in ordem:
+                    raise ErroHttp(400, "referencia_invalida", "`antes_de`/`depois_de` deve ser outra tarefa da mesma pilha.")
+                ordem.insert(ordem.index(ref) + (0 if "antes_de" in c else 1), tid)
+                for i, outra in enumerate(ordem):
+                    con.execute("UPDATE tarefa SET pilha=? WHERE id=?", (float(i), outra))
+                pos = float(ordem.index(tid))
+            else:
+                raise ErroHttp(400, "posicao_invalida", "Diga `topo`, `fundo`, `antes_de` ou `depois_de`.")
+            con.execute("UPDATE tarefa SET pilha=?, atualizado=? WHERE id=?", (pos, time.time(), tid))
+            registrar_atividade(con, tid, quem.nome or str(c.get("de") or "admin"), "pilha", antes, pos)
+            registrar_evento(con, "tarefa", sala, tid)
+            itens = self._itens_da_pilha(con, dono, None)
+        notificar()
+        self._json(200, {"agente": dono, "itens": itens})
+
+    def proxima_da_pilha(self, _q: dict) -> None:
+        """Pega o topo: a primeira `a_fazer` vira `fazendo`. Se já há uma `fazendo`, devolve ela (`ja_fazendo`).
+        Tarefa de pedido de fluxo não é pega aqui: quem a move é o executor, pelo pedido."""
+        c = self._corpo()
+        with conectar() as con:
+            quem = self._quem(con)
+            agente = str(c.get("agente") or quem.nome or "")
+            if not NOME_RE.match(agente):
+                raise ErroHttp(400, "agente_invalido", "Diga de quem é a pilha (`agente`).")
+            self._pode_mexer_na_pilha(con, quem, agente)
+            itens = self._itens_da_pilha(con, agente, validar_sala(c["sala"]) if c.get("sala") else None)
+            fazendo = next((i for i in itens if i["status"] == "fazendo"), None)
+            if fazendo:
+                return self._json(200, {"tarefa": self._tarefa_completa(con, fazendo["id"]), "ja_fazendo": True})
+            proxima = next((i for i in itens if i["status"] == "a_fazer" and not i["pedido"]), None)
+            if not proxima:
+                return self._json(200, {"tarefa": None, "ja_fazendo": False})
+            con.execute("UPDATE tarefa SET status='fazendo', atualizado=? WHERE id=?", (time.time(), proxima["id"]))
+            registrar_atividade(con, proxima["id"], agente, "status", "a_fazer", "fazendo")
+            mensagem_sistema(con, proxima["sala"], f"🔁 **{agente}** pegou **#{proxima['id']}** {proxima['titulo']} (topo da pilha)")
+            registrar_evento(con, "tarefa", proxima["sala"], proxima["id"])
+            t = self._tarefa_completa(con, proxima["id"])
+        notificar()
+        self._json(200, {"tarefa": t, "ja_fazendo": False})
+
     def criar_tarefa(self, _q: dict) -> None:
         c = self._corpo()
         sala = validar_sala(c.get("sala"))
@@ -1928,6 +2044,8 @@ class Handler(BaseHTTPRequestHandler):
                  por, agora, agora, v.get("prazo"), v["prioridade"], v.get("estimativa"), v.get("ordem")),
             )
             tid = cur.lastrowid
+            if c.get("topo") and v.get("responsavel"):  # urgente: entra no topo da pilha do responsável
+                con.execute("UPDATE tarefa SET pilha=? WHERE id=?", (posicao_na_pilha(con, v["responsavel"], True), tid))
             if c.get("etiquetas"):
                 self._definir_etiquetas(con, sala, tid, c["etiquetas"])
             registrar_atividade(con, tid, por, "criada", None, v["titulo"])
@@ -1954,6 +2072,8 @@ class Handler(BaseHTTPRequestHandler):
             if mudancas:
                 sets = ", ".join(f"{k}=?" for k in mudancas)
                 con.execute(f"UPDATE tarefa SET {sets}, atualizado=? WHERE id=?", [*mudancas.values(), time.time(), tid])
+                if "responsavel" in mudancas:  # a posição era da pilha antiga: entra no fim da nova
+                    con.execute("UPDATE tarefa SET pilha=NULL WHERE id=?", (tid,))
             else:
                 con.execute("UPDATE tarefa SET atualizado=? WHERE id=?", (time.time(), tid))
             for campo, novo in mudancas.items():
@@ -2979,6 +3099,7 @@ class Handler(BaseHTTPRequestHandler):
                 "SELECT id, sala, de, agente, nome, versao FROM fluxo_pedido WHERE estado='pendente' AND expira<?",
                 (agora,)).fetchall():
             con.execute("UPDATE fluxo_pedido SET estado='expirado', atualizado=? WHERE id=?", (agora, pid))
+            sincronizar_tarefa_do_pedido(con, pid, "expirado", "sem resposta no prazo", "relay")
             mensagem_sistema(con, sala, f"⌛ O pedido [[pedido:{pid}]] de **{de}** para **{agente}** "
                                         f"(`{nome}@{versao}`) expirou sem resposta.")
 
@@ -2992,8 +3113,22 @@ class Handler(BaseHTTPRequestHandler):
         return p
 
     def pedir_fluxo(self, _q: dict) -> None:
-        """Cria o pedido (seção 5/12). O executor do `agente` decide se roda; aqui só se checa o básico."""
+        """Cria o pedido (seção 5/12). O executor do `agente` decide se roda; aqui só se checa o básico.
+        Vira também uma tarefa na pilha do agente (docs/PLANO-PILHA.md, 5.1)."""
+        self._pedir(self._corpo(), None)
+
+    def tarefa_por_fluxo(self, tid: int) -> None:
+        """Roda uma tarefa existente por um fluxo (PLANO-PILHA, 5.3): o pedido nasce ligado a ela."""
         c = self._corpo()
+        with conectar() as con:
+            t = self._tarefa(con, tid)
+            if con.execute("SELECT pedido_id FROM tarefa WHERE id=?", (tid,)).fetchone()[0]:
+                raise ErroHttp(409, "tarefa_com_pedido", "Esta tarefa já acompanha um pedido de fluxo.")
+        if t["status"] == "feito":
+            raise ErroHttp(409, "tarefa_feita", "Tarefa já concluída.")
+        self._pedir({**c, "sala": t["sala"], "agente": c.get("agente") or t["responsavel"]}, tid)
+
+    def _pedir(self, c: dict, tarefa_id: int | None) -> None:
         sala = validar_sala(c.get("sala"))
         agente, nome, versao = str(c.get("agente") or ""), str(c.get("nome") or ""), c.get("versao")
         if not NOME_RE.match(agente):
@@ -3016,6 +3151,9 @@ class Handler(BaseHTTPRequestHandler):
         texto_params = json.dumps(params, ensure_ascii=False, sort_keys=True)
         if len(texto_params) > 4000 or CREDENCIAL_RE.search(texto_params):
             raise ErroHttp(422, "params_recusados", "Parâmetros grandes demais ou com cara de credencial.")
+        prioridade = c.get("prioridade", "nenhuma")
+        if prioridade not in PRIORIDADES:
+            raise ErroHttp(400, "prioridade_invalida", f"prioridade deve ser um de {', '.join(PRIORIDADES)}.")
         correlacao = str(c.get("correlation_id") or secrets.token_hex(16))
         if not re.fullmatch(r"[\w-]{8,64}", correlacao):
             raise ErroHttp(400, "correlacao_invalida", "`correlation_id`: 8–64 caracteres (letras, números, _ -).")
@@ -3043,6 +3181,8 @@ class Handler(BaseHTTPRequestHandler):
             mid = mensagem_sistema(con, sala, f"🔁 **{de}** pediu o fluxo `{nome}@{versao}` a @{agente} [[pedido:{pid}]]")
             con.execute("UPDATE fluxo_pedido SET msg_id=? WHERE id=?", (mid, pid))
             registrar_evento(con, "pedido", sala, pid)
+            ligar_tarefa_ao_pedido(con, pid, tarefa_id, sala, de, agente, nome, versao, params, prioridade,
+                                   bool(c.get("topo")), mid)
             p = self._pedido(con, pid, Quem(None, True))
         notificar()
         self._json(201, p)
@@ -3052,18 +3192,21 @@ class Handler(BaseHTTPRequestHandler):
         filtros, args = [], []
         for campo in ("agente", "de", "estado", "sala"):
             if q.get(campo):
-                filtros.append(f"{campo}=?")
+                filtros.append(f"p.{campo}=?")
                 args.append(q[campo])
-        filtros.append("id>?")
+        filtros.append("p.id>?")
         args.append(int(q.get("depois") or 0))
+        # `ordem=pilha` (executor): a vez é a da pilha do agente, não a de chegada (PLANO-PILHA, 5.4).
+        ordem = f"{ORDEM_PILHA.replace('t.', 'tp.')}, p.id" if q.get("ordem") == "pilha" else "p.id"
+        cols = ", ".join(f"p.{c}" for c in COLS_PEDIDO.split(", "))
         with conectar() as con:
             quem = self._quem(con)
             self._expirar_pedidos(con)
             if not quem.admin:
-                filtros.append("(de=? OR agente=?)")
+                filtros.append("(p.de=? OR p.agente=?)")
                 args += [quem.nome, quem.nome]
-            linhas = con.execute(f"SELECT {COLS_PEDIDO} FROM fluxo_pedido WHERE {' AND '.join(filtros)} "
-                                 f"ORDER BY id LIMIT {LIMITE_PAGINA}", args).fetchall()
+            linhas = con.execute(f"SELECT {cols} FROM fluxo_pedido p LEFT JOIN tarefa tp ON tp.pedido_id=p.id "
+                                 f"WHERE {' AND '.join(filtros)} ORDER BY {ordem} LIMIT {LIMITE_PAGINA}", args).fetchall()
         self._json(200, [pedido_para_json(r) for r in linhas])
 
     def ver_pedido(self, pid: int) -> None:
@@ -3106,6 +3249,7 @@ class Handler(BaseHTTPRequestHandler):
             mensagem_sistema(con, p["sala"], f"{icone} Pedido [[pedido:{pid}]] `{p['nome']}@{p['versao']}` "
                                              f"de **{p['de']}** → **{p['agente']}**: {estado}{resumo}")
             registrar_evento(con, "pedido", p["sala"], pid)
+            sincronizar_tarefa_do_pedido(con, pid, estado, motivo, quem.nome or p[quem_pode])
             p = self._pedido(con, pid, Quem(None, True))
         notificar()
         self._json(200, p)
@@ -3126,6 +3270,68 @@ def pedido_para_json(r: tuple) -> dict:
             "expect_sha256": expect, "params": json.loads(params), "chain": json.loads(cadeia),
             "correlation_id": correlacao, "estado": estado, "resultado": json.loads(resultado) if resultado else None,
             "motivo": motivo, "criado_em": iso(criado), "atualizado_em": iso(atualizado), "expira_em": iso(expira)}
+
+
+# --- Pilha por responsável (docs/PLANO-PILHA.md) ---------------------------
+
+STATUS_PILHA = ("a_fazer", "fazendo", "revisao")
+# Quem está fazendo vem primeiro; depois a posição manual (sem posição = fim), a prioridade e a mais antiga.
+ORDEM_PILHA = ("COALESCE(t.status, '') != 'fazendo', t.pilha IS NULL, t.pilha, CASE t.prioridade "
+               + " ".join(f"WHEN '{p}' THEN {i}" for i, p in enumerate(PRIORIDADES)) + " END, t.criado")
+# Estado do pedido -> status da tarefa que o acompanha (PLANO-PILHA, 5.2).
+STATUS_DO_PEDIDO = {"pendente": "a_fazer", "aceito": "fazendo", "concluido": "feito", "falhou": "revisao",
+                    "recusado": "feito", "cancelado": "feito", "expirado": "feito"}
+
+
+def posicao_na_pilha(con: sqlite3.Connection, responsavel: str, topo: bool) -> float:
+    """Posição para entrar no topo (menor que todas) ou no fundo (maior que todas) da pilha de alguém."""
+    fn = "MIN" if topo else "MAX"
+    atual = con.execute(f"SELECT {fn}(pilha) FROM tarefa WHERE responsavel=? AND status IN ('a_fazer','fazendo','revisao')",
+                        (responsavel,)).fetchone()[0]
+    if atual is None:
+        return 0.0
+    return atual - 1 if topo else atual + 1
+
+
+def ligar_tarefa_ao_pedido(con: sqlite3.Connection, pid: int, tarefa_id: int | None, sala: str, de: str, agente: str,
+                           nome: str, versao: int, params: dict, prioridade: str, topo: bool, msg_id: int) -> int:
+    """Todo pedido de fluxo vira (ou se liga a) uma tarefa na pilha do agente pedido (PLANO-PILHA, 5.1 e 5.3)."""
+    agora = time.time()
+    pos = posicao_na_pilha(con, agente, topo)
+    if tarefa_id is not None:
+        antes = con.execute("SELECT responsavel FROM tarefa WHERE id=?", (tarefa_id,)).fetchone()[0]
+        con.execute("UPDATE tarefa SET pedido_id=?, responsavel=?, status='a_fazer', pilha=?, atualizado=? WHERE id=?",
+                    (pid, agente, pos, agora, tarefa_id))
+        if antes != agente:
+            registrar_atividade(con, tarefa_id, de, "responsavel", antes, agente)
+        registrar_atividade(con, tarefa_id, de, "pedido", None, f"#{pid} {nome}@{versao}")
+        registrar_evento(con, "tarefa", sala, tarefa_id)
+        return tarefa_id
+    texto_params = "\n".join(f"- `{k}`: {json.dumps(v, ensure_ascii=False)}" for k, v in sorted(params.items()))
+    descricao = f"Pedido de fluxo [[pedido:{pid}]] de **{de}**." + (f"\n\nParâmetros:\n{texto_params}" if texto_params else "")
+    cur = con.execute(
+        f"INSERT INTO tarefa ({COLS_TAREFA.replace('id, ', '', 1)}, pilha, pedido_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (sala, f"🔁 fluxo {nome}@{versao} (de {de})"[:200], descricao, "a_fazer", agente, None, msg_id, de, agora, agora,
+         None, prioridade, None, None, pos, pid))
+    tid = cur.lastrowid
+    registrar_atividade(con, tid, de, "criada", None, f"pedido #{pid}")
+    registrar_evento(con, "tarefa", sala, tid)
+    return tid
+
+
+def sincronizar_tarefa_do_pedido(con: sqlite3.Connection, pid: int, estado: str, motivo: str, quem: str) -> None:
+    """Leva o estado do pedido para a tarefa ligada, na mesma transação (PLANO-PILHA, 5.2). Sem mensagem extra:
+    o pedido já anuncia na sala."""
+    linha = con.execute("SELECT id, sala, status FROM tarefa WHERE pedido_id=?", (pid,)).fetchone()
+    if not linha:
+        return
+    tid, sala, antes = linha
+    novo = STATUS_DO_PEDIDO[estado]
+    if novo != antes:
+        con.execute("UPDATE tarefa SET status=?, atualizado=? WHERE id=?", (novo, time.time(), tid))
+        registrar_atividade(con, tid, quem, "status", antes, novo)
+    registrar_atividade(con, tid, quem, "pedido", None, f"{estado}{': ' + motivo if motivo else ''}"[:300])
+    registrar_evento(con, "tarefa", sala, tid)
 
 
 def marcar_visto_sem_con(nome: str | None) -> None:

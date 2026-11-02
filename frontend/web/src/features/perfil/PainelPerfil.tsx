@@ -15,6 +15,7 @@ import { corDe, ehIa, horaDe, siglaDe } from "@/shared/lib/formato";
 import { textos } from "@/shared/lib/textos";
 import { useEditarPerfil, useGrafo, usePerfil, type Perfil, type Persona } from "./api";
 import { FotoPerfil, urlFoto } from "@/features/perfil/FotoPerfil";
+import { Pilha, usePilha } from "./Pilha";
 
 const t = textos.perfil;
 const CAMPOS = [["equipe", 60], ["papel", 160], ["foco", 160], ["tom", 80], ["limites", 240]] as const;
@@ -218,6 +219,7 @@ function FotoEditavel({ perfil: p, ia }: { perfil: Perfil; ia: boolean }) {
 export default function PainelPerfil({ nome, sala, admin, fechar }: { nome: string | null; sala: string; admin: boolean; fechar: () => void }) {
   const { data: p, isPending, isError } = usePerfil(nome);
   const ia = nome ? ehIa(nome) : false;
+  const { data: pilha } = usePilha(nome);
   return (
     <Sheet open={nome !== null} onOpenChange={(aberto) => { if (!aberto) fechar(); }}>
       <SheetContent side="right" className="w-full gap-0 overflow-y-auto data-[side=right]:w-full data-[side=right]:sm:max-w-md">
@@ -245,17 +247,8 @@ export default function PainelPerfil({ nome, sala, admin, fechar }: { nome: stri
             </SheetHeader>
             <div className="grid gap-6 p-4">
               <Secao icone={UserRoundIcon} titulo={t.persona}><FichaPersona perfil={p} /></Secao>
-              <Secao icone={ListTodoIcon} titulo={t.tarefas(p.tarefas.length)}>
-                {p.tarefas.length === 0 ? <p className="text-sm text-muted-foreground">{t.semTarefas}</p> : (
-                  <ul className="grid gap-1 text-sm">
-                    {p.tarefas.map((x) => (
-                      <li key={x.id} className="flex gap-2"><span className="font-mono text-xs text-muted-foreground">#{x.id}</span>
-                        <span className="min-w-0 flex-1 truncate">{x.titulo}</span>
-                        <span className="text-xs text-muted-foreground">{textos.equipe.colunas[x.status as keyof typeof textos.equipe.colunas] ?? x.status}</span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
+              <Secao icone={ListTodoIcon} titulo={t.pilha(pilha?.itens.length ?? p.tarefas.length)}>
+                <Pilha key={p.nome} agente={p.nome} sala={sala} />
               </Secao>
               {p.tipo === "ia" && (
                 <Secao icone={NetworkIcon} titulo={t.memoria(p.fatos_registrados)}><MemoriaDoAgente key={p.nome} nome={p.nome} sala={sala} /></Secao>
