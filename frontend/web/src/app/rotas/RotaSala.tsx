@@ -108,6 +108,7 @@ export function RotaSala() {
     if (tipo === "apelido") return void qc.invalidateQueries({ queryKey: ["agentes"] });
     void qc.invalidateQueries({ queryKey: [tipo === "tarefa" ? "tarefas" : "reunioes", sala] });
     if (tipo === "tarefa") {
+      void qc.invalidateQueries({ queryKey: ["pilha"] }); // a pilha junta salas: qualquer tarefa pode mexer nela
       void qc.invalidateQueries({ queryKey: ["sprints", sala] });
       void qc.invalidateQueries({ queryKey: ["etiquetas", sala] });
       void qc.invalidateQueries({ queryKey: ["tarefa"] }); // painel aberto (o evento não diz qual tarefa)

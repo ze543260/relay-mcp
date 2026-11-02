@@ -384,11 +384,12 @@ async def ver_tarefa(id: int) -> str:
 @mcp.tool()
 async def criar_tarefa(titulo: str, sala: str = SALA, responsavel: str | None = None, descricao: str | None = None,
                        prioridade: str | None = None, estimativa: int | None = None, prazo: str | None = None,
-                       etiquetas: list[str] | None = None) -> str:
+                       etiquetas: list[str] | None = None, topo: bool = False) -> str:
     """Cria uma tarefa no quadro da sala (status a_fazer). `descricao` aceita Markdown; `prioridade` urgente|alta|
-    media|baixa|nenhuma; `estimativa` em pontos 1, 2, 3, 5 ou 8; `prazo` ISO (2026-11-05); `etiquetas` por nome."""
+    media|baixa|nenhuma; `estimativa` em pontos 1, 2, 3, 5 ou 8; `prazo` ISO (2026-11-05); `etiquetas` por nome.
+    Com `responsavel`, entra no fim da pilha dele; `topo`=True põe no topo (urgente)."""
     corpo = {"sala": sala, "titulo": titulo, "responsavel": responsavel, "descricao": descricao, "prioridade": prioridade,
-             "estimativa": estimativa, "prazo": prazo, "etiquetas": etiquetas, "de": NOME}
+             "estimativa": estimativa, "prazo": prazo, "etiquetas": etiquetas, "de": NOME, "topo": topo or None}
     t = await asyncio.to_thread(_req, "POST", "/tarefas", {k: v for k, v in corpo.items() if v is not None})
     return "criada " + _fmt_tarefa(t)
 
@@ -408,6 +409,50 @@ async def atualizar_tarefa(id: int, status: str | None = None, responsavel: str 
              "prazo": prazo, "etiquetas": etiquetas, "de": NOME}
     t = await asyncio.to_thread(_req, "PATCH", f"/tarefas/{id}", {k: v for k, v in corpo.items() if v is not None})
     return "atualizada " + _fmt_tarefa(t)
+
+
+# --- Pilha (docs/PLANO-PILHA.md) ----------------------------------------------
+
+def _fmt_item_pilha(t: dict) -> str:
+    fluxo = f" 🔁 pedido #{t['pedido']['id']} {t['pedido']['estado']}" if t.get("pedido") else ""
+    return f"{t['posicao']}. {_fmt_tarefa(t)} em #{t['sala']}{fluxo}"
+
+
+@mcp.tool()
+async def minha_pilha(sala: str | None = None, agente: str | None = None) -> str:
+    """Sua pilha de trabalho: as tarefas com você (todas as salas, ou só `sala`), na ordem em que vai fazer.
+    A que está `fazendo` vem primeiro. Pedidos de fluxo para você também aparecem (🔁). `agente` vê a de outro."""
+    q = {"agente": agente or NOME, "eu": NOME, "sala": sala}
+    r = await asyncio.to_thread(_req, "GET", "/pilha?" + urlencode({k: v for k, v in q.items() if v}))
+    return "\n".join(_fmt_item_pilha(t) for t in r["itens"]) or "pilha vazia"
+
+
+@mcp.tool()
+async def proxima_tarefa(sala: str | None = None) -> str:
+    """Pega o topo da sua pilha: a primeira tarefa a_fazer vira fazendo e volta por inteiro. Se você já tem uma
+    fazendo, devolve ela (termine ou devolva antes de pegar outra). Pedidos de fluxo não são pegos aqui: o executor
+    cuida deles."""
+    r = await asyncio.to_thread(_req, "POST", "/pilha/proxima", {k: v for k, v in {"agente": NOME, "de": NOME, "sala": sala}.items() if v})
+    if not r["tarefa"]:
+        return "nada na pilha para pegar"
+    aviso = "você já está fazendo esta:\n" if r["ja_fazendo"] else "peguei:\n"
+    return aviso + await ver_tarefa(r["tarefa"]["id"])
+
+
+@mcp.tool()
+async def mover_na_pilha(tarefa: int, posicao: str) -> str:
+    """Reordena a pilha do responsável pela tarefa. `posicao`: `topo`, `fundo`, `antes:<id>` ou `depois:<id>`.
+    Você só mexe na sua pilha (humanos mexem em qualquer uma)."""
+    corpo: dict = {"tarefa": tarefa, "de": NOME}
+    if posicao in ("topo", "fundo"):
+        corpo[posicao] = True
+    elif posicao.startswith(("antes:", "depois:")) and posicao.split(":", 1)[1].lstrip("#").isdigit():
+        lado, ref = posicao.split(":", 1)
+        corpo["antes_de" if lado == "antes" else "depois_de"] = int(ref.lstrip("#"))
+    else:
+        return "posicao: topo, fundo, antes:<id> ou depois:<id>"
+    r = await asyncio.to_thread(_req, "POST", "/pilha/mover", corpo)
+    return "\n".join(_fmt_item_pilha(t) for t in r["itens"])
 
 
 @mcp.tool()
@@ -520,11 +565,17 @@ async def publicar_fluxo(fluxo: dict, sala: str = SALA) -> str:
 
 @mcp.tool()
 async def pedir_fluxo(agente: str, nome: str, versao: int, params: dict | None = None, sala: str = SALA,
-                      aguardar: bool = False, segundos: int = 240) -> str:
+                      aguardar: bool = False, segundos: int = 240, prioridade: str = "nenhuma", topo: bool = False,
+                      tarefa: int | None = None) -> str:
     """Pede a `agente` que rode um workflow que o dono dele aprovou. Só cria o pedido; o executor do outro lado
-    confere hash, quem pediu e parâmetros. `aguardar`=True espera o resultado (máx. 300 s)."""
-    corpo = {"sala": sala, "agente": agente, "nome": nome, "versao": versao, "params": params or {}, "de": NOME}
-    p = await asyncio.to_thread(_req, "POST", "/fluxos/pedidos", corpo)
+    confere hash, quem pediu e parâmetros. O pedido entra como tarefa na pilha do agente (`prioridade`, `topo`
+    para furar a fila); com `tarefa`, roda uma tarefa que já existe. `aguardar`=True espera o resultado (máx. 300 s)."""
+    corpo = {"sala": sala, "agente": agente, "nome": nome, "versao": versao, "params": params or {}, "de": NOME,
+             "prioridade": prioridade, "topo": topo}
+    if tarefa is not None:
+        p = await asyncio.to_thread(_req, "POST", f"/tarefas/{tarefa}/fluxo", corpo)
+    else:
+        p = await asyncio.to_thread(_req, "POST", "/fluxos/pedidos", corpo)
     fim = asyncio.get_running_loop().time() + max(0, min(segundos, 300))
     while aguardar and p["estado"] in ("pendente", "aceito") and asyncio.get_running_loop().time() < fim:
         await asyncio.sleep(3)

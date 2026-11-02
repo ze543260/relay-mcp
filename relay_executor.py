@@ -641,17 +641,21 @@ def atender(loja: Loja, p: dict, **kw: object) -> dict | None:
 
 
 def servir(loja: Loja) -> None:
-    """Um pedido por vez (limite de execuções simultâneas por dono = 1, seção 10.3)."""
-    ultimo = 0
+    """Um pedido por vez (limite de execuções simultâneas por dono = 1, seção 10.3), na ordem da pilha do agente
+    (docs/PLANO-PILHA.md, 5.4): a cada volta relê os pendentes e atende só o do topo, então reordenar a pilha
+    muda a vez na hora."""
+    vistos: set[int] = set()  # já atendidos; um pedido que continuar pendente por erro não trava a fila
     print(f"executor de {NOME}: atendendo pedidos em {URL}", file=sys.stderr, flush=True)
     while True:
         try:
-            pedidos = relay("GET", f"/fluxos/pedidos?{urlencode({'agente': NOME, 'estado': 'pendente', 'depois': ultimo})}")
-            for p in pedidos:  # type: ignore[union-attr]
-                ultimo = max(ultimo, p["id"])
+            pedidos = relay("GET", f"/fluxos/pedidos?{urlencode({'agente': NOME, 'estado': 'pendente', 'ordem': 'pilha'})}")
+            p = next((x for x in pedidos if x["id"] not in vistos), None)  # type: ignore[union-attr]
+            if p:
+                vistos.add(p["id"])
                 reg = atender(loja, p)
                 if reg:
                     print(f"pedido {p['id']}: {reg['result']} ({reg['audit_file']})", flush=True)
+                continue  # já olha o próximo do topo, sem esperar
         except (RuntimeError, OSError, Recusa) as e:
             print(f"executor: {e}", file=sys.stderr, flush=True)
         time.sleep(3)
