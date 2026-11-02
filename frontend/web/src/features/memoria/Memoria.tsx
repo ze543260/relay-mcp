@@ -1,5 +1,5 @@
-import { BrainIcon, CheckIcon, SearchIcon, XIcon } from "lucide-react";
-import { useDeferredValue, useMemo, useState } from "react";
+import { BrainIcon, CheckIcon, ListIcon, NetworkIcon, SearchIcon, XIcon } from "lucide-react";
+import { lazy, Suspense, useDeferredValue, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -7,9 +7,14 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { textos } from "@/shared/lib/textos";
-import { useCandidatos, useDecidirFato, useFatos, type Fato } from "./api";
+import { gravar, ler } from "@/shared/lib/armazenamento";
+import { LIMITE, useCandidatos, useDecidirFato, useFatos, type Fato } from "./api";
+
+const lerVisao = (): "lista" | "grafo" => ler("relay-memoria-visao") === "grafo" ? "grafo" : "lista";
 
 const t = textos.memoria;
+// d3-force só carrega quando o grafo abre.
+const GrafoMemoria = lazy(() => import("./Grafo"));
 
 const dataCurta = (iso: string) => new Date(iso).toLocaleDateString("pt-BR", { day: "2-digit", month: "short" });
 
@@ -80,18 +85,23 @@ export default function Memoria({ sala, admin, abrirMensagem }: { sala: string; 
   const [historico, setHistorico] = useState(false);
   const termo = useDeferredValue(busca.trim());
   const { data: fatos, isPending } = useFatos(sala, termo, historico);
+  const [visao, setVisao] = useState<"lista" | "grafo">(() => lerVisao());
+  const [noAberto, setNoAberto] = useState<string | null>(null);
+  const escolherVisao = (v: "lista" | "grafo") => { setVisao(v); gravar("relay-memoria-visao", v); };
+  const visiveis = useMemo(() => (fatos ?? []).filter((x) => historico || x.estado === "vigente"), [fatos, historico]);
+  const doNo = noAberto ? visiveis.filter((f) => [f.sujeito, f.objeto].some((x) => x.trim().toLowerCase() === noAberto.trim().toLowerCase())) : [];
 
   // Agrupa por sujeito (sem diferenciar maiúsculas), na ordem em que o servidor devolveu (relevância/recência).
   const grupos = useMemo(() => {
     const mapa = new Map<string, { sujeito: string; fatos: Fato[] }>();
-    for (const f of (fatos ?? []).filter((x) => historico || x.estado === "vigente")) {
+    for (const f of visiveis) {
       const chave = f.sujeito.toLowerCase();
       const g = mapa.get(chave) ?? { sujeito: f.sujeito, fatos: [] };
       g.fatos.push(f);
       mapa.set(chave, g);
     }
     return [...mapa.values()];
-  }, [fatos, historico]);
+  }, [visiveis]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -106,7 +116,38 @@ export default function Memoria({ sala, admin, abrirMensagem }: { sala: string; 
           <Checkbox checked={historico} onCheckedChange={(v) => setHistorico(Boolean(v))} />
           {t.historico}
         </label>
+        <div role="radiogroup" aria-label={t.visao} className="ml-auto flex rounded-lg bg-superficie p-0.5">
+          {([["lista", ListIcon, t.lista], ["grafo", NetworkIcon, t.grafo]] as const).map(([v, Icone, rotulo]) => (
+            <button key={v} type="button" role="radio" aria-checked={visao === v} onClick={() => escolherVisao(v)}
+              className={cn("flex min-h-7 items-center gap-1.5 rounded-md px-2.5 text-xs transition-colors",
+                visao === v ? "bg-card font-medium text-foreground shadow-xs" : "text-muted-foreground hover:text-foreground")}>
+              <Icone className="size-3.5" aria-hidden />{rotulo}
+            </button>
+          ))}
+        </div>
       </div>
+
+      {visao === "grafo" ? (
+        <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+          {isPending ? <Skeleton className="m-4 flex-1" /> : visiveis.length === 0 ? (
+            <p className="m-auto p-6 text-center text-sm text-muted-foreground">{termo ? t.semResultado(termo) : t.vazio}</p>
+          ) : (
+            <Suspense fallback={<Skeleton className="m-4 flex-1" />}>
+              <GrafoMemoria fatos={visiveis} selecionado={noAberto} aoSelecionar={setNoAberto} />
+            </Suspense>
+          )}
+          {noAberto && (
+            <aside aria-label={noAberto} className="max-h-[45dvh] flex-none overflow-y-auto border-t bg-card px-4 py-3 md:max-h-none md:w-80 md:border-t-0 md:border-l">
+              <div className="flex items-center justify-between gap-2">
+                <h2 className="truncate text-sm font-semibold">{noAberto}</h2>
+                <Button size="icon" variant="ghost" className="size-7" aria-label={t.fecharNo} onClick={() => setNoAberto(null)}><XIcon /></Button>
+              </div>
+              <p className="text-xs text-muted-foreground">{t.ligacoes(doNo.length)}</p>
+              <ul className="divide-y">{doNo.map((f) => <LinhaFato key={f.id} fato={f} abrir={abrirMensagem} comSujeito />)}</ul>
+            </aside>
+          )}
+        </div>
+      ) : (
 
       <div className="min-h-0 flex-1 overflow-y-auto p-4 md:p-6">
         <div className="mx-auto grid max-w-3xl gap-4">
@@ -129,6 +170,8 @@ export default function Memoria({ sala, admin, abrirMensagem }: { sala: string; 
           )}
         </div>
       </div>
+      )}
+      {visao === "grafo" && (fatos?.length ?? 0) >= LIMITE && <p className="border-t px-4 py-1.5 text-[11px] text-muted-foreground">{t.limite(LIMITE)}</p>}
     </div>
   );
 }

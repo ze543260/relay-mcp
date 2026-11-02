@@ -20,10 +20,13 @@ export interface Fato {
   criado_em: string;
 }
 
+/** Máximo que o servidor devolve por consulta (/fatos limita em 50). */
+export const LIMITE = 50;
+
 export const useFatos = (sala: string, termo: string, historico: boolean) => useQuery({
   queryKey: ["fatos", sala, termo, historico],
   queryFn: ({ signal }) => api<Fato[]>(`/fatos?${new URLSearchParams({
-    sala, limite: "50", ...(termo ? { q: termo } : {}), ...(historico ? { historico: "1" } : {}),
+    sala, limite: String(LIMITE), ...(termo ? { q: termo } : {}), ...(historico ? { historico: "1" } : {}),
   })}`, { sinal: signal }),
   placeholderData: (anterior) => anterior,
 });
