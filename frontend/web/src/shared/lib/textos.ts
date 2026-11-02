@@ -292,6 +292,7 @@ export const textos = {
     trilha: "Caminho na memória",
     semFatos: "Nada na memória ligado a isso ainda.",
     semGrafo: "A memória em grafo ainda não está disponível neste servidor.",
+    dicaGrafo: "Clique num assunto para centralizar nele; arraste para mover, role para aproximar.",
     cortado: "Mostrando as 50 ligações mais recentes.",
     origemDe: (tipo: string, id: string, autor: string) => `${tipo} #${id} · por ${autor}`,
     acesso: "Acesso",

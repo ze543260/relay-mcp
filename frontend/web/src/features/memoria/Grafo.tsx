@@ -70,9 +70,12 @@ const caminhoAresta = (a: ArestaG) => {
  * Visão em grafo da memória (estilo Obsidian): layout em força com d3-force, arrastar nós, zoom e pan,
  * vizinhança acesa ao passar o mouse e fatos do nó no painel ao clicar.
  */
-export default function GrafoMemoria({ fatos, selecionado, aoSelecionar }: {
+export default function GrafoMemoria({ fatos, selecionado, aoSelecionar, centros }: {
   fatos: Fato[]; selecionado: string | null; aoSelecionar: (rotulo: string | null) => void;
+  /** Nós em destaque (ex.: o agente no perfil), com um anel em volta. */
+  centros?: string[];
 }) {
+  const ehCentro = useMemo(() => new Set((centros ?? []).map(chave)), [centros]);
   const { nos, arestas } = useMemo(() => montar(fatos), [fatos]);
   const svgRef = useRef<SVGSVGElement>(null);
   const simRef = useRef<Simulation<NoG, ArestaG> | null>(null);
@@ -209,7 +212,10 @@ export default function GrafoMemoria({ fatos, selecionado, aoSelecionar }: {
                     <path d={linhas(raio(n.grau) + 2)} stroke="var(--primary)" strokeWidth={1.2} strokeLinecap="round" />
                   </g>
                 ) : (
-                  <circle r={raio(n.grau)} fill={corDe(n.id)} stroke={sel ? "var(--foreground)" : "var(--background)"} strokeWidth={sel ? 2.5 : 1.5} />
+                  <>
+                    {ehCentro.has(n.id) && <circle r={raio(n.grau) + 5} fill="none" stroke="var(--primary)" strokeWidth={2} strokeDasharray="3 3" />}
+                    <circle r={raio(n.grau)} fill={corDe(n.id)} stroke={sel ? "var(--foreground)" : "var(--background)"} strokeWidth={sel ? 2.5 : 1.5} />
+                  </>
                 )}
                 {mostrarRotulo(n) && (
                   <text y={raio(n.grau) + 12} textAnchor="middle" fontSize={11}
